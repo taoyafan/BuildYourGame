@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="380" height="230" viewBox="0 0 380 230" role="img" aria-label="阳光照进一间小型游戏工作室，桌上摆着电脑、手稿与绿植">
+<defs><pattern id="floor" width="25" height="16" patternUnits="userSpaceOnUse"><path d="M0 16H25M25 0V16" fill="none" stroke="#d9e1dc" stroke-width=".8"/></pattern></defs>
+<path d="M28 116 188 36 351 114 190 201Z" fill="#edf0ec"/>
+<path d="M28 116 190 201 190 210 28 125Z" fill="#bbc9bf"/><path d="M190 201 351 114 351 123 190 210Z" fill="#a5b9aa"/>
+<path d="M28 116V51L188 0V36Z" fill="#e0e9e1"/><path d="M188 0 351 53V114L188 36Z" fill="#f9fbf5"/>
+<path d="M28 116 188 36 351 114 190 201Z" fill="url(#floor)"/>
+<path d="M50 54 110 34V88L50 116Z" fill="#8eb9ad" stroke="#709c8d" stroke-width="3"/><path d="M54 57 106 40V84L54 108Z" fill="#d5eee8"/>
+<path d="M80 48V97M54 82 106 62" stroke="#87aa9a" stroke-width="3"/>
+<path d="M54 108 106 84 223 139 171 168Z" fill="#faf1c6" opacity=".52"/>
+<path d="M228 30 300 54V88L228 56Z" fill="#e3e9e1" stroke="#bdcbbc" stroke-width="2"/>
+<path d="M238 40 255 46M239 47 267 56M273 51 291 57M273 59 289 65" stroke="#a6b7a8" stroke-width="3"/>
+<path d="M240 51 251 55V65L240 61Z" fill="#e3be64"/><path d="M257 57 267 61V70L257 66Z" fill="#d18b7a"/>
+<path d="M302 101 322 93 338 101 317 110Z" fill="#698671"/><path d="M304 102 317 109V128L307 124Z" fill="#b77a64"/><path d="M317 109 336 101 332 121 317 128Z" fill="#d5a184"/>
+<path d="M319 105V76M319 91Q299 87 304 71Q320 73 319 91M320 85Q339 80 334 66Q318 70 320 85M319 100Q303 99 300 87Q315 82 319 100" fill="#6d9c76" stroke="#557e60" stroke-width="2"/>
+<path d="M87 115 137 90 196 119 146 146Z" fill="#bfa57a"/><path d="M87 115 146 146V152L87 122Z" fill="#a48b66"/><path d="M146 146 196 119V125L146 152Z" fill="#8b7b5c"/>
+<path d="M94 122V149M186 128V153M147 151V176" stroke="#697d70" stroke-width="5"/>
+<path d="M113 102V79L143 93V118Z" fill="#314d46"/><path d="M116 84 140 95V111L116 100Z" fill="#8ab5a3"/><path d="M120 94 125 91 131 98 137 96" fill="none" stroke="#e6efd2" stroke-width="2"/>
+<path d="M130 111V119M124 120 137 126 145 122" stroke="#526d5e" stroke-width="3" fill="none"/>
+<path d="M144 125 161 117 174 123 157 132Z" fill="#e7e9da"/><path d="M150 124 160 120M156 127 166 123" stroke="#a6b5a6"/>
+<path d="M107 117 117 112 127 117 117 123Z" fill="#f8f8eb"/><path d="M111 116 119 119" stroke="#c68d70" stroke-width="2"/>
+<path d="M177 91 221 69 282 97 237 122Z" fill="#c6ac80"/><path d="M177 91 237 122V129L177 98Z" fill="#a48b66"/><path d="M237 122 282 97V104L237 129Z" fill="#8b7b5c"/>
+<path d="M185 99V124M273 105V130M238 128V153" stroke="#697d70" stroke-width="5"/>
+<path d="M203 77V55L231 69V93Z" fill="#314d46"/><path d="M206 60 228 71V86L206 76Z" fill="#b7c9a0"/>
+<path d="M212 69 218 66 224 75" fill="none" stroke="#f7f4cb" stroke-width="2"/>
+<path d="M219 89V98M211 98 225 104 231 100" stroke="#526d5e" stroke-width="3" fill="none"/>
+<path d="M234 103 249 96 261 102 246 110Z" fill="#e6e8dc"/>
+<path d="M266 92V83L273 86V95Z" fill="#c58165"/><path d="M267 84 272 86" stroke="#f4f4df" stroke-width="2"/>
+<path d="M170 139 190 129 207 138 188 149Z" fill="#6f9885"/><path d="M169 139V154L188 164V149Z" fill="#5b806e"/><path d="M188 149 207 138V152L188 164Z" fill="#456c5c"/>
+<path d="M186 164V176M174 177 194 177M186 171 176 181M186 171 196 180" stroke="#6e7d72" stroke-width="3"/>
+<path d="M257 119 274 111 289 119 273 128Z" fill="#c59079"/><path d="M256 119V133L273 142V128Z" fill="#b57f67"/><path d="M273 128 289 119V132L273 142Z" fill="#996f59"/>
+<path d="M271 142V154M260 155 280 155" stroke="#6e7d72" stroke-width="3"/>
+<path d="M61 109 78 101 89 107 73 116Z" fill="#c9b585"/><path d="M61 109V127L73 134V116Z" fill="#ae956a"/><path d="M73 116 89 107V125L73 134Z" fill="#9d885f"/>
+<path d="M65 104V89L72 86V101M76 99V83L82 80V96" stroke="#6d9677" stroke-width="5"/>
+</svg>
