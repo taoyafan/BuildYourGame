@@ -27,6 +27,8 @@
     { name: '定向推广', cost: 11, reach: 0.78 },
     { name: '集中宣发', cost: 31, reach: 1.05 }
   ];
+  const WORK_PER_PERSON_MONTH = 5;
+  const PLAYTEST = { progress: 0.25, cost: 6, reach: 0.06, fixPace: 0.65, promoReach: 0.15 };
   const clone = value => JSON.parse(JSON.stringify(value));
   const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
   const round = value => Math.round(value * 100) / 100;
@@ -34,7 +36,7 @@
 
   function createGame(seed = Date.now()) {
     return {
-      version: 1, seed: seed >>> 0, month: 1, cash: 90, team: 0, pay: 1,
+      version: 1, seed: seed >>> 0, month: 1, cash: 100, team: 0, pay: 1,
       project: null, catalog: [], event: null, events: [], pace: 1,
       bridgeUsed: false, lastCrisis: -10, over: false,
       report: null,
@@ -52,7 +54,11 @@
   }
 
   function speed(state) {
-    return Math.pow(TEAMS[state.team].people, 0.76) * 5 * state.pace;
+    return TEAMS[state.team].people * WORK_PER_PERSON_MONTH * state.pace;
+  }
+
+  function personMonths(work) {
+    return work / WORK_PER_PERSON_MONTH;
   }
 
   function market(type, month) {
@@ -97,6 +103,7 @@
     const cost = planCost(state, plan);
     if (cost > state.cash) throw new Error('现有资金不足以支付这次投入，请降低物料或宣发档位。');
     const next = clone(state);
+    recordCash(next, 'setupCost', cost);
     next.cash = round(next.cash - cost);
     next.team = plan.team;
     next.pay = plan.pay;
@@ -115,6 +122,67 @@
       next.project.invested = round(next.project.invested + cost);
     }
     if (!next.event) next.event = makeEvent(next);
+    return next;
+  }
+
+  function takeTurn(state, plan = defaultPlan(state)) {
+    if (state.event) throw new Error('请先处理当前事件。');
+    const planned = applyPlan(state, plan);
+    return planned.event ? planned : advance(planned);
+  }
+
+  function recordCash(state, key, amount) {
+    if (!amount) return;
+    if (!state.pending) state.pending = { cashBefore: state.cash, setupCost: 0, testingCost: 0, eventCost: 0, eventIncome: 0 };
+    state.pending[key] = round(state.pending[key] + amount);
+  }
+
+  function testingOffer(state) {
+    const cost = round(PLAYTEST.cost * SCALES[state.project ? state.project.scale : 0].cost);
+    const reason = state.over ? '经营已结束' : !state.project ? '立项并推进研发后开放' : state.project.test ? '本作已完成提前测试' : state.event ? '先处理待决事件' : state.project.done / state.project.total < PLAYTEST.progress ? '研发达到四分之一后开放' : cost > state.cash ? '资金不足' : '';
+    return { cost, available: !reason, reason };
+  }
+
+  function runPlaytest(state) {
+    const offer = testingOffer(state);
+    if (!offer.available) throw new Error(offer.reason);
+    const next = clone(state);
+    recordCash(next, 'testingCost', offer.cost);
+    next.cash = round(next.cash - offer.cost);
+    next.project.invested = round(next.project.invested + offer.cost);
+    const value = quality(next);
+    const gain = round(3 + random(next) * 4);
+    const topics = {
+      story: ['叙事节奏', '关键转折出现得太晚，前段体验需要压缩。', '角色动机仍有理解门槛，关键线索可以更清楚。'],
+      sim: ['系统可读性', '资源反馈不够清晰，玩家难以判断自己的经营是否有效。', '中期目标不够突出，玩家理解规则后缺少新的追求。'],
+      action: ['操作与交付', '核心动作反馈不够稳定，优先修正基础手感比继续堆内容更重要。', '部分战斗节奏拖沓，缩短重复段落能改善完整体验。']
+    };
+    const topic = topics[next.project.type];
+    const finding = topic[gain >= 5 ? 1 : 2];
+    next.project.reachBonus += PLAYTEST.reach;
+    next.project.test = { month: next.month, cost: offer.cost, finding, label: qualityLabel(value).label, decision: '' };
+    next.event = {
+      id: 'playtest', title: `提前测试：${topic[0]}`,
+      text: `${qualityLabel(value).label}。${finding}测试已带来少量曝光，但不保证商业成功。`,
+      choices: [
+        { id: 'test-fix', title: '按反馈集中修改', detail: `下一月自研产能为正常的 ${PLAYTEST.fixPace * 100}%，本作品质增加 ${gain}。`, pace: PLAYTEST.fixPace, quality: gain },
+        { id: 'test-promo', title: '用试玩素材扩大曝光', detail: `再投入 ${(offer.cost / 2).toFixed(2)} 万，增加市场触达；不解决测试指出的问题。`, cost: offer.cost / 2, reach: PLAYTEST.promoReach },
+        { id: 'test-stay', title: '保留记录，按原排期推进', detail: '不额外花钱、不占用研发时间，保留测试获得的基础曝光。' }
+      ]
+    };
+    addHistory(next, '完成提前测试', `${finding}测试支出 ${offer.cost.toFixed(2)} 万。`);
+    return next;
+  }
+
+  function skipToDecision(state, plan = defaultPlan(state)) {
+    const startMonth = state.month;
+    const alreadyTestable = testingOffer(state).available;
+    let next = takeTurn(state, plan);
+    while (next.month - startMonth < 12 && !next.over && !next.event && next.project) {
+      if (!alreadyTestable && testingOffer(next).available) break;
+      if (runway(next) < 2) break;
+      next = takeTurn(next);
+    }
     return next;
   }
 
@@ -177,6 +245,8 @@
     return {
       affordable, cost, monthly: burn(projected), runway: runway(projected),
       duration, quality: quality(projected), qualityInfo: qualityLabel(quality(projected)),
+      workload: { total: personMonths(projected.project.total), remaining: personMonths(remaining), monthly: personMonths(firstCapacity) },
+      releaseMonth: state.month + duration - 1, releaseMarket: market(plan.type, state.month + duration - 1),
       reach: ['自然发现为主', '覆盖核心圈层', '有望触达圈外'][plan.promo],
       reachDetail: ['没有付费推广，首批玩家较少。', '面向同类游戏的核心玩家推广。', '覆盖更多潜在玩家，额外触达逐渐递减。'][plan.promo]
     };
@@ -228,6 +298,8 @@
     if (!choice || choice.disabled) throw new Error('这个选项不可用。');
     if ((choice.cost || 0) > state.cash) throw new Error('现有资金不足以支付这次支出。');
     const next = clone(state);
+    recordCash(next, 'eventCost', choice.cost || 0);
+    recordCash(next, 'eventIncome', choice.income || 0);
     next.cash = round(next.cash + (choice.income || 0) - (choice.cost || 0));
     if (choice.pace) next.pace = choice.pace;
     if (choiceId === 'bridge') next.bridgeUsed = true;
@@ -235,6 +307,7 @@
       next.project.bonus += choice.quality || 0;
       next.project.reachBonus += choice.reach || 0;
       next.project.invested = round(next.project.invested + (choice.cost || 0));
+      if (next.event.id === 'playtest' && next.project.test) next.project.test.decision = choice.title;
     }
     addHistory(next, next.event.title, choice.title + '。' + choice.detail);
     next.events.push(next.month);
@@ -242,10 +315,20 @@
     return next;
   }
 
+  function finishReport(state, report, cashBefore) {
+    const pending = state.pending || { cashBefore, setupCost: 0, testingCost: 0, eventCost: 0, eventIncome: 0 };
+    const totalIncome = round(report.income + pending.eventIncome + (report.release ? report.release.received : 0));
+    const totalExpense = round(report.expense + pending.setupCost + pending.testingCost + pending.eventCost);
+    state.report = { ...report, ...pending, totalIncome, totalExpense, net: round(totalIncome - totalExpense), cashAfter: state.cash };
+    state.pending = null;
+    addHistory(state, `第 ${report.month} 月账单`, `收入 ${totalIncome.toFixed(2)} 万，${report.failed ? '应付' : '支出'} ${totalExpense.toFixed(2)} 万，净变化 ${state.report.net.toFixed(2)} 万。`);
+  }
+
   function advance(state) {
     if (state.over) throw new Error('经营已经结束。');
     if (state.event) throw new Error('请先处理当前事件。');
     const next = clone(state);
+    const cashBefore = next.cash;
     const monthly = burn(next);
     const income = catalogIncome(next, next.month);
     next.cash = round(next.cash + income - monthly);
@@ -254,7 +337,7 @@
     next.catalog.forEach(book => { book.received = round(book.received + tailIncome(book, next.month)); });
     if (next.cash < 0) {
       next.over = true;
-      next.report = { month: next.month, expense: monthly, income, release: null, work: 0, failed: true };
+      finishReport(next, { month: next.month, expense: monthly, income, release: null, work: 0, failed: true }, cashBefore);
       addHistory(next, '办公室的灯熄了', '资金不足以支付本月开支。公司的经营到此结束，作品和选择留在了这份记录里。');
       next.month += 1;
       return next;
@@ -274,6 +357,9 @@
           sales, received: opening, invested: project.invested,
           released: next.month, payroll: monthly
         };
+        release.launchMarket = market(project.type, next.month).label;
+        release.promotion = PROMO[project.promo].name;
+        release.tested = Boolean(project.test);
         next.catalog.unshift(release);
         next.cash = round(next.cash + opening);
         next.project = null;
@@ -281,7 +367,7 @@
       }
     }
     next.pace = 1;
-    next.report = { month: next.month, expense: monthly, income, release, work, failed: false };
+    finishReport(next, { month: next.month, expense: monthly, income, release, work, failed: false }, cashBefore);
     next.month += 1;
     next.event = makeEvent(next);
     return next;
@@ -297,13 +383,16 @@
     if (state.project) {
       const project = state.project;
       if (!text(project.name) || !Object.hasOwn(TYPES, project.type) || !['scale', 'material', 'promo'].every(key => tier(project[key])) || !['total', 'done', 'qualityWork', 'bonus', 'reachBonus', 'invested', 'started'].every(key => finite(project[key])) || project.total <= 0 || project.done < 0 || project.done > project.total + 0.001) return false;
+      if (project.test && (!Number.isInteger(project.test.month) || !finite(project.test.cost) || project.test.cost < 0 || !['finding', 'label', 'decision'].every(key => text(project.test[key])))) return false;
     }
+    if (state.pending && (!finite(state.pending.cashBefore) || !['setupCost', 'testingCost', 'eventCost', 'eventIncome'].every(key => finite(state.pending[key]) && state.pending[key] >= 0))) return false;
     if (state.event && (!text(state.event.id) || !text(state.event.title) || !text(state.event.text) || !Array.isArray(state.event.choices) || !state.event.choices.every(choice => choice && text(choice.id) && text(choice.title) && text(choice.detail) && ['income', 'cost', 'pace', 'quality', 'reach'].every(key => choice[key] === undefined || finite(choice[key]))))) return false;
     if (state.report && (!Number.isInteger(state.report.month) || !finite(state.report.expense) || state.report.expense <= 0 || !finite(state.report.income) || !finite(state.report.work) || typeof state.report.failed !== 'boolean' || state.report.release && !validBook(state.report.release))) return false;
+    if (state.report && !['cashBefore', 'cashAfter', 'totalIncome', 'totalExpense', 'net', 'setupCost', 'testingCost', 'eventCost', 'eventIncome'].every(key => state.report[key] === undefined || finite(state.report[key]))) return false;
     return true;
   }
 
-  const api = { TYPES, SCALES, MATERIALS, TEAMS, PAY, PROMO, createGame, defaultPlan, planCost, applyPlan, burn, speed, market, quality, qualityLabel, salesEstimate, tailIncome, catalogIncome, runway, forecast, resolveEvent, advance, validState };
+  const api = { TYPES, SCALES, MATERIALS, TEAMS, PAY, PROMO, createGame, defaultPlan, planCost, applyPlan, takeTurn, testingOffer, runPlaytest, skipToDecision, burn, speed, personMonths, market, quality, qualityLabel, salesEstimate, tailIncome, catalogIncome, runway, forecast, resolveEvent, advance, validState };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.StudioGame = api;
 })(globalThis);
