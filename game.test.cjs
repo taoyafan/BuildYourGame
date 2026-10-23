@@ -149,11 +149,14 @@ function mountUi(state) {
   let saved = JSON.stringify(state);
   const nodes = new Map();
   const handlers = {};
+  const windowHandlers = {};
+  let interval;
   const document = {
+    hidden: false,
     getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, {
         innerHTML: '', textContent: '', value: '', open: false,
-        addEventListener() {}, classList: { add() {}, remove() {} },
+        events: {}, addEventListener(type, handler) { this.events[type] = handler; }, classList: { add() {}, remove() {} },
         showModal() { this.open = true; }, close() { this.open = false; },
         querySelector() { return { focus() {} }; }
       });
@@ -162,148 +165,136 @@ function mountUi(state) {
     addEventListener(type, handler) { handlers[type] = handler; }
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8'), {
-    window: { StudioGame: game, scrollTo() {} }, document,
+    window: { StudioGame: game, addEventListener(type, handler) { windowHandlers[type] = handler; } }, document,
     localStorage: { getItem() { return saved; }, setItem(key, value) { saved = value; } },
-    setTimeout() {}, clearTimeout() {}
+    setTimeout() {}, clearTimeout() {}, setInterval(handler) { interval = handler; }
   });
   return {
     html: () => document.getElementById('game-root').innerHTML,
-    status() { return this.html().match(/<section class="company-status"[\s\S]*?<\/section>/)[0]; },
     saved: () => saved,
     notification: () => document.getElementById('notification').textContent,
-    dialog: id => document.getElementById(id),
-    change(name, value) { handlers.change({ target: { matches() { return true; }, name, value: String(value) } }); },
-    click(action, choice) { handlers.click({ target: { closest() { return { disabled: false, dataset: { action, choice } }; } } }); }
+    dialog: () => document.getElementById('menu-dialog'),
+    tick(count = 10) { for (let index = 0; index < count; index++) interval(); },
+    blur() { windowHandlers.blur(); },
+    hidden(value) { document.hidden = value; handlers.visibilitychange(); },
+    cancel() { this.dialog().events.cancel({ preventDefault() {} }); },
+    submit(form, values) { handlers.submit({ preventDefault() {}, target: { dataset: { form }, elements: { namedItem(name) { return { value: values[name] }; } } } }); },
+    plan(type, scale) { handlers.change({ target: { name: 'type', form: { dataset: { form: 'project' }, elements: { namedItem(name) { return { value: name === 'type' ? type : String(scale) }; } } } } }); return document.getElementById('plan-preview').textContent; },
+    async import(value) { await document.getElementById('import-file').events.change({ target: { files: [{ size: 100, async text() { return value; } }], value: '' } }); },
+    click(action, data = {}) { handlers.click({ target: { closest() { return { disabled: false, dataset: { action, ...data } }; } } }); }
   };
 }
 
-test('new companies start with one hundred wan and old balances are preserved', () => {
-  const state = game.createGame(42);
-  assert.equal(state.cash, 100);
-  assert.ok(mountUi(state).status().includes('100.00 万'));
-  const old = { ...state, cash: 73.25 };
-  const ui = mountUi(old);
-  assert.ok(ui.status().includes('73.25 万'));
-  assert.equal(JSON.parse(ui.saved()).cash, old.cash);
-  assert.ok(!ui.html().includes('data-action="apply"'));
-  assert.ok(!ui.html().includes('资金单位'));
-  ui.click('advance');
-  assert.ok(ui.html().includes(`data-testid="last-expense">−${game.burn(state).toFixed(2)} 万`));
-  assert.ok(!ui.html().includes('资金单位'));
+test('UI starts paused and ordinary menus restore only the prior running state', () => {
+  const ui = mountUi(staffedStudio());
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, 1);
+  ui.click('clock');
+  ui.tick();
+  assert.equal(JSON.parse(ui.saved()).day, 2);
+  ui.click('menu', { menu: 'team' });
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, 2);
+  assert.match(ui.html(), /菜单中/);
+  ui.cancel();
+  ui.tick();
+  assert.equal(JSON.parse(ui.saved()).day, 3);
+  ui.click('clock');
+  ui.click('menu', { menu: 'tools' });
+  ui.click('close');
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, 3);
 });
 
-test('company status compares drafts without charging or saving them', () => {
-  const ui = mountUi(game.createGame(42));
-  const before = ui.status();
+test('UI company and project forms validate names and escape player text', () => {
+  const ui = mountUi(game.createStudio(42));
+  assert.equal(ui.dialog().open, true);
+  ui.submit('company', { name: '' });
+  assert.equal(JSON.parse(ui.saved()).company, '');
+  ui.submit('company', { name: '<测试公司>' });
+  ui.click('menu', { menu: 'project' });
+  ui.submit('project', { name: '', type: 'story', scale: '0' });
+  assert.equal(JSON.parse(ui.saved()).project, null);
+  ui.submit('project', { name: '<script>作品</script>', type: 'story', scale: '0' });
+  assert.match(ui.html(), /&lt;script&gt;/);
+  assert.match(ui.html(), /尚无玩家评价/);
+  assert.ok(!ui.html().includes('<script>作品'));
+});
+
+test('UI recruitment compares real capacity and cannot hire twice', () => {
+  const ui = mountUi(game.nameCompany(game.createStudio(42), '公司'));
+  ui.click('menu', { menu: 'recruit-code' });
+  ui.click('recruit', { role: 'code' });
+  const first = JSON.parse(ui.saved());
+  const id = first.candidates.code.people[0].id;
+  ui.click('menu', { menu: 'candidate', id });
+  assert.match(ui.dialog().innerHTML, /预期变化/);
+  assert.match(ui.dialog().innerHTML, /0.00 →/);
+  ui.click('hire', { id });
+  assert.equal(JSON.parse(ui.saved()).staff.length, 1);
+  assert.match(ui.html(), /等待新项目/);
+  ui.click('hire', { id });
+  assert.equal(JSON.parse(ui.saved()).staff.length, 1);
+  assert.match(ui.notification(), /不可录用/);
+});
+
+test('UI project preview includes truthful time and expense without spending', () => {
+  const ui = mountUi(staffedStudio());
   const saved = ui.saved();
-  assert.ok(before.includes('未立项'));
-  assert.ok(before.includes('成立第 1 年 · 第 1 月'));
-  ui.change('team', 1);
-  ui.change('material', 1);
-  assert.notEqual(ui.status(), before);
-  assert.ok(ui.status().includes('→ 7 人'));
-  assert.ok(ui.status().includes('data-testid="current-cash">100.00 万'));
+  ui.click('menu', { menu: 'project' });
+  const preview = ui.plan('action', 0);
+  assert.match(preview, /预计.*天/);
+  assert.match(preview, /费用约.*万/);
+  assert.match(preview, /不含可选采购/);
   assert.equal(ui.saved(), saved);
-  ui.click('advance');
-  const confirmed = JSON.parse(ui.saved());
-  assert.ok(ui.status().includes(`${game.TEAMS[confirmed.team].people} 人`));
-  assert.ok(ui.status().includes(confirmed.cash.toFixed(2)));
-  assert.ok(!ui.status().includes('未立项'));
-  assert.equal(confirmed.month, 2);
-  assert.equal(confirmed.report.setupCost, 20);
-  const after = ui.status();
-  ui.change('team', 2);
-  assert.notEqual(ui.status(), after);
-  assert.ok(ui.status().includes('→ 14 人'));
 });
 
-test('monthly preview is pure and the full result leads the next decision', () => {
-  const state = start();
-  const original = JSON.stringify(state);
+test('UI pauses critical events at high speed and stays paused after resolution', () => {
+  const state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
   const ui = mountUi(state);
-  assert.equal(ui.saved(), original);
-  assert.equal(JSON.stringify(state), original);
-  assert.ok(ui.html().includes('data-testid="monthly-preview"'));
-  assert.ok(!ui.status().includes('资金净变化'));
-  ui.click('advance');
-  const next = JSON.parse(ui.saved());
-  assert.equal(next.seed, state.seed);
-  const html = ui.html();
-  assert.ok(html.indexOf('data-testid="last-report"') < html.indexOf('class="choices"'));
-  assert.ok(html.indexOf('data-testid="last-report"') < html.indexOf('data-action="advance"'));
-  assert.ok(html.indexOf('data-testid="last-report"') < html.indexOf('class="sidebar"'));
-  assert.ok(html.includes(`data-testid="last-expense">−${next.report.expense.toFixed(2)}`));
-  assert.ok(html.includes(`data-testid="last-cash-change">${next.report.net > 0 ? '+' : ''}${next.report.net.toFixed(2)}`));
+  ui.click('speed', { value: '12' });
+  ui.click('clock');
+  ui.tick(200);
+  const paused = JSON.parse(ui.saved());
+  assert.equal(paused.event.id, 'prototype');
+  ui.tick(100);
+  assert.deepEqual(JSON.parse(ui.saved()), paused);
+  ui.click('decision', { choice: 'continue' });
+  ui.click('close');
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, paused.day);
+  assert.equal(JSON.parse(ui.saved()).event, null);
+  assert.match(ui.html(), /手动暂停/);
 });
 
-test('status handles year rollover and failure without inventing a release', () => {
-  const anniversary = mountUi({ ...game.createGame(42), month: 13 });
-  assert.ok(anniversary.status().includes('成立第 2 年 · 第 1 月'));
-  const failed = game.advance({ ...game.createGame(42), cash: 0 });
-  const ui = mountUi(failed);
-  assert.ok(ui.status().includes('成立第 1 年 · 第 1 月'));
-  assert.ok(ui.status().includes('已停止经营'));
-  assert.ok(ui.html().includes('应付工资及基础支出'));
-  assert.ok(!ui.html().includes('data-testid="monthly-preview"'));
+test('UI does not simulate offline and blur cancels menu auto-resume', () => {
+  const ui = mountUi(staffedStudio());
+  ui.click('clock');
+  ui.tick();
+  const day = JSON.parse(ui.saved()).day;
+  ui.click('menu', { menu: 'team' });
+  ui.blur();
+  ui.click('close');
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, day);
+  ui.click('clock');
+  ui.hidden(true);
+  ui.tick(100);
+  ui.hidden(false);
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, day);
 });
 
-function optionLabel(ui, key, value) {
-  const label = ui.html().match(new RegExp('<label class="segment"><input type="radio" name="' + key + '" value="' + value + '"[\\s\\S]*?</label>'));
-  assert.ok(label, `Missing option ${key}:${value}`);
-  return label[0];
-}
-
-test('every planning option has an amount with the correct billing period', () => {
-  const state = game.createGame(42);
+test('UI imports atomically and restores saves paused', async () => {
+  const state = staffedStudio();
   const ui = mountUi(state);
-  for (const [key, values] of Object.entries({ type: Object.keys(game.TYPES), scale: [0, 1, 2], material: [0, 1, 2], team: [0, 1, 2], pay: [0, 1, 2], promo: [0, 1, 2] })) {
-    for (const value of values) assert.match(optionLabel(ui, key, value), /class="option-price">[^<]*万/);
-  }
   const saved = ui.saved();
-  const status = ui.status();
-  ui.change('scale', 2);
-  ui.change('pay', 2);
-  assert.ok(optionLabel(ui, 'material', 1).includes(`${(game.MATERIALS[1].cost * game.SCALES[2].cost).toFixed(2)} 万 · 一次性`));
-  assert.ok(optionLabel(ui, 'promo', 2).includes(`${(game.PROMO[2].cost * game.SCALES[2].cost).toFixed(2)} 万 · 一次性`));
-  assert.ok(optionLabel(ui, 'team', 1).includes(`${game.burn({ ...state, team: 1, pay: 2 }).toFixed(2)} 万/月`));
-  assert.ok(optionLabel(ui, 'pay', 2).includes(`${game.PAY[2].wage.toFixed(2)} 万/人/月`));
-  const plan = { ...game.defaultPlan(state), scale: 2, pay: 2 };
-  assert.ok(optionLabel(ui, 'scale', 1).includes(`立项 ${game.planCost(state, { ...plan, scale: 1 }).toFixed(2)} 万`));
+  await ui.import('{"version":2}');
   assert.equal(ui.saved(), saved);
-  assert.notEqual(ui.status(), status);
-});
-
-test('in-progress marketing prices show paid tiers and only the upgrade difference', () => {
-  const state = start({ scale: 1, promo: 1 });
-  const ui = mountUi(state);
-  assert.ok(optionLabel(ui, 'promo', 0).includes('不可退'));
-  assert.ok(optionLabel(ui, 'promo', 1).includes('已投入'));
-  const cost = game.planCost(state, { ...game.defaultPlan(state), promo: 2 });
-  assert.ok(optionLabel(ui, 'promo', 2).includes(`补 ${cost.toFixed(2)} 万`));
-  ui.change('promo', 2);
-  assert.ok(optionLabel(ui, 'promo', 2).includes(`补 ${cost.toFixed(2)} 万`));
-  assert.equal(JSON.parse(ui.saved()).cash, state.cash);
-});
-
-test('person-month conversion preserves schedules, progress and old saves', () => {
-  let state = start({ type: 'action', material: 1 });
-  state = game.advance(state);
-  const saved = JSON.stringify(state);
-  const preview = game.forecast(state, game.defaultPlan(state));
-  assert.equal(preview.workload.total, game.personMonths(state.project.total));
-  assert.equal(preview.workload.remaining, game.personMonths(state.project.total - state.project.done));
-  assert.equal(preview.workload.monthly, game.personMonths(game.speed(state)));
-  assert.equal(preview.duration, Math.ceil(preview.workload.remaining / preview.workload.monthly));
-  assert.equal(preview.workload.monthly, game.TEAMS[state.team].people);
-  const slowed = { ...state, pace: 0.3 };
-  assert.ok(Math.abs(game.forecast(slowed, game.defaultPlan(slowed)).workload.monthly - preview.workload.monthly * slowed.pace) < 1e-10);
-  assert.equal(game.validState(JSON.parse(saved)), true);
-  const ui = mountUi(state);
-  assert.equal(ui.saved(), saved);
-  assert.ok(ui.html().includes(`data-testid="remaining-work">${Number(preview.workload.remaining.toFixed(2))} 人月`));
-  assert.ok(ui.html().includes(`完成 ${Number(game.personMonths(state.report.work).toFixed(2))} 人月`));
-  assert.ok(ui.html().includes(`data-testid="monthly-capacity">${Number(preview.workload.monthly.toFixed(2))} 人月/月`));
-  assert.equal(JSON.stringify(state), saved);
+  await ui.import(JSON.stringify({ ...state, cash: 73.25 }));
+  assert.equal(JSON.parse(ui.saved()).cash, 73.25);
+  ui.tick(100);
+  assert.equal(JSON.parse(ui.saved()).day, state.day);
 });
 
 test('monthly production is linear in headcount and event availability', () => {
@@ -398,44 +389,255 @@ test('fast forward stops at testing, events and release without hiding monthly b
   assert.equal(preview.releaseMarket.label, game.market('story', preview.releaseMonth).label);
 });
 
-test('UI supports one-click turns, paid feedback and a release receipt', () => {
-  const ui = mountUi(game.createGame(42));
-  assert.ok(!ui.html().includes('data-action="apply"'));
-  assert.match(ui.html(), /data-panel="budget" >/);
-  ui.click('advance');
-  assert.equal(JSON.parse(ui.saved()).month, 2);
-  assert.ok(!ui.html().includes('name="type"'));
-  assert.ok(!ui.html().includes('name="material"'));
-  ui.click('playtest');
-  assert.ok(ui.dialog('event-dialog').open);
-  assert.ok(ui.dialog('event-dialog').innerHTML.includes('付费测试'));
-  ui.click('resolve', 'test-stay');
-  assert.ok(!ui.dialog('event-dialog').open);
-  assert.ok(ui.html().includes('测试反馈'));
-  ui.click('skip');
-  const state = JSON.parse(ui.saved());
-  assert.ok(state.report.release);
-  assert.ok(ui.dialog('result-dialog').open);
-  assert.ok(ui.dialog('result-dialog').innerHTML.includes(state.report.release.received.toFixed(2)));
-  assert.ok(ui.dialog('result-dialog').innerHTML.includes('不是最终利润'));
-  ui.click('close-result');
-  assert.ok(!ui.dialog('result-dialog').open);
+test('UI launch receipt reports actual buyers, revenue and project recovery', () => {
+  const state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
+  state.project.done = state.project.total;
+  state.project.codeValue = state.project.done * 70;
+  const ui = mountUi(state);
+  ui.click('launch');
+  const released = JSON.parse(ui.saved());
+  assert.equal(released.catalog.length, 1);
+  assert.equal(released.project, null);
+  assert.match(ui.dialog().innerHTML, /首发实际到账/);
+  assert.match(ui.dialog().innerHTML, /正式玩家评价/);
+  assert.match(ui.dialog().innerHTML, /不是最终利润/);
+  ui.click('decision', { choice: 'continue' });
+  ui.click('close');
+  ui.click('menu', { menu: 'project' });
+  ui.submit('project', { name: '第二部作品', type: 'sim', scale: '0' });
+  assert.equal(JSON.parse(ui.saved()).catalog.length, 1);
+  assert.equal(JSON.parse(ui.saved()).project.name, '第二部作品');
 });
 
-test('handling a paused event retains the draft for the resumed turn', () => {
-  const ui = mountUi(game.resolveEvent(game.runPlaytest(game.takeTurn(game.createGame(42))), 'test-stay'));
-  const cash = { ...game.createGame(42), cash: 15 };
-  const paused = mountUi(game.takeTurn(cash));
-  assert.ok(paused.dialog('event-dialog').open);
-  paused.change('pay', 0);
-  paused.click('resolve', 'bridge');
-  assert.match(optionLabel(paused, 'pay', 0), /checked/);
-  paused.click('advance');
-  const next = JSON.parse(paused.saved());
-  assert.equal(next.pay, 0);
-  assert.equal(next.report.setupCost, 11);
-  assert.equal(next.report.eventIncome, 35);
-  assert.equal(next.report.cashBefore, 15);
-  assert.equal(Number((next.cash - next.report.cashBefore).toFixed(2)), next.report.net);
-  assert.ok(ui.html().includes('测试反馈'));
+test('daily studio accrues only worked days and settles once at month end', () => {
+  let state = game.createStudio(42);
+  const original = JSON.stringify(state);
+  let next = game.stepDay(state);
+  assert.equal(JSON.stringify(state), original);
+  assert.equal(next.cash, 100);
+  assert.equal(next.day, 2);
+  state = next;
+  while (state.day <= 15) state = game.stepDay(state);
+  state.staff.push({ wage: 3 });
+  while (state.day <= 30) state = game.stepDay(state);
+  assert.equal(state.report.payroll, 3);
+  assert.equal(state.cash, 97);
+  assert.equal(state.report.net, -3);
+  assert.equal(state.accrued, 0);
+  next = game.stepDay(state);
+  assert.equal(next.cash, 97);
+  assert.throws(() => game.stepDay({ ...state, event: { id: 'demo' } }));
+});
+
+function staffedStudio(seed = 42) {
+  let state = game.nameCompany(game.createStudio(seed), '测试工作室');
+  state = game.publishRecruitment(state, 'code');
+  return game.hire(state, state.candidates.code.people[0].id);
+}
+
+function studioDays(state, count) {
+  for (let index = 0; index < count; index++) {
+    if (state.event) {
+      const choice = state.event.choices.find(item => item.id === 'continue') || state.event.choices.find(item => item.id === 'plain') || state.event.choices[0];
+      state = game.resolveStudioEvent(state, choice.id);
+    }
+    state = game.stepDay(state);
+  }
+  return state;
+}
+
+test('recruitment is seeded, stable and cannot hire a candidate twice', () => {
+  const state = game.nameCompany(game.createStudio(42), '公司');
+  const saved = JSON.stringify(state);
+  const first = game.publishRecruitment(state, 'code');
+  assert.equal(JSON.stringify(state), saved);
+  assert.deepEqual(first, game.publishRecruitment(state, 'code'));
+  assert.deepEqual(first, game.publishRecruitment(first, 'code'));
+  const hired = game.hire(first, first.candidates.code.people[0].id);
+  assert.throws(() => game.hire(hired, first.candidates.code.people[0].id));
+  assert.ok(game.monthlyCost(hired) > game.monthlyCost(state));
+  assert.notDeepEqual(game.publishRecruitment({ ...first, day: 15 }, 'code').candidates, first.candidates);
+});
+
+test('distinct roles produce their own work and tools improve only their role', () => {
+  let state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
+  const noArt = game.projectMetrics(state.project).visual;
+  state = game.publishRecruitment(state, 'art');
+  state = game.hire(state, state.candidates.art.people[0].id);
+  assert.equal(game.projectMetrics(state.project).visual, noArt);
+  const capacity = game.rates(state);
+  const equipped = game.buyTool(state, 'code');
+  assert.ok(game.rates(equipped).code > capacity.code);
+  assert.equal(game.rates(equipped).art, capacity.art);
+  assert.throws(() => game.buyTool(equipped, 'code'));
+  const next = game.stepDay(equipped);
+  assert.ok(next.project.done > 0);
+  assert.ok(game.projectMetrics(next.project).visual > noArt);
+  assert.ok(next.staff.every(person => person.work > 0));
+  assert.equal(next.project.test, null);
+  assert.equal(game.validStudio(next), true);
+});
+
+test('first project pauses at prototype and demo instead of skipping decisions', () => {
+  let state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
+  while (!state.event) state = game.stepDay(state);
+  assert.equal(state.event.id, 'prototype');
+  assert.throws(() => game.stepDay(state));
+  state = game.resolveStudioEvent(state, 'continue');
+  while (!state.event) state = game.stepDay(state);
+  assert.equal(state.event.id, 'visual');
+  state = game.resolveStudioEvent(state, 'plain');
+  while (!state.event) state = game.stepDay(state);
+  assert.equal(state.event.id, 'demo');
+  state = game.resolveStudioEvent(state, 'continue');
+  const original = JSON.stringify(state);
+  const tested = game.testDemo(state, 30);
+  assert.equal(JSON.stringify(state), original);
+  assert.equal(tested.project.test.count, 30);
+  assert.ok(tested.project.test.findings.some(item => item.key === 'visual' && item.value === 0));
+  assert.ok(tested.project.followers > state.project.followers);
+  assert.equal(tested.event.id, 'feedback');
+  assert.equal(game.validStudio(tested), true);
+  assert.throws(() => game.testDemo(tested));
+  assert.throws(() => game.testDemo(game.resolveStudioEvent(tested, 'continue')));
+});
+
+test('polish, bug fixes and retesting reflect actual production', () => {
+  let state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
+  state = studioDays(state, 25);
+  const before = game.projectMetrics(state.project);
+  state = game.setFocus(state, 'bugs');
+  state = studioDays(state, 5);
+  assert.ok(state.project.defects < before.defects);
+  assert.ok(game.projectMetrics(state.project).stability > before.stability);
+  const gameplay = game.projectMetrics(state.project).gameplay;
+  const done = state.project.done;
+  state = studioDays(game.setFocus(state, 'polish'), 5);
+  assert.equal(state.project.done, done);
+  assert.ok(game.projectMetrics(state.project).gameplay > gameplay);
+});
+
+test('launch separates followers, buyers, reviews and allows word of mouth growth', () => {
+  let state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
+  state.project.done = state.project.total;
+  state.project.codeValue = state.project.total * 95;
+  state.project.artDone = state.project.artTotal;
+  state.project.artValue = state.project.artTotal * 95;
+  state.project.polish = 10;
+  state.project.followers = 100;
+  const launched = game.launchProject(state);
+  const book = launched.catalog[0];
+  assert.ok(book.units < book.openingFollowers);
+  assert.ok(book.reviewScore > 80);
+  const grown = studioDays(game.resolveStudioEvent(launched, 'continue'), 15);
+  assert.ok(grown.catalog[0].dailyUnits > book.dailyUnits);
+  assert.ok(grown.catalog[0].reviewCount > book.reviewCount);
+  const poor = structuredClone(launched);
+  poor.catalog[0].reviewScore = 30;
+  poor.catalog[0].metrics = { progress: 100, gameplay: 25, visual: 15, stability: 55, defects: 10 };
+  const declining = studioDays(game.resolveStudioEvent(poor, 'continue'), 15);
+  assert.ok(declining.catalog[0].dailyUnits < book.dailyUnits);
+  assert.equal(game.validStudio(grown), true);
+});
+
+test('new saves validate and legacy migration preserves cash and project progress', () => {
+  const state = game.startProject(staffedStudio(), { name: '首作', type: 'story', scale: 0 });
+  assert.equal(game.validStudio(JSON.parse(JSON.stringify(state))), true);
+  assert.deepEqual(game.restoreStudio(state), state);
+  assert.equal(game.validStudio({ ...state, accrued: NaN }), false);
+  assert.equal(game.validStudio({ ...state, candidates: { code: { batch: 0, people: [{}] } } }), false);
+  assert.equal(game.validStudio({ ...state, project: { ...state.project, test: {} } }), false);
+  const old = game.advance(start());
+  const next = game.restoreStudio(old);
+  assert.equal(next.cash, old.cash);
+  assert.ok(Math.abs(next.project.done / next.project.total - old.project.done / old.project.total) < 1e-8);
+  assert.equal(game.validStudio(next), true);
+  assert.throws(() => game.restoreStudio({ version: 2 }));
+});
+
+test('cash decisions take priority before an unaffordable month-end charge', () => {
+  const state = staffedStudio();
+  state.day = 30;
+  state.cash = 1;
+  state.accrued = 4;
+  const paused = game.stepDay(state);
+  assert.equal(paused.day, 30);
+  assert.equal(paused.cash, 1);
+  assert.equal(paused.event.id, 'cash');
+  assert.equal(paused.over, false);
+  const recovered = game.stepDay(game.resolveStudioEvent(paused, 'bridge'));
+  assert.equal(recovered.day, 31);
+  assert.equal(recovered.over, false);
+  assert.ok(recovered.report.payroll > 4);
+});
+
+test('forecast uses actual trait stages and has no production or money side effects', () => {
+  let state = game.startProject(staffedStudio(), { name: '预测核验', type: 'action', scale: 0 });
+  state.staff[0].trait = 'prototype';
+  const saved = JSON.stringify(state);
+  const forecast = game.projectForecast(state);
+  assert.equal(JSON.stringify(state), saved);
+  let days = 0;
+  while (!state.event || state.event.id !== 'ready') {
+    if (state.event) {
+      const choice = state.event.choices.find(item => item.id === 'continue') || state.event.choices.find(item => item.id === 'plain');
+      state = game.resolveStudioEvent(state, choice.id);
+    }
+    state = game.stepDay(state);
+    days++;
+  }
+  assert.equal(days, forecast.days);
+  assert.ok(Math.abs(state.project.invested - game.monthlyCost(state) / 30 * days) < 1e-8);
+});
+
+test('legacy large teams and released catalogs remain loadable without money creation', () => {
+  const large = { ...game.createGame(42), team: 2, cash: 73.25 };
+  const converted = game.restoreStudio(large);
+  assert.equal(converted.staff.length, 14);
+  assert.equal(game.validStudio(converted), true);
+  assert.equal(converted.cash, large.cash);
+  const old = game.skipToDecision(game.skipToDecision(game.createGame(42)));
+  const migrated = game.restoreStudio(old);
+  assert.equal(game.validStudio(migrated), true);
+  assert.equal(migrated.catalog[0].received, old.catalog[0].received);
+  assert.ok(migrated.catalog[0].legacyRemaining > 0);
+  const paid = studioDays(migrated, 10);
+  assert.ok(paid.catalog[0].received > migrated.catalog[0].received);
+});
+
+test('assets and plain visuals are alternatives rather than mandatory hires', () => {
+  const state = game.startProject(staffedStudio(), { name: '素材方案', type: 'story', scale: 0 });
+  const supplied = game.buyAssets(state);
+  assert.equal(state.cash - supplied.cash, 4);
+  assert.ok(game.projectMetrics(supplied.project).visual > 30);
+  assert.equal(supplied.staff.length, state.staff.length);
+  assert.equal(supplied.project.done, 0);
+  assert.throws(() => game.buyAssets(supplied));
+  let plain = structuredClone(state);
+  plain.project.done = plain.project.total;
+  plain.project.codeValue = plain.project.done * 70;
+  plain.project.plain = true;
+  plain = game.launchProject(plain);
+  assert.equal(plain.catalog[0].metrics.visual, 0);
+  assert.ok(plain.catalog[0].units > 0);
+});
+
+test('daily seeded companies preserve valid saves and reconciled bills over multiple projects', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    let state = game.nameCompany(game.createStudio(seed), '持续经营');
+    for (const role of ['code', 'art']) {
+      state = game.publishRecruitment(state, role);
+      state = game.hire(state, state.candidates[role].people[seed % 3].id);
+    }
+    for (let day = 0; day < 500 && !state.over; day++) {
+      if (state.event) {
+        const choice = ['bridge', 'launch', 'continue', 'plain'].map(id => state.event.choices.find(item => item.id === id)).find(Boolean) || state.event.choices[0];
+        state = game.resolveStudioEvent(state, choice.id);
+      }
+      if (!state.project && !state.event) state = game.startProject(state, { name: `作品 ${state.catalog.length}`, type: Object.keys(game.TYPES)[seed % 3], scale: seed % 3 });
+      if (!state.event) state = game.stepDay(state);
+      assert.equal(game.validStudio(state), true, `seed ${seed}, day ${day}`);
+      if (state.report) assert.ok(Math.abs(state.report.opening + state.report.income - state.report.expense - state.report.closing) < 0.015);
+    }
+  }
 });

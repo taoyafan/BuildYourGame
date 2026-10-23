@@ -392,7 +392,503 @@
     return true;
   }
 
-  const api = { TYPES, SCALES, MATERIALS, TEAMS, PAY, PROMO, createGame, defaultPlan, planCost, applyPlan, takeTurn, testingOffer, runPlaytest, skipToDecision, burn, speed, personMonths, market, quality, qualityLabel, salesEstimate, tailIncome, catalogIncome, runway, forecast, resolveEvent, advance, validState };
+  function createStudio(seed = Date.now()) {
+    return {
+      version: 2, seed: seed >>> 0, day: 1, company: '', cash: 100,
+      staff: [], project: null, catalog: [], tools: [], candidates: {},
+      event: null, over: false, accrued: 0,
+      ledger: { opening: 100, income: 0, expense: 0, payroll: 0 },
+      report: null, history: [], tutorial: {}, notices: {}, bridgeUsed: false, lastRelease: null
+    };
+  }
+
+  const ROLES = {
+    code: { name: '程序员', task: '功能开发与缺陷修复', traits: ['prototype', 'careful', 'systems'] },
+    art: { name: '美术', task: '视觉制作与素材统一', traits: ['efficient', 'detail', 'versatile'] }
+  };
+  const TRAITS = {
+    prototype: { name: '原型能手', text: '原型阶段开发速度提高 35%。' },
+    careful: { name: '测试习惯', text: '新增缺陷减少 45%，修复效率提高 35%。' },
+    systems: { name: '系统经验', text: '玩法打磨效率提高 35%。' },
+    efficient: { name: '交付熟练', text: '视觉制作速度提高 25%。' },
+    detail: { name: '细节打磨', text: '完成的视觉工作表现提高，制作速度降低 10%。' },
+    versatile: { name: '风格适配', text: '视觉制作速度提高 10%，作品细节能力提高 7 点。' }
+  };
+  const STUDIO_TOOLS = {
+    code: { name: '开发工具链', cost: 6, multiplier: 1.3, text: '程序开发、玩法打磨与缺陷修复速度提高 30%。' },
+    art: { name: '视觉制作工具', cost: 5, multiplier: 1.25, text: '美术制作速度提高 25%，不直接增加视觉表现。' }
+  };
+  const AUDIENCES = {
+    story: { name: '叙事玩家', weights: [0.45, 0.4, 0.15], work: 38, price: 0.006 },
+    sim: { name: '经营玩家', weights: [0.6, 0.15, 0.25], work: 50, price: 0.008 },
+    action: { name: '动作玩家', weights: [0.4, 0.25, 0.35], work: 62, price: 0.01 }
+  };
+  const FAMILY_NAMES = ['林', '陈', '周', '许', '沈', '叶', '宋', '程', '顾', '苏', '陆', '江'];
+  const GIVEN_NAMES = ['知夏', '明远', '可宁', '星河', '亦舟', '思齐', '安然', '予墨', '嘉禾', '清和', '一帆', '若溪'];
+
+  function studioLog(state, title, text) {
+    state.history.unshift({ day: state.day, title, text });
+    state.history = state.history.slice(0, 120);
+  }
+
+  function studioAction(state) {
+    if (state.over) throw new Error('公司已停止经营。');
+    return clone(state);
+  }
+
+  function spend(state, amount, label) {
+    if (amount > state.cash) throw new Error('当前资金不足。');
+    state.cash = round(state.cash - amount);
+    state.ledger.expense = round(state.ledger.expense + amount);
+    studioLog(state, label, `支付 ${amount.toFixed(2)} 万。`);
+  }
+
+  function nameCompany(state, name) {
+    const next = studioAction(state);
+    const value = String(name || '').trim().slice(0, 24);
+    if (!value) throw new Error('请输入公司名称。');
+    next.company = value;
+    studioLog(next, '工作室成立', `${value}，从第一位同事和第一款作品开始。`);
+    return next;
+  }
+
+  function publishRecruitment(state, role) {
+    if (!Object.hasOwn(ROLES, role)) throw new Error('招聘岗位无效。');
+    const next = studioAction(state);
+    const batch = Math.floor((next.day - 1) / 14);
+    if (next.candidates[role] && next.candidates[role].batch === batch) return next;
+    const people = Array.from({ length: 3 }, (_, index) => {
+      const skill = Math.round(48 + random(next) * 43);
+      const pace = Math.round(65 + random(next) * 45);
+      const trait = ROLES[role].traits[Math.floor(random(next) * ROLES[role].traits.length)];
+      const name = FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)];
+      const wage = round(1.3 + skill * 0.035 + (pace - 65) * 0.018 + random(next) * 0.7);
+      return { id: `${role}-${batch}-${index}-${next.seed}`, name, role, skill, pace, trait, wage, hired: false, work: 0 };
+    });
+    next.candidates[role] = { batch, people };
+    studioLog(next, '发布招聘', `${ROLES[role].name}岗位收到 ${people.length} 份简历；本批候选人保持至第 ${(batch + 1) * 14} 天。`);
+    return next;
+  }
+
+  function hire(state, id) {
+    const next = studioAction(state);
+    const person = Object.values(next.candidates).flatMap(pool => pool.people).find(item => item.id === id);
+    if (!person || person.hired) throw new Error('候选人已不可录用。');
+    if (next.staff.length >= 16) throw new Error('当前小型工作室最多容纳 16 人。');
+    if (next.cash - next.accrued < monthlyCost(next) + person.wage) throw new Error('资金不足以覆盖录用后的近期工资，请先控制开支。');
+    person.hired = true;
+    next.staff.push({ ...person, joined: next.day });
+    studioLog(next, `${person.name} 加入`, `${ROLES[person.role].name}，月薪 ${person.wage.toFixed(2)} 万；${TRAITS[person.trait].text}`);
+    return next;
+  }
+
+  function dismiss(state, id) {
+    const next = studioAction(state);
+    const person = next.staff.find(item => item.id === id);
+    if (!person) throw new Error('员工不存在。');
+    next.staff = next.staff.filter(item => item.id !== id);
+    studioLog(next, `${person.name} 离职`, '此前工作与已产生工资保留，后续不再计薪。');
+    return next;
+  }
+
+  function rates(state) {
+    const project = state.project;
+    let code = 0;
+    let art = 0;
+    for (const person of state.staff) {
+      let value = person.pace / 100;
+      if (person.role === 'code' && person.trait === 'prototype' && project && project.done < project.total * 0.25) value *= 1.35;
+      if (person.role === 'art') value *= person.trait === 'efficient' ? 1.25 : person.trait === 'detail' ? 0.9 : 1.1;
+      if (state.tools.includes(person.role)) value *= STUDIO_TOOLS[person.role].multiplier;
+      if (person.role === 'code') code += value;
+      else art += value;
+    }
+    return { code, art };
+  }
+
+  function startProject(state, plan) {
+    const next = studioAction(state);
+    if (!next.company) throw new Error('请先命名公司。');
+    if (next.project) throw new Error('请先完成当前项目。');
+    if (!plan || !Object.hasOwn(TYPES, plan.type) || !tier(plan.scale)) throw new Error('项目方向无效。');
+    const name = String(plan.name || '').trim().slice(0, 24);
+    if (!name) throw new Error('请输入游戏名称。');
+    const total = AUDIENCES[plan.type].work * [1, 1.65, 2.4][plan.scale];
+    next.project = {
+      id: `${next.day}-${next.seed}-${next.catalog.length}`, name, type: plan.type, scale: plan.scale,
+      total, done: 0, artTotal: total * 0.7, artDone: 0, codeValue: 0, artValue: 0,
+      defects: 0, defectDebt: 0, polish: 0, focus: 'develop', invested: 0,
+      followers: Math.round(120 * market(plan.type, Math.ceil(next.day / 30)).multiplier),
+      checkpoints: {}, test: null, tests: 0, testCount: 0, assets: false, plain: false, started: next.day
+    };
+    studioLog(next, '新作立项', `《${name}》面向${AUDIENCES[plan.type].name}，${SCALES[plan.scale].name}。`);
+    return next;
+  }
+
+  function projectMetrics(project) {
+    const progress = project.done / project.total;
+    const ability = project.done > 0 ? project.codeValue / project.done : 0;
+    const artAbility = project.artDone > 0 ? project.artValue / project.artDone : 0;
+    return {
+      progress: round(progress * 100),
+      gameplay: round(clamp(progress * 45 + ability * 0.4 + project.polish, 0, 98)),
+      visual: round(clamp(project.artDone / project.artTotal * (18 + artAbility * 0.75), 0, 98)),
+      stability: round(clamp(98 - project.defects * 4, 18, 98)), defects: project.defects
+    };
+  }
+
+  function projectForecast(state) {
+    if (!state.project) return null;
+    const project = state.project;
+    const capacity = rates(state);
+    const remaining = Math.max(0, project.total - project.done);
+    let days = remaining <= 0 ? 0 : null;
+    if (remaining > 0 && capacity.code && project.focus === 'develop') {
+      const probe = clone(state);
+      days = 0;
+      while (probe.project.done < probe.project.total - 0.001 && days < 10000) {
+        produceDay(probe);
+        days += 1;
+      }
+    }
+    return { ...capacity, days, metrics: projectMetrics(project) };
+  }
+
+  function buyTool(state, role) {
+    if (!Object.hasOwn(STUDIO_TOOLS, role)) throw new Error('工具不存在。');
+    const next = studioAction(state);
+    if (next.tools.includes(role)) throw new Error('该工具已购置。');
+    spend(next, STUDIO_TOOLS[role].cost, `购置${STUDIO_TOOLS[role].name}`);
+    next.tools.push(role);
+    return next;
+  }
+
+  function buyAssets(state) {
+    const next = studioAction(state);
+    if (!next.project || next.project.assets) throw new Error('当前无法采购素材。');
+    spend(next, 4 * [1, 1.5, 2][next.project.scale], '采购视觉素材');
+    const project = next.project;
+    const amount = Math.min(project.artTotal - project.artDone, project.artTotal * 0.55);
+    project.artDone += amount;
+    project.artValue += amount * 64;
+    project.assets = true;
+    project.invested = round(project.invested + 4 * [1, 1.5, 2][project.scale]);
+    return next;
+  }
+
+  function setFocus(state, focus) {
+    if (!['develop', 'polish', 'bugs'].includes(focus)) throw new Error('工作安排无效。');
+    const next = studioAction(state);
+    if (!next.project) throw new Error('当前没有项目。');
+    next.project.focus = focus;
+    studioLog(next, '调整开发重点', { develop: '继续实现计划内容。', polish: '程序团队暂缓内容开发，集中打磨玩法。', bugs: '程序团队暂缓内容开发，集中修复缺陷。' }[focus]);
+    return next;
+  }
+
+  function audienceScore(metrics, type) {
+    const weights = AUDIENCES[type].weights;
+    return metrics.gameplay * weights[0] + metrics.visual * weights[1] + metrics.stability * weights[2];
+  }
+
+  function findings(metrics, type) {
+    const weights = AUDIENCES[type].weights;
+    const items = [
+      { key: 'polish', title: '玩法体验', value: metrics.gameplay, text: metrics.gameplay < 65 ? '核心体验还不够完整，继续开发或留出时间打磨。' : '核心体验已得到认可，继续打磨仍可能改善评价。' },
+      { key: 'visual', title: '视觉表现', value: metrics.visual, text: metrics.visual < 55 ? '画面表达较弱，可考虑美术、素材或接受朴素风格。' : '视觉表达清晰，已有制作投入得到认可。' },
+      { key: 'bugs', title: '稳定性', value: metrics.stability, text: metrics.defects ? `发现 ${metrics.defects} 项已知缺陷；修复会改善体验。` : '本轮没有发现影响体验的已知缺陷。' }
+    ];
+    return items.sort((left, right) => (100 - right.value) * weights[['polish', 'visual', 'bugs'].indexOf(right.key)] - (100 - left.value) * weights[['polish', 'visual', 'bugs'].indexOf(left.key)]);
+  }
+
+  function playtestOffer(state) {
+    const project = state.project;
+    const reason = !project ? '先立项开发' : project.done < project.total * 0.55 ? '完成 Demo 后开放' : project.test && state.day - project.test.day < 3 ? '间隔至少 3 天再招募新一批玩家' : '';
+    return { available: !reason && !state.over && !state.event, reason };
+  }
+
+  function testDemo(state, count = 30) {
+    if (![30, 100].includes(count)) throw new Error('测试批次无效。');
+    const offer = playtestOffer(state);
+    if (!offer.available) throw new Error(offer.reason || '先处理当前决策。');
+    const next = studioAction(state);
+    const cost = count === 30 ? 0.8 : 2;
+    spend(next, cost, '招募试玩玩家');
+    const project = next.project;
+    const metrics = projectMetrics(project);
+    const feedback = findings(metrics, project.type);
+    const score = round(clamp(audienceScore(metrics, project.type) + (random(next) - 0.5) * 6 * Math.sqrt(30 / count), 0, 100));
+    project.invested = round(project.invested + cost);
+    project.tests += 1;
+    project.testCount += count;
+    project.followers += Math.round(count * score / 100 * 2);
+    project.test = { day: next.day, count, score, findings: feedback, source: '试玩玩家' };
+    next.event = { id: 'feedback', title: '试玩反馈送达', text: `${count} 位${AUDIENCES[project.type].name}，本轮评价 ${score.toFixed(1)}。${feedback[0].text}`, choices: [
+      { id: 'polish', title: '集中打磨玩法', detail: '暂缓新内容，已有玩法表现随工作逐步改善。' },
+      { id: 'visual', title: '优先检查视觉投入', detail: '查看美术招聘与素材方案，不自动支付费用。' },
+      { id: 'bugs', title: '集中修复缺陷', detail: '暂缓新内容，已知缺陷随工作逐项减少。' },
+      { id: 'continue', title: '按现有安排继续', detail: '保留反馈，不改变当前研发重点。' }
+    ] };
+    studioLog(next, 'Demo 测试', `${count} 人参与，评价 ${score.toFixed(1)}；${feedback[0].text}`);
+    return next;
+  }
+
+  function promote(state, tierIndex) {
+    if (![0, 1, 2].includes(tierIndex)) throw new Error('推广方案无效。');
+    const next = studioAction(state);
+    if (!next.project || next.project.done < next.project.total * 0.55) throw new Error('请先制作可展示的 Demo。');
+    const cost = [2, 6, 12][tierIndex];
+    const gain = Math.round([350, 1100, 2300][tierIndex] * market(next.project.type, Math.ceil(next.day / 30)).multiplier);
+    spend(next, cost, 'Demo 推广');
+    next.project.followers += gain;
+    next.project.invested = round(next.project.invested + cost);
+    studioLog(next, '推广结果', `新增 ${gain} 位关注者；关注不等于购买。`);
+    return next;
+  }
+
+  function launchProject(state) {
+    const next = studioAction(state);
+    const project = next.project;
+    if (!project || project.done < project.total - 0.001) throw new Error('计划内容尚未完成。');
+    const metrics = projectMetrics(project);
+    const trend = market(project.type, Math.ceil(next.day / 30));
+    const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : 0.48;
+    const units = Math.max(1, Math.round(project.followers * (0.2 + fit * 0.5) * trend.multiplier));
+    const price = AUDIENCES[project.type].price * [1, 1.25, 1.6][project.scale];
+    const receipt = round(units * price);
+    const score = round(clamp(audienceScore(metrics, project.type) + (random(next) - 0.5) * 3, 0, 100));
+    const book = {
+      id: project.id, name: project.name, type: project.type, scale: project.scale,
+      released: next.day, metrics, invested: round(project.invested), received: receipt,
+      price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: project.followers,
+      followers: project.followers, dailyUnits: units / 15, reviewScore: score,
+      reviewCount: Math.max(1, Math.round(units * 0.12)), tested: project.tests > 0,
+      testScore: project.test ? project.test.score : null, testCount: project.testCount, trend: trend.label,
+      lastGrowth: 0, lastDayUnits: units, team: next.staff.map(person => ({ name: person.name, role: person.role, trait: person.trait }))
+    };
+    next.cash = round(next.cash + receipt);
+    next.ledger.income = round(next.ledger.income + receipt);
+    next.catalog.unshift(book);
+    next.lastRelease = book.id;
+    next.project = null;
+    next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。首发回款不是最终利润。`, choices: [{ id: 'continue', title: '查看结果后继续经营', detail: '后续销量与玩家评价继续变化，可筹备下一款作品。' }] };
+    studioLog(next, next.event.title, next.event.text);
+    return next;
+  }
+
+  function resolveStudioEvent(state, choice) {
+    if (!state.event || !state.event.choices.some(item => item.id === choice)) throw new Error('当前选择无效。');
+    const next = studioAction(state);
+    const event = next.event;
+    next.event = null;
+    if (choice === 'bridge') {
+      if (next.bridgeUsed) throw new Error('创始人积蓄已使用。');
+      next.bridgeUsed = true;
+      next.cash = round(next.cash + 35);
+      next.ledger.income = round(next.ledger.income + 35);
+    }
+    if (next.project) {
+      if (choice === 'plain') next.project.plain = true;
+      if (choice === 'assets') return buyAssets(next);
+      if (event.id === 'feedback' && ['polish', 'bugs'].includes(choice)) next.project.focus = choice;
+      if (choice === 'launch') return launchProject(next);
+      if (choice === 'polish' && event.id === 'ready') next.project.focus = 'polish';
+    }
+    studioLog(next, event.title, event.choices.find(item => item.id === choice).title);
+    return next;
+  }
+
+  function produceDay(state) {
+    const project = state.project;
+    if (!project) return;
+    project.invested += monthlyCost(state) / 30;
+    for (const person of state.staff) {
+      let amount = person.pace / 100 * (state.tools.includes(person.role) ? STUDIO_TOOLS[person.role].multiplier : 1);
+      if (person.role === 'code') {
+        if (project.focus === 'bugs') {
+          project.defectDebt -= amount * (person.trait === 'careful' ? 1.35 : 1);
+          while (project.defectDebt < 0 && project.defects > 0) { project.defects -= 1; project.defectDebt += 1; }
+          project.defectDebt = Math.max(0, project.defectDebt);
+        } else if (project.focus === 'polish') {
+          project.polish = Math.min(14, project.polish + amount * (person.trait === 'systems' ? 0.81 : 0.6));
+        } else {
+          if (person.trait === 'prototype' && project.done < project.total * 0.25) amount *= 1.35;
+          amount = Math.min(amount, project.total - project.done);
+          project.done += amount;
+          project.codeValue += amount * person.skill;
+          project.defectDebt += amount * (100 - person.skill) / 100 * 0.7 * (person.trait === 'careful' ? 0.55 : 1);
+          while (project.defectDebt >= 1) { project.defects += 1; project.defectDebt -= 1; }
+        }
+      } else {
+        amount *= person.trait === 'efficient' ? 1.25 : person.trait === 'detail' ? 0.9 : 1.1;
+        amount = Math.min(amount, project.artTotal - project.artDone);
+        project.artDone += amount;
+        project.artValue += amount * Math.min(100, person.skill + (person.trait === 'detail' ? 16 : person.trait === 'versatile' ? 7 : 0));
+      }
+      person.work = round(person.work + amount);
+    }
+  }
+
+  function salesDay(state) {
+    for (const book of state.catalog) {
+      const age = state.day - book.released;
+      if (age <= 0 || age > 360) continue;
+      if (book.legacyRemaining !== undefined) {
+        const income = Math.min(book.legacyRemaining, book.legacyDaily);
+        book.legacyRemaining = round(book.legacyRemaining - income);
+        book.received = round(book.received + income);
+        state.cash = round(state.cash + income);
+        state.ledger.income = round(state.ledger.income + income);
+        continue;
+      }
+      const growth = clamp(0.96 + (book.reviewScore - 55) * 0.002, 0.88, 1.045);
+      const saturation = Math.max(0.1, 1 - book.units / (3500 * [1, 2, 4][book.scale]));
+      book.dailyUnits = Math.max(0, book.dailyUnits * growth * (0.985 + saturation * 0.015));
+      const units = Math.max(0, Math.round(book.dailyUnits));
+      const income = round(units * book.price);
+      book.lastDayUnits = units;
+      book.lastGrowth = round((growth - 1) * 100);
+      book.units += units;
+      const reviews = Math.round(units * 0.12);
+      if (reviews) {
+        const score = clamp(audienceScore(book.metrics, book.type) + (random(state) - 0.5) * 6 / Math.sqrt(reviews), 0, 100);
+        book.reviewScore = round((book.reviewScore * book.reviewCount + score * reviews) / (book.reviewCount + reviews));
+        book.reviewCount += reviews;
+      }
+      book.followers += Math.max(0, Math.round(units * (book.reviewScore - 45) / 100));
+      book.received = round(book.received + income);
+      state.cash = round(state.cash + income);
+      state.ledger.income = round(state.ledger.income + income);
+    }
+  }
+
+  function cashWarning(state) {
+    const key = Math.floor((state.day - 1) / 30);
+    if (!state.company || state.cash - state.accrued >= monthlyCost(state) * 0.6 || state.notices[`cash-${key}`]) return null;
+    state.notices[`cash-${key}`] = true;
+    return { id: 'cash', title: '近期工资需要准备', text: `现金 ${state.cash.toFixed(2)} 万，已累计应付 ${state.accrued.toFixed(2)} 万。可以先查看团队和账单再继续。`, choices: [...(!state.bridgeUsed ? [{ id: 'bridge', title: '投入创始人积蓄', detail: '补充 35 万，整局限一次，不代表经营问题已经解决。' }] : []), { id: 'continue', title: '自行调整后继续', detail: '不获得额外资金，月底仍需支付已产生费用。' }] };
+  }
+
+  function studioCheckpoint(state) {
+    const warning = cashWarning(state);
+    if (warning) return warning;
+    const project = state.project;
+    const tutorial = state.catalog.length === 0;
+    if (project) {
+      const ratio = project.done / project.total;
+      if (ratio >= 0.25 && !project.checkpoints.prototype) {
+        project.checkpoints.prototype = true;
+        studioLog(state, '可玩原型完成', '核心功能已经可以运行。开发工具可提高后续速度，但不能直接买到玩家好评。');
+        if (tutorial) return { id: 'prototype', title: '第一个可玩原型', text: '程序员的工作已经变成可运行的内容。可以查看工具带来的效率变化，也可以保持现有安排。', choices: [{ id: 'tools', title: '查看开发工具', detail: '比较投入与每天产能，不自动购买。' }, { id: 'continue', title: '按现有安排开发', detail: '不额外花钱，继续制作。' }] };
+      }
+      if (ratio >= 0.3 && !project.checkpoints.visual) {
+        project.checkpoints.visual = true;
+        if (tutorial && !state.staff.some(person => person.role === 'art') && !project.assets) return { id: 'visual', title: '原型能玩，视觉还很朴素', text: '视觉不会随程序进度自动变好。美术人员负责持续制作，素材能直接提供部分成果，也可以接受当前风格。', choices: [{ id: 'recruit', title: '查看美术招聘', detail: '比较候选人与持续工资。' }, { id: 'assets', title: '采购现成素材', detail: `一次性 ${4 * [1, 1.5, 2][project.scale]} 万，完成部分视觉工作。` }, { id: 'plain', title: '保持朴素表现', detail: '不额外投入，测试时观察目标玩家是否接受。' }] };
+      }
+      if (ratio >= 0.55 && !project.checkpoints.demo) {
+        project.checkpoints.demo = true;
+        studioLog(state, 'Demo 可试玩', '可以招募试玩玩家或展示 Demo，评价与关注人数是两件不同的事。');
+        if (tutorial) return { id: 'demo', title: 'Demo 已经可以交给玩家', text: '测试后才有试玩评价；测试人数、关注人数和购买人数分别记录。可以测试，也可以承担未知评价的风险继续开发。', choices: [{ id: 'test', title: '招募首批测试玩家', detail: '选择小批或较充分的样本。' }, { id: 'continue', title: '暂不测试，继续开发', detail: '保留当前投入，不凭空生成口碑。' }] };
+      }
+      if (ratio >= 1 && !project.checkpoints.ready) {
+        project.checkpoints.ready = true;
+        return { id: 'ready', title: '计划内容已完成', text: `《${project.name}》可以交付。完成度不代表玩家一定喜欢；可以检查试玩、缺陷和关注情况，再决定是否发售。`, choices: [{ id: 'launch', title: '正式发售', detail: '首发由关注人数与购买转化形成，后续销售受玩家口碑影响。' }, { id: 'polish', title: '先留出时间打磨', detail: '继续产生工资，玩法逐步改善；之后可在项目菜单发售。' }] };
+      }
+    }
+    return null;
+  }
+
+  function monthlyCost(state) {
+    return round(1.5 + state.staff.reduce((sum, person) => sum + person.wage, 0));
+  }
+
+  function stepDay(state) {
+    if (state.over) throw new Error('公司已停止经营。');
+    if (state.event) throw new Error('请先处理关键决策。');
+    const next = clone(state);
+    const warning = cashWarning(next);
+    if (warning) { next.event = warning; return next; }
+    next.accrued += monthlyCost(next) / 30;
+    produceDay(next);
+    salesDay(next);
+    if (next.day % 30 === 0) {
+      const payroll = round(next.accrued);
+      next.cash = round(next.cash - payroll);
+      next.ledger.payroll = payroll;
+      next.ledger.expense = round(next.ledger.expense + payroll);
+      next.report = { month: next.day / 30, ...next.ledger, closing: next.cash, net: round(next.ledger.income - next.ledger.expense) };
+      next.ledger = { opening: next.cash, income: 0, expense: 0, payroll: 0 };
+      next.accrued = 0;
+      next.over = next.cash < 0;
+      studioLog(next, `第 ${next.report.month} 月账单`, `收入 ${next.report.income.toFixed(2)} 万，支出 ${next.report.expense.toFixed(2)} 万，净变化 ${next.report.net.toFixed(2)} 万。`);
+    }
+    next.day += 1;
+    if (!next.over) next.event = studioCheckpoint(next);
+    return next;
+  }
+
+  function validStudio(state) {
+    const number = value => typeof value === 'number' && Number.isFinite(value);
+    const nonnegative = value => number(value) && value >= 0;
+    const text = value => typeof value === 'string' && value.length <= 5000;
+    const identifier = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
+    const person = value => value && identifier(value.id) && text(value.name) && Object.hasOwn(ROLES, value.role) && ROLES[value.role].traits.includes(value.trait) && number(value.skill) && value.skill >= 0 && value.skill <= 100 && number(value.pace) && value.pace > 0 && value.pace <= 200 && number(value.wage) && value.wage > 0 && nonnegative(value.work) && typeof value.hired === 'boolean';
+    const metrics = value => value && ['progress', 'gameplay', 'visual', 'stability', 'defects'].every(key => nonnegative(value[key]));
+    const feedback = value => value && Number.isInteger(value.day) && nonnegative(value.count) && number(value.score) && value.score >= 0 && value.score <= 100 && text(value.source) && Array.isArray(value.findings) && value.findings.every(item => item && text(item.key) && text(item.title) && number(item.value) && text(item.text));
+    if (!state || state.version !== 2 || !Number.isInteger(state.day) || state.day < 1 || !Number.isInteger(state.seed) || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || typeof state.bridgeUsed !== 'boolean') return false;
+    if (!Array.isArray(state.staff) || state.staff.length > 16 || !state.staff.every(person) || new Set(state.staff.map(item => item.id)).size !== state.staff.length) return false;
+    if (!Array.isArray(state.tools) || !state.tools.every(key => Object.hasOwn(STUDIO_TOOLS, key)) || new Set(state.tools).size !== state.tools.length) return false;
+    if (!state.candidates || typeof state.candidates !== 'object' || !Object.entries(state.candidates).every(([role, pool]) => Object.hasOwn(ROLES, role) && pool && Number.isInteger(pool.batch) && Array.isArray(pool.people) && pool.people.length <= 3 && pool.people.every(item => person(item) && item.role === role))) return false;
+    if (!state.ledger || !number(state.ledger.opening) || !['income', 'expense', 'payroll'].every(key => nonnegative(state.ledger[key]))) return false;
+    if (!state.notices || typeof state.notices !== 'object' || !state.tutorial || typeof state.tutorial !== 'object') return false;
+    if (!Array.isArray(state.history) || !state.history.every(item => item && Number.isInteger(item.day) && text(item.title) && text(item.text))) return false;
+    if (state.event && (!identifier(state.event.id) || !text(state.event.title) || !text(state.event.text) || !Array.isArray(state.event.choices) || !state.event.choices.length || !state.event.choices.every(item => item && identifier(item.id) && text(item.title) && text(item.detail)))) return false;
+    if (state.report && (!Number.isInteger(state.report.month) || !['opening', 'income', 'expense', 'payroll', 'closing', 'net'].every(key => number(state.report[key])))) return false;
+    if (state.project) {
+      const project = state.project;
+      if (!identifier(project.id) || !text(project.name) || !Object.hasOwn(TYPES, project.type) || !tier(project.scale) || !['total', 'done', 'artTotal', 'artDone', 'codeValue', 'artValue', 'defects', 'defectDebt', 'polish', 'invested', 'followers', 'tests', 'testCount', 'started'].every(key => nonnegative(project[key])) || project.total <= 0 || project.artTotal <= 0 || project.done > project.total + 0.001 || project.artDone > project.artTotal + 0.001 || !['develop', 'polish', 'bugs'].includes(project.focus) || !project.checkpoints || typeof project.checkpoints !== 'object' || typeof project.assets !== 'boolean' || typeof project.plain !== 'boolean' || project.test && !feedback(project.test)) return false;
+    }
+    if (!Array.isArray(state.catalog) || !state.catalog.every(book => book && identifier(book.id) && text(book.name) && Object.hasOwn(TYPES, book.type) && tier(book.scale) && metrics(book.metrics) && ['released', 'invested', 'received', 'price', 'units', 'openingUnits', 'openingReceipt', 'openingFollowers', 'followers', 'dailyUnits', 'reviewScore', 'reviewCount', 'testCount', 'lastDayUnits'].every(key => nonnegative(book[key])) && book.price > 0 && number(book.lastGrowth) && (book.testScore === null || number(book.testScore)) && typeof book.tested === 'boolean' && text(book.trend) && Array.isArray(book.team) && book.team.every(item => item && text(item.name) && Object.hasOwn(ROLES, item.role) && Object.hasOwn(TRAITS, item.trait)) && (book.legacyRemaining === undefined || nonnegative(book.legacyRemaining) && nonnegative(book.legacyDaily)))) return false;
+    return state.lastRelease === null || typeof state.lastRelease === 'string';
+  }
+
+  function restoreStudio(saved) {
+    if (validStudio(saved)) return clone(saved);
+    if (!validState(saved)) throw new Error('这不是有效的工作室存档，当前进度未改变。');
+    const next = createStudio(saved.seed);
+    next.day = (saved.month - 1) * 30 + 1;
+    next.company = '日光工作室';
+    next.cash = saved.cash;
+    next.over = saved.over;
+    next.bridgeUsed = saved.bridgeUsed;
+    next.ledger.opening = next.cash;
+    next.staff = Array.from({ length: TEAMS[saved.team].people }, (_, index) => {
+      const role = index % 3 === 2 ? 'art' : 'code';
+      return { id: `legacy-${index}`, name: `原团队同事 ${index + 1}`, role, skill: PAY[saved.pay].ability, pace: 85, trait: role === 'code' ? 'systems' : 'versatile', wage: PAY[saved.pay].wage, hired: true, joined: 1, work: 0 };
+    });
+    next.history = saved.history.map(item => ({ day: (item.month - 1) * 30 + 1, title: item.title, text: item.text }));
+    if (saved.project && !next.over) {
+      const source = saved.project;
+      const ratio = Math.min(1, source.done / source.total);
+      const started = startProject(next, { name: source.name, type: source.type, scale: source.scale });
+      next.project = started.project;
+      next.project.done = next.project.total * ratio;
+      next.project.codeValue = next.project.done * (source.done ? source.qualityWork / source.done : PAY[saved.pay].ability);
+      next.project.artDone = next.project.artTotal * ratio;
+      next.project.artValue = next.project.artDone * PAY[saved.pay].ability;
+      next.project.invested = source.invested;
+      next.project.followers = Math.round(120 + PROMO[source.promo].reach * 1200);
+      next.project.checkpoints = { prototype: ratio >= 0.25, visual: ratio >= 0.3, demo: ratio >= 0.55 };
+    }
+    next.catalog = saved.catalog.map((book, index) => {
+      const remaining = Math.max(0, round(book.sales - book.received));
+      const days = Math.max(1, 330 - (saved.month - book.released) * 30);
+      return { id: `legacy-book-${index}`, name: book.name, type: book.type, scale: book.scale, released: Math.max(1, book.released * 30), metrics: { progress: 100, gameplay: book.quality, visual: book.quality, stability: book.quality, defects: 0 }, invested: book.invested, received: book.received, price: AUDIENCES[book.type].price, units: Math.round(book.received / AUDIENCES[book.type].price), openingUnits: 0, openingReceipt: book.received, openingFollowers: 0, followers: 0, dailyUnits: 0, reviewScore: book.quality, reviewCount: 0, tested: Boolean(book.tested), testScore: null, testCount: 0, trend: '旧档迁移', lastGrowth: 0, lastDayUnits: 0, team: [], legacyRemaining: remaining, legacyDaily: remaining / days };
+    });
+    studioLog(next, '旧档已迁移', '保留余额、作品投入与完成比例；原团队转为具名员工。旧作余款继续到账，新项目采用日级规则。');
+    return next;
+  }
+
+  const api = { TYPES, SCALES, MATERIALS, TEAMS, PAY, PROMO, createGame, defaultPlan, planCost, applyPlan, takeTurn, testingOffer, runPlaytest, skipToDecision, burn, speed, personMonths, market, quality, qualityLabel, salesEstimate, tailIncome, catalogIncome, runway, forecast, resolveEvent, advance, validState, createStudio, monthlyCost, stepDay, ROLES, TRAITS, STUDIO_TOOLS, AUDIENCES, nameCompany, publishRecruitment, hire, dismiss, rates, startProject, projectMetrics, projectForecast, buyTool, buyAssets, setFocus, playtestOffer, testDemo, promote, launchProject, resolveStudioEvent, validStudio, restoreStudio };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.StudioGame = api;
 })(globalThis);

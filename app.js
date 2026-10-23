@@ -2,71 +2,48 @@
   'use strict';
 
   const game = window.StudioGame;
-  const storageKey = 'sunlight-studio-v1';
+  const storageKey = 'sunlight-studio-v2';
   const root = document.getElementById('game-root');
-  const eventDialog = document.getElementById('event-dialog');
-  const resetDialog = document.getElementById('reset-dialog');
-  const resultDialog = document.getElementById('result-dialog');
-  const expandedPanels = new Set();
+  const dialog = document.getElementById('menu-dialog');
   let storageAvailable = true;
   let loadNotice = '';
+  let recoveryRaw = null;
   let state = load();
-  let plan = game.defaultPlan(state);
-  let historyExpanded = false;
-  let shownEvent = '';
+  let playing = false;
+  let speed = 1;
+  let elapsed = 0;
+  let resumeAfterMenu = false;
+  let routes = [];
   let toastTimer;
 
   function load() {
     try {
-      const raw = localStorage.getItem(storageKey);
+      const raw = localStorage.getItem(storageKey) || localStorage.getItem('sunlight-studio-v1');
       if (raw) {
-        const restored = JSON.parse(raw);
-        if (game.validState(restored)) return restored;
-        loadNotice = '旧存档无法识别，已建立新公司；旧数据尚未覆盖。';
+        const saved = JSON.parse(raw);
+        const restored = game.restoreStudio(saved);
+        if (saved.version === 1) loadNotice = '旧档已迁移：余额和项目完成比例保留，时间暂停；原存档仍保留。';
+        return restored;
       }
     } catch {
-      storageAvailable = false;
-      loadNotice = '本机存档暂不可用，本次进度可通过导出保留。';
+      try { recoveryRaw = localStorage.getItem(storageKey); } catch { storageAvailable = false; }
+      loadNotice = '存档无法读取；原数据未覆盖。可导入备份，或建立新公司。';
     }
-    return game.createGame();
+    return game.createStudio();
   }
 
   function escape(value) {
     return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
   }
 
-  function icon(name) {
-    return `<i data-lucide="${name}" aria-hidden="true"></i>`;
+  function icon(name) { return `<i data-lucide="${name}" aria-hidden="true"></i>`; }
+  function icons() { if (window.lucide) window.lucide.createIcons(); }
+  function money(value) { return `${value.toFixed(2)} 万`; }
+  function number(value) { return Math.round(value).toLocaleString('zh-CN'); }
+  function button(action, text, symbol, data = '', disabled = false, secondary = true) {
+    return `<button class="button ${secondary ? 'secondary' : ''}" data-action="${action}" ${data} ${disabled ? 'disabled' : ''}>${icon(symbol)}${text}</button>`;
   }
-
-  function icons() {
-    if (window.lucide) window.lucide.createIcons();
-  }
-
-  function months(value) {
-    if (value >= 120) return '超过 120 个月';
-    if (value <= 0) return '已无法支撑';
-    if (value < 1) return '不足 1 个月';
-    return `约 ${Number(value.toFixed(1))} 个月`;
-  }
-
-  function currentRunway() {
-    return Math.max(0, game.runway(state));
-  }
-
-  function companyStatus() {
-    const month = state.over ? state.month - 1 : state.month;
-    const forecast = !state.over ? game.forecast(state, plan) : null;
-    const current = state.project && !state.over ? game.forecast(state, game.defaultPlan(state)) : null;
-    const runway = currentRunway();
-    const risk = state.over ? '经营已结束' : !forecast.affordable ? '方案超出资金' : forecast.runway < forecast.duration ? '资金可能先耗尽' : dirty() || !state.project ? '当前 → 本回合方案' : '按当前安排估算';
-    const change = (before, after) => `<span class="status-before">${before}</span>${before === after ? '' : `<span class="status-change"> → ${after}</span>`}`;
-    return `<section class="company-status" aria-label="当前与方案预估"><div class="status-heading"><span data-testid="company-age">成立第 ${Math.floor((month - 1) / 12) + 1} 年 · 第 ${(month - 1) % 12 + 1} 月</span><span class="${state.over || forecast && (!forecast.affordable || forecast.runway < forecast.duration) ? 'warning' : ''}">${risk}</span></div><dl class="status-metrics"><div><dt>账面资金</dt><dd data-testid="current-cash">${state.cash.toFixed(2)} 万</dd><small>月开支 ${forecast ? change(`${game.burn(state).toFixed(2)} 万`, `${forecast.monthly.toFixed(2)} 万`) : `${game.burn(state).toFixed(2)} 万`}</small></div><div><dt>研发团队</dt><dd data-testid="current-team">${forecast ? change(`${game.TEAMS[state.team].people} 人`, `${game.TEAMS[plan.team].people} 人`) : `${game.TEAMS[state.team].people} 人`}</dd><small>${forecast && forecast.cost ? `本回合一次性投入 ${forecast.cost.toFixed(2)} 万` : game.TEAMS[state.team].name}</small></div><div><dt>资金可撑</dt><dd data-testid="current-runway">${state.over ? '已停止经营' : change(months(runway), months(forecast.runway))}</dd><small>计入旧作，不计未发售收入</small></div><div><dt>预计发售</dt><dd data-testid="current-release">${state.over ? '已停止经营' : change(current ? `第 ${current.releaseMonth} 月` : '未立项', `第 ${forecast.releaseMonth} 月`)}</dd><small>${forecast ? `还需 ${forecast.duration} 个月 · ${forecast.releaseMarket.label}` : '创业档案已结案'}</small></div></dl></section>`;
-  }
-
-  function dirty() {
-    return JSON.stringify(plan) !== JSON.stringify(game.defaultPlan(state));
-  }
+  function line(label, value) { return `<div class="data-line"><span>${label}</span><strong>${value}</strong></div>`; }
 
   function notify(message) {
     const element = document.getElementById('notification');
@@ -78,173 +55,164 @@
 
   function save() {
     try {
+      if (recoveryRaw) {
+        localStorage.setItem(`${storageKey}-recovery`, recoveryRaw);
+        recoveryRaw = null;
+      }
       localStorage.setItem(storageKey, JSON.stringify(state));
       storageAvailable = true;
-    } catch {
-      storageAvailable = false;
-    }
-    document.getElementById('save-status').textContent = storageAvailable ? '已存于本机' : '存档不可用 · 可导出';
+    } catch { storageAvailable = false; }
   }
 
-  function optionPrice(key, value) {
-    const candidate = { ...plan, [key]: value };
-    if (key === 'type' || key === 'scale') return `立项 ${game.planCost({ ...state, project: null }, candidate).toFixed(2)} 万`;
-    if (key === 'team') return `${game.burn({ ...state, team: value, pay: plan.pay }).toFixed(2)} 万/月`;
-    if (key === 'pay') return `${game.PAY[value].wage.toFixed(2)} 万/人/月`;
-    if (key === 'material') return `${(game.MATERIALS[value].cost * game.SCALES[plan.scale].cost).toFixed(2)} 万 · ${state.project ? '已确定' : '一次性'}`;
-    if (state.project) {
-      if (value < state.project.promo) return `${(game.PROMO[value].cost * game.SCALES[plan.scale].cost).toFixed(2)} 万 · 不可退`;
-      if (value === state.project.promo) return `${(game.PROMO[value].cost * game.SCALES[plan.scale].cost).toFixed(2)} 万 · 已投入`;
-      return `补 ${game.planCost(state, candidate).toFixed(2)} 万`;
-    }
-    return `${(game.PROMO[value].cost * game.SCALES[plan.scale].cost).toFixed(2)} 万 · 一次性`;
+  function pauseReason() {
+    if (state.over) return '经营结束';
+    if (!state.company) return '等待公司命名';
+    if (state.event) return `等待决策 · ${state.event.title}`;
+    if (dialog.open) return '菜单中 · 时间暂停';
+    return playing ? '正常经营中' : '手动暂停';
   }
 
-  function segmentField(key, title, items, detail, symbol) {
-    const locked = Boolean(state.project) && ['type', 'scale', 'material'].includes(key);
-    const values = Array.isArray(items) ? items.map((item, index) => ({ value: index, name: item.name })) : Object.entries(items).map(([value, item]) => ({ value, name: item.name }));
-    const meta = locked ? '本作已确定' : key === 'promo' && state.project ? '仅可追加' : ['team', 'pay'].includes(key) ? '持续生效' : '立项时确定';
-    return `<fieldset><legend>${icon(symbol)}${title}<span class="field-meta">${meta}</span></legend><div class="segments">${values.map(item => {
-      const disabled = locked || key === 'promo' && state.project && item.value < state.project.promo;
-      return `<label class="segment"><input type="radio" name="${key}" value="${item.value}" ${plan[key] === item.value ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${item.name}<small class="option-price">${optionPrice(key, item.value)}</small></span></label>`;
-    }).join('')}</div><p class="field-detail">${escape(detail)}</p></fieldset>`;
+  function stage(project) {
+    const progress = project.done / project.total;
+    return progress >= 1 ? '交付准备' : progress >= 0.55 ? 'Demo 与完善' : progress >= 0.25 ? '内容制作' : '可玩原型';
   }
 
-  function fields() {
-    const materialCost = game.MATERIALS[plan.material].cost * game.SCALES[plan.scale].cost;
-    const promoCost = game.PROMO[plan.promo].cost * game.SCALES[plan.scale].cost;
-    const projectFields = state.project ? '' : segmentField('type', '作品方向', game.TYPES, game.TYPES[plan.type].description, 'gamepad-2') +
-      segmentField('scale', '项目规模', game.SCALES, ['较短周期，较小市场。', '扩大内容与市场，也延长资金空窗。', '大体量作品，需要充足现金储备。'][plan.scale], 'layers');
-    const material = state.project ? '' : segmentField('material', '物料采购', game.MATERIALS, materialCost ? `一次性 ${materialCost.toFixed(2)} 万，减少工作量，不直接提高品质。` : '自制为主，无采购费用。', 'package');
-    const operations = segmentField('team', '研发团队', game.TEAMS, `${game.TEAMS[plan.team].people} 人，正常每月 ${game.TEAMS[plan.team].people} 人月；月开支含工资与基础支出。`, 'users') +
-      segmentField('pay', '团队待遇', game.PAY, ['控制成本，后续完成部分的品质较低。', '成本与能力折中。', '提升后续工作的品质，不重算已完成部分。'][plan.pay], 'coffee') +
-      segmentField('promo', '宣发安排', game.PROMO, promoCost ? `宣发总投入 ${promoCost.toFixed(2)} 万；已投部分不重复扣费。` : '自然曝光，无宣发支出。', 'megaphone');
-    return projectFields + `<details class="detail-panel" data-panel="budget" ${expandedPanels.has('budget') ? 'open' : ''}><summary>${icon('sliders-horizontal')}${state.project ? '调整团队与预算' : '团队、采购与宣发'}<span>${game.TEAMS[plan.team].people} 人 · ${game.burn({ ...state, team: plan.team, pay: plan.pay }).toFixed(2)} 万/月</span></summary>${material}${operations}</details>`;
+  function advice() {
+    if (state.over) return { title: '公司未能支付月底开支', text: '作品与收支记录已保留，可以导出本次经营记录。', menu: 'finance', symbol: 'receipt-text' };
+    if (state.event) return { title: state.event.title, text: '关键决策正在等待，不会因加速跳过。', menu: 'event', symbol: 'message-circle' };
+    if (!state.staff.some(person => person.role === 'code')) return { title: '先找到能把想法做出来的同事', text: '你负责产品方向与预算，程序员负责开发和修复。', menu: 'recruit-code', symbol: 'user-plus' };
+    if (!state.project) return { title: state.catalog.length ? '下一款，延续优势还是换个方向？' : '团队已经可以启动第一款作品', text: '选定作品类型与名称，比较工作量和当前产能。', menu: 'project', symbol: 'gamepad-2' };
+    if (state.project.focus !== 'develop' && state.project.done < state.project.total) return { title: '团队正在改进已有体验', text: '打磨和修复会暂缓新内容；完成后可切回内容开发。', menu: 'project', symbol: 'wrench' };
+    if (state.project.done >= state.project.total) return { title: '计划内容已完成，等待交付', text: '检查试玩、缺陷与关注情况后，可在项目菜单正式发售。', menu: 'project', symbol: 'rocket' };
+    if (game.playtestOffer(state).available && !state.project.test) return { title: 'Demo 已可测试', text: '没有试玩前不显示玩家评价，测试可以帮助识别短板。', menu: 'testing', symbol: 'flask-conical' };
+    return { title: '工作正在持续进行', text: '招聘、工具和工作重点可随时调整；现有安排无需重复确认。', menu: 'project', symbol: 'activity' };
   }
 
-  function timeline(preview) {
-    const cells = Array.from({ length: 8 }, (_, index) => index);
-    return `<div class="timeline" aria-label="未来八个月的预计资金与研发时间"><div class="timeline-labels"><span></span>${cells.map(index => `<span>第${state.month + index}月</span>`).join('')}</div><div class="track"><span>资金可撑</span>${cells.map(index => `<span class="cell ${index < preview.runway ? 'funded' : ''}"></span>`).join('')}</div><div class="track"><span>研发所需</span>${cells.map(index => `<span class="cell ${index < preview.duration ? 'working' : ''} ${index === preview.duration - 1 ? 'finish' : ''}"></span>`).join('')}</div></div>`;
-  }
-
-  function previewSection() {
-    const preview = game.forecast(state, plan);
-    const baseline = game.forecast(state, game.defaultPlan(state));
-    const changed = dirty();
-    const gap = preview.runway - preview.duration;
-    let note;
-    if (!preview.affordable) note = { tone: 'urgent', text: '这次一次性投入超出现有资金。先降低物料或宣发投入，再考虑立项。' };
-    else if (gap < 0) note = { tone: 'urgent', text: '按当前安排，资金可能先于研发耗尽。缩小项目、降低开支，或争取更早完成。' };
-    else if (gap < 1) note = { tone: '', text: '预计能接近完工，但资金余量很小。完工不等于全部回款，首发仍有风险。' };
-    else note = { tone: 'calm', text: `按当前条件，完工前约留有 ${Number(gap.toFixed(1))} 个月资金余量。销售结果仍取决于品质、触达和发售时的市场。` };
-    return `<section class="preview" aria-labelledby="preview-title">
-      <div class="preview-heading" id="preview-title">${icon('scan-eye')}本回合方案<span class="field-meta">${changed || !state.project ? '尚未执行' : '延续当前安排'}</span></div>
-      ${monthlyPreview()}
-      ${gap < 1 || !preview.affordable ? `<div class="notice ${note.tone}" role="status">${icon('triangle-alert')}<span>${note.text}</span></div>` : ''}
-      ${changed && state.project && preview.duration === baseline.duration ? '<p class="estimate-note">本次调整不会提前发售，资金与品质仍会变化。</p>' : ''}
-      <details class="detail-panel" data-panel="forecast" ${expandedPanels.has('forecast') ? 'open' : ''}><summary>${icon('chart-no-axes-combined')}研发与市场预估<span>第 ${preview.releaseMonth} 月 · ${preview.releaseMarket.label}</span></summary>
-        <div class="forecast-summary"><span>资金可撑 <strong data-testid="preview-runway">${months(preview.runway)}</strong></span><span>研发还需 <strong data-testid="preview-duration">${preview.duration} 个月</strong></span></div>
-        <dl class="workload"><div><dt>总工作量</dt><dd data-testid="total-work">${Number(preview.workload.total.toFixed(2))} 人月</dd></div><div><dt>剩余工作量</dt><dd data-testid="remaining-work">${Number(preview.workload.remaining.toFixed(2))} 人月</dd></div><div><dt>本月有效产能</dt><dd data-testid="monthly-capacity">${Number(preview.workload.monthly.toFixed(2))} 人月/月</dd></div></dl>
-        ${timeline(preview)}<div class="outlook"><div><small>预计作品竞争力</small><strong>${preview.qualityInfo.label}</strong><p>${preview.qualityInfo.detail}</p></div><div><small>市场触达</small><strong>${preview.reach}</strong><p>${preview.reachDetail}</p></div></div>
-      </details>
-      <div class="action-row"><button class="button ${state.event ? 'warning' : ''}" data-action="${state.event ? 'event' : 'advance'}" ${!state.event && !preview.affordable ? 'disabled' : ''}>${icon(state.event ? 'message-circle' : 'arrow-right')}${state.event ? '处理待决事件' : '下一回合'}</button>${state.project ? `<button class="button secondary" data-action="skip" ${state.event || !preview.affordable ? 'disabled' : ''}>${icon('fast-forward')}到下一决策点</button>` : ''}</div>
-    </section>`;
-  }
-
-  function monthlyPreview() {
-    const preview = game.forecast(state, plan);
-    const income = game.catalogIncome(state, state.month);
-    const change = income - preview.monthly - preview.cost;
-    const work = Math.min(preview.workload.remaining, preview.workload.monthly);
-    const progress = (preview.workload.total - preview.workload.remaining + work) / preview.workload.total * 100;
-    return `<section class="turn-preview" data-testid="monthly-preview"><div class="cash-summary"><div><span>旧作收入</span><strong>+${income.toFixed(2)} 万</strong></div><div><span>本次待扣</span><strong>−${(preview.monthly + preview.cost).toFixed(2)} 万</strong></div><div><span>结算后余额</span><strong>${(state.cash + change).toFixed(2)} 万</strong></div></div><p class="brief-text">${state.event ? '本月暂停；先处理事件，再执行当前方案。' : !preview.affordable ? '一次性投入超出可用资金，方案不可执行。' : state.cash + change < 0 ? '资金不足以支付工资，本月无法推进研发。' : `工资与基础开支 ${preview.monthly.toFixed(2)} 万${preview.cost ? `，一次性投入 ${preview.cost.toFixed(2)} 万` : ''}。预计完成度 ${Number(progress.toFixed(1))}%${preview.duration === 1 ? '，本月自动发售；首发回款尚未计入。' : `，本月推进 ${Number(work.toFixed(2))} 人月。`}`}</p></section>`;
-  }
-
-  function reportSection() {
-    if (!state.report) return '';
-    const report = state.report;
-    const opening = report.release ? report.release.received : 0;
-    const income = report.totalIncome ?? report.income + opening;
-    const expense = report.totalExpense ?? report.expense;
-    const change = report.net ?? income - expense;
-    const flow = (label, amount) => amount ? `<div class="brief-line"><span>${label}</span><strong>${amount > 0 ? '+' : '−'}${Math.abs(amount).toFixed(2)} 万</strong></div>` : '';
-    return `<section class="turn-report" data-testid="last-report"><h3>${icon('notebook-pen')}第 ${report.month} 月结果${report.release ? '<span class="release-tag">新作已发售</span>' : ''}</h3>
-      <div class="cash-summary"><div><span>收入合计</span><strong>+${income.toFixed(2)} 万</strong></div><div><span>${report.failed ? '应付合计' : '支出合计'}</span><strong>−${expense.toFixed(2)} 万</strong></div><div><span>资金净变化</span><strong data-testid="last-cash-change">${change > 0 ? '+' : ''}${change.toFixed(2)} 万</strong></div></div>
-      <p class="brief-text">${report.failed ? '资金未能覆盖应付开支，研发已停止。' : `本月完成 ${Number(game.personMonths(report.work).toFixed(2))} 人月。${report.release ? `《${escape(report.release.name)}》已发售，首发到账 ${opening.toFixed(2)} 万。` : '作品按当前安排推进。'}`}</p>
-      <details class="detail-panel" data-panel="report" ${expandedPanels.has('report') ? 'open' : ''}><summary>${icon('receipt-text')}收支明细${report.cashBefore !== undefined ? `<span>${report.cashBefore.toFixed(2)} → ${report.cashAfter.toFixed(2)} 万</span>` : ''}</summary>
-        ${flow('旧作回款', report.income)}${flow('首发回款', opening)}${flow('事件收入', report.eventIncome)}${flow('立项与宣发追加', -report.setupCost)}${flow('提前测试', -report.testingCost)}${flow('事件支出', -report.eventCost)}<div class="brief-line"><span>${report.failed ? '应付工资及基础支出' : '工资及基础支出'}</span><strong data-testid="last-expense">−${report.expense.toFixed(2)} 万</strong></div>
-        <p class="brief-text">${report.totalExpense === undefined ? '旧档月报未记录当月即时收付。' : '含本月已即时收付的测试、立项和事件款项；不会再次扣款。'}</p>
-      </details>${report.release ? '<button class="text-action" data-action="release">查看发售复盘</button>' : ''}</section>`;
-  }
-
-  function testingSection() {
-    if (!state.project) return '';
-    const offer = game.testingOffer(state);
-    const tested = state.project.test;
-    return `<section class="testing-section"><div><h3>${icon('flask-conical')}${tested ? '测试反馈' : '提前测试'}</h3><p class="brief-text">${tested ? `${escape(tested.finding)}${tested.decision ? `已决定：${escape(tested.decision)}。` : ''}` : offer.available ? '定向玩家试玩，获得明确反馈与少量曝光；每作一次，不保证销量。' : offer.reason}</p></div>${tested ? '' : `<button class="button secondary" data-action="playtest" ${!offer.available || dirty() ? 'disabled' : ''}>${icon('flask-conical')}测试 · ${offer.cost.toFixed(2)} 万</button>`}${!tested && dirty() ? '<p class="brief-text">本回合方案尚未执行；测试采用当前已执行安排。</p>' : ''}</section>`;
-  }
-
-  function showRelease() {
-    const book = state.report && state.report.release;
-    if (!book) return;
-    const openingProfit = book.received - book.invested;
-    resultDialog.innerHTML = `<div class="dialog-heading"><span class="eyebrow">第 ${book.released} 月 / 正式发售</span><button class="icon-button" data-action="close-result" title="关闭" aria-label="关闭发售复盘">${icon('x')}</button></div><h2 id="result-title">《${escape(book.name)}》发售成功</h2><div class="release-receipt"><span>首发实际到账</span><strong>+${book.received.toFixed(2)} 万</strong></div><div class="brief-line"><span>累计项目投入</span><strong>${book.invested.toFixed(2)} 万</strong></div><div class="brief-line"><span>${openingProfit >= 0 ? '首发已回本 · 结余' : '尚未回本 · 缺口'}</span><strong>${Math.abs(openingProfit).toFixed(2)} 万</strong></div><p class="brief-text">这是首发回款，不是最终利润。后续销量将逐月到账。</p><div class="release-review"><h3>这次交付</h3><p>${escape(game.qualityLabel(book.quality).label)}，${escape(book.promotion || '按原宣发安排')}；发售时市场${escape(book.launchMarket || game.market(book.type, book.released).label)}。</p><p>${book.tested ? '已做提前测试，玩家反馈与处理决定留在经营记录中。' : '未安排提前测试，本作按研发与宣发安排直接交付。'}品质、触达、档期和市场波动共同影响回款。</p></div>`;
-    if (!resultDialog.open) resultDialog.showModal();
-    icons();
-  }
-
-  function catalogSection() {
-    return `<section class="sidebar-section"><h3>${icon('library')}作品档案 <span class="field-meta">${state.catalog.length ? `${state.catalog.length} 部` : '尚待落笔'}</span></h3>${state.catalog.length ? state.catalog.slice(0, 5).map(book => {
-      const ratio = book.invested ? book.received / book.invested : 0;
-      const recovered = ratio >= 1;
-      const waiting = state.month - book.released <= 11;
-      return `<article class="catalog-item"><h4>《${escape(book.name)}》</h4><p>第 ${book.released} 月发售 · ${game.TYPES[book.type].name} · ${game.SCALES[book.scale].name}</p><p>${game.qualityLabel(book.quality).label}</p><p>累计回款 ${book.received.toFixed(2)} 万 / 投入 ${book.invested.toFixed(2)} 万</p><p class="catalog-result ${recovered ? '' : 'loss'}">${recovered ? `已回本，项目结余 ${(book.received - book.invested).toFixed(2)} 万` : `累计收回约 ${Math.round(ratio * 100)}%，尚差 ${(book.invested - book.received).toFixed(2)} 万回本`}</p><p>${waiting ? '后续销售仍在逐月回款' : '主要销售周期已结束'}</p></article>`;
-    }).join('') : `<div class="empty-catalog">${icon('book-open')}<p>这里会留下第一款作品，以及它为公司带来的下一次机会。</p></div>`}</section>`;
-  }
-
-  function sidebar() {
-    return `<aside class="sidebar"><section class="studio-view"><div class="studio-caption"><strong>工作室近况</strong></div><img class="office-art" src="office.svg" alt="小型工作室的电脑、手稿和窗边绿植" width="380" height="230"></section><section class="sidebar-section"><h3>${icon('radio')}市场风向</h3>${Object.entries(game.TYPES).map(([key, type]) => {
-      const trend = game.market(key, state.month);
-      return `<div class="market-item"><strong>${type.name}</strong><span class="market-tag ${trend.multiplier > 1 ? 'up' : trend.multiplier < 1 ? 'down' : ''}">${trend.label}</span><p>${trend.description}</p></div>`;
-    }).join('')}</section>${catalogSection()}</aside>`;
-  }
-
-  function historySection() {
-    return `<section class="history ${historyExpanded ? 'expanded' : ''}"><div class="history-header"><h2>公司的那些事</h2>${state.history.length > 3 ? `<button class="history-toggle" data-action="history">${historyExpanded ? '收起记录' : `查看全部 ${state.history.length} 条`}${icon(historyExpanded ? 'chevron-up' : 'chevron-down')}</button>` : '<span class="eyebrow">每个决定，都算数。</span>'}</div><div class="history-list">${state.history.map(entry => `<article class="history-entry"><time>创业第 ${entry.month} 月</time><h3>${escape(entry.title)}</h3><p>${escape(entry.text)}</p></article>`).join('')}</div></section>`;
-  }
-
-  function renderEvent() {
-    if (!state.event) {
-      if (eventDialog.open) eventDialog.close();
-      return;
-    }
-    const event = state.event;
-    eventDialog.innerHTML = `<div class="dialog-heading"><span class="eyebrow">${event.id === 'cash' ? '现金危机 · 尚有退路' : event.id === 'playtest' ? '付费测试 / 玩家反馈' : '来自办公室之外'}</span><button class="icon-button" data-action="close-event" title="暂时收起" aria-label="暂时收起事件">${icon('x')}</button></div><h2 id="event-title">${escape(event.title)}</h2><p>${escape(event.text)}</p><div class="event-options">${event.choices.map(choice => `<button class="event-option" data-action="resolve" data-choice="${escape(choice.id)}" ${choice.disabled || (choice.cost || 0) > state.cash ? 'disabled' : ''}><span><strong>${escape(choice.title)}${choice.disabled ? ' · 已使用' : ''}</strong><small>${escape(choice.detail)}</small></span>${icon('arrow-up-right')}</button>`).join('')}</div>`;
-    const key = `${state.month}-${event.id}`;
-    if (shownEvent !== key) {
-      shownEvent = key;
-      if (!eventDialog.open) eventDialog.showModal();
-    }
+  function meter(label, value, detail, tone) {
+    return `<div class="production-meter ${tone}"><div><span>${label}</span><strong>${value.toFixed(1)}</strong></div><progress max="100" value="${value}" aria-label="${label}"></progress><small>${detail}</small></div>`;
   }
 
   function render() {
-    const stage = state.over ? '经营结束' : state.catalog.length >= 3 ? '站稳脚跟' : state.catalog.length ? '第一批玩家' : '创业起步';
-    const title = state.project ? `《${escape(state.project.name)}》` : '下一款，做什么？';
-    const projectHeader = state.project ? `<div class="project-progress"><div><span>${game.TYPES[state.project.type].name} · ${game.SCALES[state.project.scale].name} · ${game.MATERIALS[state.project.material].name}</span><strong>${Number((state.project.done / state.project.total * 100).toFixed(1))}%</strong></div><progress max="100" value="${state.project.done / state.project.total * 100}" aria-label="研发完成度"></progress></div>` : `<div class="project-name"><label for="project-name">作品名</label><input id="project-name" maxlength="24" value="${escape(plan.name)}" placeholder="给新作品起个名字"></div>`;
-    const workspace = state.over ? `<section class="workspace"><div class="closed-company"><span class="eyebrow">创业档案 / 已结案</span><h2>这间办公室，暂时关灯。</h2><p>公司无法支付本月开支。此前的资金预警、研发投入与作品回款，都留在记录里。下一次，可以带着这段经验重新开始。</p><div class="closed-stats"><div><strong>${state.month - 1}</strong>个月创业经历</div><div><strong>${state.catalog.length}</strong>部已发售作品</div></div>${reportSection()}<button class="button" data-action="restart">${icon('rotate-ccw')}重新创业</button></div></section>` : `<section class="workspace">${reportSection()}<div class="section-heading"><h2>${title}</h2><span class="project-state">${state.project ? '研发进行中' : '新作立项'}</span></div>${projectHeader}<div class="choices">${fields()}</div>${testingSection()}${previewSection()}</section>`;
-    root.innerHTML = `${companyStatus()}<div class="month-heading"><h2>创业第 ${state.over ? state.month - 1 : state.month} 月<span>月度经营札记</span></h2><span class="stage">${stage}</span></div>${state.event ? `<div class="event-banner"><div><strong>${escape(state.event.title)}</strong><p>有一项抉择待处理，经营安排仍可调整。</p></div><button class="button secondary" data-action="event">${icon('message-circle')}处理事件</button></div>` : ''}<div class="dashboard">${workspace}${sidebar()}</div>${historySection()}`;
-    renderEvent();
+    const project = state.project;
+    const forecast = game.projectForecast(state);
+    const hint = advice();
+    const book = state.catalog[0];
+    const month = Math.floor((state.day - 1) / 30) + 1;
+    const day = (state.day - 1) % 30 + 1;
+    root.innerHTML = `<div class="studio-shell">
+      <section class="clock-bar" aria-label="时间控制"><div><strong data-testid="date">第 ${month} 月 · ${day} 日</strong><span class="clock-reason" role="status">${escape(pauseReason())}</span></div><div class="clock-controls"><button class="icon-button clock-toggle" data-action="clock" title="${playing ? '暂停时间' : '开始时间'}" aria-label="${playing ? '暂停时间' : '开始时间'}" ${state.over ? 'disabled' : ''}>${icon(playing ? 'pause' : 'play')}</button><div class="speed-control" role="group" aria-label="时间速度">${[1, 4, 12].map(value => `<button data-action="speed" data-value="${value}" aria-pressed="${speed === value}" title="${value} 倍速度">${value}x</button>`).join('')}</div></div></section>
+      <section class="studio-finances" aria-label="公司状态"><div><span>账面资金</span><strong data-testid="cash">${money(state.cash)}</strong></div><div><span>预计月开支</span><strong>${money(game.monthlyCost(state))}</strong></div><div><span>已累计应付</span><strong>${money(state.accrued)}</strong></div><div><span>研发团队</span><strong>${state.staff.length} 人</strong></div></section>
+      <div class="studio-layout"><section class="project-desk" aria-label="当前项目"><div class="desk-heading"><div><span class="eyebrow">${project ? `${game.TYPES[project.type].name} / ${stage(project)}` : '工作室 / 新的计划'}</span><h2>${project ? `《${escape(project.name)}》` : '下一款，做什么？'}</h2></div>${button('menu', project ? '项目' : '立项', 'gamepad-2', 'data-menu="project"')}</div>
+        ${project ? `<div class="main-progress"><div><span>研发完成度</span><strong data-testid="progress">${forecast.metrics.progress.toFixed(1)}%</strong></div><progress max="100" value="${forecast.metrics.progress}" aria-label="研发完成度"></progress></div><div class="production-numbers"><span>开发 <strong data-testid="code-rate">${forecast.code.toFixed(2)}</strong> 工作量/天</span><span>视觉 <strong>${forecast.art.toFixed(2)}</strong> 工作量/天</span><span>预计还需 <strong>${forecast.days === null ? '待安排' : `${forecast.days} 天`}</strong></span></div><div class="production-meters">${meter('玩法完成情况', forecast.metrics.gameplay, project.focus === 'polish' ? '集中打磨中' : '开发与打磨逐步形成', 'gameplay')}${meter('视觉表现', forecast.metrics.visual, project.assets ? '含采购素材成果' : '由美术实际制作形成', 'visual')}${meter('稳定性', forecast.metrics.stability, `已知缺陷 ${project.defects} 项`, 'stability')}</div><div class="audience-strip"><div><span>关注人数</span><strong>${number(project.followers)}</strong></div><div><span>${project.test ? '试玩口碑' : '玩家评价'}</span><strong data-testid="reputation">${project.test ? `${project.test.score.toFixed(1)} / 100` : '尚无玩家评价'}</strong></div><div><span>最近测试样本</span><strong>${project.test ? `${project.test.count} 人 · 第 ${project.test.day} 天` : '未测试'}</strong></div></div>` : `<div class="office-empty"><img src="office.svg" alt="工作室的电脑、手稿和窗边绿植"><div><strong>${escape(state.company || '为工作室取一个名字')}</strong><p>${book ? `上一作累计售出 ${number(book.units)} 份，回款 ${money(book.received)}。` : '从一位同事、一个想法开始。'}</p></div></div>`}
+        <div class="studio-advice"><div><strong>${escape(hint.title)}</strong><p>${escape(hint.text)}</p></div><button class="icon-button" data-action="menu" data-menu="${hint.menu}" title="${escape(hint.title)}" aria-label="${escape(hint.title)}">${icon(hint.symbol)}</button></div>
+      </section><aside class="people-desk" aria-label="团队近况"><div class="desk-heading"><h3>工作室近况</h3><button class="icon-button" data-action="menu" data-menu="team" title="管理团队" aria-label="管理团队">${icon('users')}</button></div><div class="people-list">${state.staff.length ? state.staff.map(person => `<button class="person-row" data-action="menu" data-menu="person" data-id="${escape(person.id)}"><span class="person-initial ${person.role}">${escape(person.name.slice(-1))}</span><span><strong>${escape(person.name)}</strong><small>${game.ROLES[person.role].name} · ${project ? person.role === 'art' ? '视觉制作' : { develop: '功能开发', polish: '玩法打磨', bugs: '缺陷修复' }[project.focus] : '等待新项目'}</small></span><span class="person-work">${person.work.toFixed(1)}<small>累计工作量</small></span></button>`).join('') : '<p class="muted">还没有员工。你负责制作方向，先发布程序员招聘。</p>'}</div><div class="recent-note"><span class="eyebrow">最近动态</span><strong>${escape(state.history[0] ? state.history[0].title : '工作室等待成立')}</strong><p>${escape(state.history[0] ? state.history[0].text : '先输入公司名称。')}</p></div></aside></div>
+      <nav class="studio-nav" aria-label="经营菜单">${[['project', 'gamepad-2', '项目'], ['team', 'users', '团队'], ['tools', 'wrench', '工具'], ['testing', 'flask-conical', '测试'], ['market', 'megaphone', '市场'], ['finance', 'receipt-text', '公司']].map(([menu, symbol, text]) => `<button data-action="menu" data-menu="${menu}">${icon(symbol)}<span>${text}</span></button>`).join('')}</nav>
+    </div>`;
+    document.getElementById('company-label').textContent = state.company || '日光工作室';
+    document.getElementById('save-status').textContent = storageAvailable ? '本机自动存档' : '存档不可用 · 请导出';
     icons();
-    document.getElementById('save-status').textContent = storageAvailable ? '本机自动存档' : '存档不可用 · 可导出';
   }
 
-  function updateState(next, message, draft) {
-    const released = next.catalog.length > state.catalog.length && next.report && next.report.release;
-    state = next;
-    plan = draft || game.defaultPlan(state);
-    save();
+  function openMenu(menu, id, critical = false) {
+    if (!dialog.open) {
+      resumeAfterMenu = playing;
+      playing = false;
+      elapsed = 0;
+      routes = [];
+    }
+    if (critical || menu === 'event' || menu === 'setup') resumeAfterMenu = false;
+    if (critical) routes = [];
+    routes.push({ menu, id });
+    renderMenu();
+    if (!dialog.open) dialog.showModal();
     render();
-    if (released) showRelease();
+  }
+
+  function closeMenu() {
+    if (!state.company) return;
+    dialog.close();
+    routes = [];
+    playing = resumeAfterMenu && !state.event && !state.over && !document.hidden;
+    resumeAfterMenu = false;
+    elapsed = 0;
+    render();
+  }
+
+  function formField(label, name, value = '', placeholder = '') {
+    return `<label class="form-field">${label}<input name="${name}" value="${escape(value)}" placeholder="${escape(placeholder)}" maxlength="24" required autocomplete="off"></label>`;
+  }
+
+  function recruitment(role) {
+    const pool = state.candidates[role];
+    return `<p class="menu-intro">${game.ROLES[role].task}。工资按实际在职天数累计，月底结算。</p>${pool ? `<p class="muted">本批名单保持至第 ${(pool.batch + 1) * 14} 天；关闭菜单不会重抽。</p><div class="choice-list">${pool.people.map(person => `<button class="menu-choice" data-action="menu" data-menu="candidate" data-id="${person.id}" ${person.hired ? 'disabled' : ''}><span><strong>${escape(person.name)} ${person.hired ? '· 已录用' : ''}</strong><small>能力 ${person.skill} · 速度 ${person.pace} · 月薪 ${money(person.wage)}</small><small>${game.TRAITS[person.trait].name}：${game.TRAITS[person.trait].text}</small></span>${icon('chevron-right')}</button>`).join('')}</div>` : '<p class="empty-note">发布岗位后，候选人会提交不同能力和期望工资的简历。</p>'}${button('recruit', pool ? '检查新一批简历' : '发布招聘', 'user-plus', `data-role="${role}"`, Boolean(pool && pool.batch === Math.floor((state.day - 1) / 14)))}`;
+  }
+
+  function menuContents(route) {
+    const project = state.project;
+    switch (route.menu) {
+      case 'setup': return { title: '成立你的工作室', body: `<p class="menu-intro">你负责产品方向、预算与用人。先为公司取名，再找到把想法做出来的同事。</p><form data-form="company">${formField('公司名称', 'name', '', '例如：日光工作室')}<div class="menu-actions"><button class="button" type="submit">${icon('sun')}成立公司</button></div></form>` };
+      case 'project': return { title: project ? `《${project.name}》` : '新作立项', body: project ? `${line('当前阶段', stage(project))}${line('预计剩余', game.projectForecast(state).days === null ? '当前不推进内容开发' : `${game.projectForecast(state).days} 天`)}${line('已投入', money(project.invested))}${line('受众', game.AUDIENCES[project.type].name)}<h3 class="menu-section-title">程序团队工作重点</h3><div class="mode-controls">${[['develop', '功能开发', 'code-2'], ['polish', '玩法打磨', 'sparkles'], ['bugs', '修复缺陷', 'bug']].map(([focus, text, symbol]) => `<button data-action="focus" data-focus="${focus}" aria-pressed="${project.focus === focus}">${icon(symbol)}${text}</button>`).join('')}</div><p class="muted">打磨和修复暂停新增内容，但不会让已完成工作消失。</p><div class="choice-list">${button('menu', '视觉制作与素材', 'palette', 'data-menu="visual"')}${button('menu', 'Demo 与测试反馈', 'flask-conical', 'data-menu="testing"')}${button('menu', '展示与推广', 'megaphone', 'data-menu="market"')}${button('launch', '正式发售', 'rocket', '', project.done < project.total - 0.001, false)}</div>` : `<form data-form="project">${formField('游戏名称', 'name', '', '为你的作品命名')}<label class="form-field">游戏类型<select name="type" required><option value="">选择作品方向</option>${Object.entries(game.TYPES).map(([type, value]) => `<option value="${type}">${value.name}</option>`).join('')}</select></label><label class="form-field">内容体量<select name="scale">${game.SCALES.map((item, index) => `<option value="${index}">${item.name}</option>`).join('')}</select></label><div id="plan-preview" class="plan-preview">选择类型后查看工作量、受众和预估时间。</div><p class="muted">当前月开支 ${money(game.monthlyCost(state))}，立项不额外收取费用。后续招聘、素材和推广由你决定。</p><div class="menu-actions"><button class="button" type="submit">${icon('flag')}开始项目</button></div></form>` };
+      case 'team': return { title: '团队管理', body: `${line('团队规模', `${state.staff.length} / 16 人`)}${line('月开支含基础费用', money(game.monthlyCost(state)))}<div class="choice-list">${button('menu', '招聘程序员', 'code-2', 'data-menu="recruit-code"')}${button('menu', '招聘美术', 'palette', 'data-menu="recruit-art"')}${state.staff.map(person => `<button class="menu-choice" data-action="menu" data-menu="person" data-id="${person.id}"><span><strong>${escape(person.name)}</strong><small>${game.ROLES[person.role].name} · ${money(person.wage)}/月</small></span>${icon('chevron-right')}</button>`).join('')}</div>` };
+      case 'recruit-code': return { title: '招聘 / 程序员', body: recruitment('code') };
+      case 'recruit-art': return { title: '招聘 / 美术', body: recruitment('art') };
+      case 'candidate': {
+        const person = Object.values(state.candidates).flatMap(pool => pool.people).find(item => item.id === route.id);
+        if (!person) return { title: '简历已更新', body: '<p>请返回查看当前候选人。</p>' };
+        const projected = { ...state, staff: [...state.staff, person] };
+        const before = game.rates(state);
+        const after = game.rates(projected);
+        const forecast = game.projectForecast(projected);
+        return { title: `${person.name} / ${game.ROLES[person.role].name}`, body: `${line('能力', person.skill)}${line('速度基准', person.pace)}${line('期望月薪', money(person.wage))}<p class="trait-note">${game.TRAITS[person.trait].name}：${game.TRAITS[person.trait].text}</p><h3 class="menu-section-title">录用后的预期变化</h3>${line('月开支', `${money(game.monthlyCost(state))} → ${money(game.monthlyCost(projected))}`)}${line(person.role === 'code' ? '当前阶段开发产能' : '视觉制作产能', `${before[person.role].toFixed(2)} → ${after[person.role].toFixed(2)} 工作量/天`)}${forecast ? line('内容预计剩余', forecast.days === null ? '需切回内容开发' : `${forecast.days} 天`) : ''}<p class="muted">入职后开始工作，不即时增加作品表现；实际成果随时间产生。</p>${button('hire', person.hired ? '已录用' : `录用 · ${money(person.wage)}/月`, 'user-plus', `data-id="${person.id}"`, person.hired, false)}` };
+      }
+      case 'person': {
+        const person = state.staff.find(item => item.id === route.id);
+        if (!person) return { title: '员工已离职', body: '<p>可以返回团队查看其他同事。</p>' };
+        return { title: person.name, body: `${line('岗位', game.ROLES[person.role].name)}${line('月薪', money(person.wage))}${line('能力 / 速度', `${person.skill} / ${person.pace}`)}${line('累计实际工作', person.work.toFixed(2))}<p class="trait-note">${game.TRAITS[person.trait].text}</p><p class="muted">已产生的工资不会因离职取消。</p>${button('menu', '结束雇佣关系', 'user-minus', `data-menu="dismiss" data-id="${person.id}"`)}` };
+      }
+      case 'dismiss': return { title: '确认结束雇佣', body: `<p class="menu-intro">员工离职后停止产出与后续计薪；此前工作、已累计工资保留。</p>${button('dismiss', '确认离职', 'user-minus', `data-id="${escape(route.id)}"`, false, false)}` };
+      case 'tools': return { title: '工作工具', body: `<p class="menu-intro">工具属于公司，可用于后续作品；没有对应岗位时不会凭空产出。</p>${Object.entries(game.STUDIO_TOOLS).map(([role, tool]) => { const before = game.rates(state); const after = game.rates({ ...state, tools: [...state.tools, role] }); return `<section class="menu-band"><h3>${tool.name}</h3><p>${tool.text}</p>${line('当前对应产能', state.tools.includes(role) ? `${before[role].toFixed(2)} 工作量/天` : `${before[role].toFixed(2)} → ${after[role].toFixed(2)} 工作量/天`)}${button('buy-tool', state.tools.includes(role) ? '已购置' : `购置 · ${money(tool.cost)}`, 'shopping-cart', `data-role="${role}"`, state.tools.includes(role) || state.cash < tool.cost)}</section>`; }).join('')}` };
+      case 'visual': return { title: '视觉制作', body: project ? `${line('视觉表现', game.projectMetrics(project).visual.toFixed(1))}${line('美术人数', state.staff.filter(person => person.role === 'art').length)}<p class="menu-intro">美术持续制作，素材直接提供部分视觉成果；也可接受朴素画面，观察目标玩家评价。</p><div class="choice-list">${button('menu', '查看美术招聘', 'user-plus', 'data-menu="recruit-art"')}${button('assets', project.assets ? '已采购素材' : `采购素材 · ${money(4 * [1, 1.5, 2][project.scale])}`, 'package', '', project.assets)}${button('plain', '保持朴素风格', 'check')}</div>` : '<p>请先立项。</p>' };
+      case 'testing': {
+        const offer = game.playtestOffer(state);
+        return { title: 'Demo / 玩家反馈', body: !project ? '<p>先立项并完成可试玩的 Demo。</p>' : `${project.test ? `<div class="reputation-result"><span>试玩口碑</span><strong>${project.test.score.toFixed(1)}</strong><small>${project.test.count} 人 · 第 ${project.test.day} 天；累计参与 ${project.testCount} 人次</small></div>${project.test.findings.map(item => `<section class="feedback-row"><strong>${escape(item.title)} · ${item.value.toFixed(1)}</strong><p>${escape(item.text)}</p></section>`).join('')}<p class="muted">评价对应测试时的版本；修改后需要复测，才知道新一批玩家是否认可。</p>` : '<p class="menu-intro">尚无玩家评价。测试用来观察目标玩家的体验，不等于购买，也不保证市场定论。</p>'}<div class="menu-actions">${button('test', '招募 30 人 · 0.80 万', 'flask-conical', 'data-count="30"', !offer.available || state.cash < 0.8)}${button('test', '招募 100 人 · 2.00 万', 'users', 'data-count="100"', !offer.available || state.cash < 2)}</div>${!offer.available ? `<p class="muted">${escape(offer.reason || '先处理关键决策')}</p>` : ''}` };
+      }
+      case 'market': return { title: '市场与作品', body: `${project ? `${line('当前作品关注人数', number(project.followers))}<p class="menu-intro">关注是潜在受众，不是销量；推广不直接改善体验。${game.market(project.type, Math.ceil(state.day / 30)).description}</p><div class="choice-list">${['核心圈层', '试玩展示', '集中推广'].map((name, index) => button('promote', `${name} · ${money([2, 6, 12][index])}`, 'megaphone', `data-tier="${index}"`, project.done < project.total * 0.55 || state.cash < [2, 6, 12][index])).join('')}</div>` : ''}<h3 class="menu-section-title">已发售作品</h3>${state.catalog.length ? state.catalog.map(book => `<button class="menu-choice" data-action="menu" data-menu="book" data-id="${book.id}"><span><strong>《${escape(book.name)}》</strong><small>${number(book.units)} 份 · 回款 ${money(book.received)} · 玩家评价 ${book.reviewScore.toFixed(1)}</small></span>${icon('chevron-right')}</button>`).join('') : '<p class="muted">作品完成并发售后，在这里继续观察销售与玩家评价。</p>'}` };
+      case 'book': {
+        const book = state.catalog.find(item => item.id === route.id);
+        if (!book) return { title: '作品档案', body: '<p>没有找到该作品。</p>' };
+        return { title: `《${book.name}》`, body: `<div class="reputation-result"><span>正式玩家评价</span><strong>${book.reviewScore.toFixed(1)}</strong><small>${number(book.reviewCount)} 位评价者；${book.tested ? '发售前有试玩反馈' : '发售前未测试'}</small></div>${line('首发关注人数', number(book.openingFollowers))}${line('首发购买', `${number(book.openingUnits)} 份`)}${line('首发到账', money(book.openingReceipt))}${line('累计销量', `${number(book.units)} 份`)}${line('累计回款', money(book.received))}${line('项目投入', money(book.invested))}${line(book.received >= book.invested ? '项目结余' : '尚差回本', money(Math.abs(book.received - book.invested)))}${line('最近一日销量', `${book.lastDayUnits} 份`)}${line('发售时市场', escape(book.trend))}<p class="muted">关注影响首发基础，实际体验影响玩家评价与后续传播。工具是公司资产，未全部计入单个项目投入；公司账单包含实际收支。</p><h3 class="menu-section-title">团队与作品</h3><p>${book.team.length ? book.team.map(person => `${escape(person.name)}（${game.ROLES[person.role].name}）`).join('、') : '旧档作品'}</p>${line('玩法 / 视觉 / 稳定性', `${book.metrics.gameplay.toFixed(1)} / ${book.metrics.visual.toFixed(1)} / ${book.metrics.stability.toFixed(1)}`)}` };
+      }
+      case 'finance': return { title: `${state.company || '公司'} / 经营记录`, body: `${line('账面资金', money(state.cash))}${line('本月已累计应付', money(state.accrued))}${line('预计月开支', money(game.monthlyCost(state)))}${state.report ? `<section class="menu-band"><h3>第 ${state.report.month} 月账单</h3>${line('期初资金', money(state.report.opening))}${line('收入合计', money(state.report.income))}${line('支出合计', money(state.report.expense))}${line('其中工资与基础开支', money(state.report.payroll))}${line('资金净变化', money(state.report.net))}${line('期末资金', money(state.report.closing))}</section>` : '<p class="muted">月底生成完整账单；采购与测试等即时支出已计入本月。</p>'}<div class="choice-list">${button('menu', '查看全部经营记录', 'notebook-pen', 'data-menu="history"')}${button('export', '导出存档', 'download')}${button('import', '导入存档', 'upload')}${button('menu', '重新创业', 'rotate-ccw', 'data-menu="restart"')}</div>` };
+      case 'history': return { title: '经营记录', body: state.history.map(entry => `<article class="log-entry"><small>第 ${entry.day} 天</small><strong>${escape(entry.title)}</strong><p>${escape(entry.text)}</p></article>`).join('') || '<p>还没有经营记录。</p>' };
+      case 'restart': return { title: '重新创业？', body: `<p class="menu-intro">当前进度将被新公司覆盖。需要保留本次经历，可以先导出。</p>${button('export', '导出当前存档', 'download')}${button('restart', '确认重新创业', 'rotate-ccw', '', false, false)}` };
+      case 'event': {
+        const event = state.event;
+        if (!event) return { title: '决策已处理', body: '<p>可关闭窗口，准备好后继续经营。</p>' };
+        const released = event.id === 'release' ? state.catalog.find(book => book.id === state.lastRelease) : null;
+        return { title: event.title, body: `<p class="menu-intro">${escape(event.text)}</p>${released ? `<div class="release-receipt"><span>首发实际到账</span><strong>+${money(released.openingReceipt)}</strong></div>${line('累计项目投入', money(released.invested))}${line('正式玩家评价', `${released.reviewScore.toFixed(1)} · ${released.reviewCount} 人`)}${line(released.received >= released.invested ? '已回本，项目结余' : '尚未回本，缺口', money(Math.abs(released.received - released.invested)))}${button('menu', '查看完整发售复盘', 'chart-no-axes-combined', `data-menu="book" data-id="${released.id}"`)}` : ''}<div class="choice-list">${event.choices.map(choice => `<button class="menu-choice" data-action="decision" data-choice="${choice.id}" ${choice.id === 'assets' && project && state.cash < 4 * [1, 1.5, 2][project.scale] ? 'disabled' : ''}><span><strong>${escape(choice.title)}</strong><small>${escape(choice.detail)}</small></span>${icon('arrow-up-right')}</button>`).join('')}</div><p class="muted">关键决策处理后保持暂停，由你继续时间。</p>` };
+      }
+      default: return { title: '工作室', body: '<p>请选择经营菜单。</p>' };
+    }
+  }
+
+  function renderMenu() {
+    if (!routes.length) return;
+    const content = menuContents(routes[routes.length - 1]);
+    dialog.innerHTML = `<div class="dialog-heading">${routes.length > 1 ? `<button class="icon-button" data-action="back" title="返回上一级" aria-label="返回上一级">${icon('arrow-left')}</button>` : '<span class="eyebrow">工作室 / 经营决策</span>'}${state.company ? `<button class="icon-button" data-action="close" title="关闭菜单" aria-label="关闭菜单">${icon('x')}</button>` : ''}</div><h2 id="menu-title">${escape(content.title)}</h2><div class="menu-body">${content.body}</div>`;
+    icons();
+  }
+
+  function update(next, message) {
+    state = next;
+    save();
+    if (state.event) {
+      playing = false;
+      openMenu('event', null, true);
+    } else {
+      if (state.over) { playing = false; resumeAfterMenu = false; }
+      render();
+      if (dialog.open) renderMenu();
+    }
     if (message) notify(message);
   }
 
@@ -252,118 +220,127 @@
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `sunlight-studio-month-${state.month}.json`;
+    link.download = `studio-day-${state.day}.json`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     notify('存档已导出。');
   }
 
-  document.addEventListener('change', event => {
-    const target = event.target;
-    if (target.matches('.segments input')) {
-      const nameInput = document.getElementById('project-name');
-      if (nameInput && !state.project) plan.name = nameInput.value;
-      plan[target.name] = target.name === 'type' ? target.value : Number(target.value);
-      const focusedName = target.name;
-      const focusedValue = target.value;
-      render();
-      const focused = root.querySelector(`input[name="${focusedName}"][value="${focusedValue}"]`);
-      if (focused) focused.focus({ preventScroll: true });
-    }
-  });
-
-  document.addEventListener('input', event => {
-    if (event.target.id === 'project-name') plan.name = event.target.value;
-  });
-
-  document.addEventListener('toggle', event => {
-    const target = event.target;
-    if (!target.matches('details[data-panel]')) return;
-    if (target.open) expandedPanels.add(target.dataset.panel);
-    else expandedPanels.delete(target.dataset.panel);
-  }, true);
-
   document.addEventListener('click', event => {
-    const button = event.target.closest('[data-action]');
-    if (!button || button.disabled) return;
+    const target = event.target.closest('[data-action]');
+    if (!target || target.disabled) return;
+    const data = target.dataset;
     try {
-      switch (button.dataset.action) {
-        case 'advance': {
-          const month = state.month;
-          const next = game.takeTurn(state, plan);
-          updateState(next, next.month === month ? '方案已执行；先处理事件，再继续本月。工资尚未扣除。' : '本月已结算，收支与研发结果已更新。');
+      switch (data.action) {
+        case 'clock':
+          if (!state.company) { openMenu('setup', null, true); break; }
+          if (state.event) { openMenu('event', null, true); break; }
+          if (state.over || dialog.open) break;
+          playing = !playing; elapsed = 0; render(); break;
+        case 'speed': speed = Number(data.value); render(); break;
+        case 'menu': openMenu(data.menu, data.id); break;
+        case 'close': closeMenu(); break;
+        case 'back': routes.pop(); renderMenu(); break;
+        case 'recruit': update(game.publishRecruitment(state, data.role), '简历已收到；本批候选人不会因重开菜单改变。'); break;
+        case 'hire': update(game.hire(state, data.id), '同事已加入。产能预估已变化，实际成果从工作开始产生。'); break;
+        case 'dismiss': update(game.dismiss(state, data.id), '员工已离职，已产生的工资保留。'); routes = [{ menu: 'team' }]; renderMenu(); break;
+        case 'buy-tool': update(game.buyTool(state, data.role), '工具已购置，对应岗位的产能已更新。'); break;
+        case 'assets': update(game.buyAssets(state), '素材已投入，视觉表现与资金已更新。'); break;
+        case 'plain': update({ ...state, project: { ...state.project, plain: true } }, '保留朴素风格，后续通过试玩观察玩家是否接受。'); break;
+        case 'focus': update(game.setFocus(state, data.focus), '工作重点已调整；实际改善随工作产生。'); break;
+        case 'test': update(game.testDemo(state, Number(data.count)), '测试完成，反馈已经送达。'); break;
+        case 'promote': update(game.promote(state, Number(data.tier)), '推广完成，新增关注已记录；不保证实际购买。'); break;
+        case 'launch': update(game.launchProject(state)); break;
+        case 'decision': {
+          const choice = data.choice;
+          update(game.resolveStudioEvent(state, choice));
+          if (!state.event) {
+            routes = [{ menu: choice === 'tools' ? 'tools' : choice === 'recruit' ? 'recruit-art' : choice === 'test' ? 'testing' : choice === 'visual' ? 'visual' : 'project' }];
+            resumeAfterMenu = false;
+            renderMenu();
+          }
           break;
         }
-        case 'skip': {
-          const month = state.month;
-          const next = game.skipToDecision(state, plan);
-          updateState(next, `已推进 ${next.month - month} 个月，停在${next.over ? '经营终点' : next.event ? '待决事件' : next.report && next.report.release ? '新作发售' : '测试机会或资金风险'}。逐月账单保留在经营记录中。`);
-          break;
-        }
-        case 'playtest':
-          updateState(game.runPlaytest(state), '测试费用已支付，玩家反馈已送达。');
-          break;
-        case 'release':
-          showRelease();
-          break;
-        case 'close-result':
-          resultDialog.close();
-          break;
-        case 'event':
-          if (!eventDialog.open) eventDialog.showModal();
-          break;
-        case 'close-event':
-          eventDialog.close();
-          break;
-        case 'resolve': {
-          const next = game.resolveEvent(state, button.dataset.choice);
-          const change = next.cash - state.cash;
-          updateState(next, `抉择已记录。${change ? `资金${change > 0 ? '到账' : '支付'} ${Math.abs(change).toFixed(2)} 万。` : ''}`, plan);
-          break;
-        }
+        case 'export': exportSave(); break;
+        case 'import': playing = false; resumeAfterMenu = false; render(); document.getElementById('import-file').click(); break;
         case 'restart':
-          resetDialog.showModal();
-          break;
-        case 'confirm-restart':
-          resetDialog.close();
-          shownEvent = '';
-          historyExpanded = false;
-          expandedPanels.clear();
-          if (resultDialog.open) resultDialog.close();
-          updateState(game.createGame(), '新的办公室，新的开始。');
-          break;
-        case 'export':
-          exportSave();
-          break;
-        case 'import':
-          document.getElementById('import-file').click();
-          break;
-        case 'history':
-          historyExpanded = !historyExpanded;
-          render();
-          break;
+          playing = false; resumeAfterMenu = false; dialog.close(); routes = [];
+          update(game.createStudio()); openMenu('setup', null, true); break;
       }
-    } catch (error) {
-      notify(error.message || '这次安排未能执行。');
-    }
+    } catch (error) { notify(error.message || '本次操作未执行。'); }
   });
+
+  document.addEventListener('submit', event => {
+    const form = event.target;
+    if (!form.dataset.form) return;
+    event.preventDefault();
+    const value = name => form.elements.namedItem(name).value;
+    try {
+      if (form.dataset.form === 'company') {
+        update(game.nameCompany(state, value('name')));
+        resumeAfterMenu = false;
+        closeMenu();
+        notify('工作室已成立。先招募一位程序员，时间仍保持暂停。');
+      } else if (form.dataset.form === 'project') {
+        update(game.startProject(state, { name: value('name'), type: value('type'), scale: Number(value('scale')) }));
+        closeMenu();
+        notify('项目已立项，准备好后开始时间。');
+      }
+    } catch (error) { notify(error.message); }
+  });
+
+  document.addEventListener('change', event => {
+    if (!['type', 'scale'].includes(event.target.name)) return;
+    const form = event.target.form;
+    if (!form || form.dataset.form !== 'project') return;
+    const type = form.elements.namedItem('type').value;
+    const element = document.getElementById('plan-preview');
+    if (!game.AUDIENCES[type]) { element.textContent = '请选择作品方向。'; return; }
+    const scale = Number(form.elements.namedItem('scale').value);
+    const workload = game.AUDIENCES[type].work * [1, 1.65, 2.4][scale];
+    const forecast = game.projectForecast(game.startProject(state, { name: '预估作品', type, scale }));
+    element.textContent = `${game.AUDIENCES[type].name}；计划工作量 ${workload.toFixed(1)}。${forecast.days !== null ? `当前团队预计 ${forecast.days} 天，研发期间费用约 ${money(game.monthlyCost(state) * forecast.days / 30)}；不含可选采购、测试与推广。` : '尚无程序员，招聘后才能推进。'}`;
+  });
+
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeMenu(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { playing = false; resumeAfterMenu = false; elapsed = 0; render(); }
+  });
+  window.addEventListener('blur', () => { playing = false; resumeAfterMenu = false; elapsed = 0; render(); });
 
   document.getElementById('import-file').addEventListener('change', async event => {
     const file = event.target.files[0];
     if (!file) return;
     try {
       if (file.size > 1024 * 1024) throw new Error('存档文件过大。');
-      const restored = JSON.parse(await file.text());
-      if (!game.validState(restored)) throw new Error('这不是有效的日光工作室存档。');
-      shownEvent = '';
-      if (resultDialog.open) resultDialog.close();
-      updateState(restored, '存档已恢复。');
-    } catch (error) {
-      notify(error.message || '存档读取失败。');
-    }
+      const restored = game.restoreStudio(JSON.parse(await file.text()));
+      playing = false; resumeAfterMenu = false;
+      dialog.close(); routes = [];
+      update(restored, '存档已恢复，时间保持暂停。');
+      if (!state.company) openMenu('setup', null, true);
+    } catch (error) { notify(error.message || '导入失败，当前进度未改变。'); }
     event.target.value = '';
   });
 
+  setInterval(() => {
+    if (!playing || dialog.open || state.event || state.over || document.hidden) return;
+    elapsed += 100 * speed;
+    try {
+      while (elapsed >= 1000 && playing && !state.event && !state.over) {
+        elapsed -= 1000;
+        const previousMonth = state.report ? state.report.month : 0;
+        state = game.stepDay(state);
+        save();
+        if (state.event) { playing = false; openMenu('event', null, true); }
+        else if (state.over) { playing = false; notify('公司未能支付月底开支，经营结束。'); }
+        else if (state.report && state.report.month !== previousMonth) notify(`第 ${state.report.month} 月结算：收入 ${money(state.report.income)}，支出 ${money(state.report.expense)}。`);
+        render();
+      }
+    } catch (error) { playing = false; notify(error.message); render(); }
+  }, 100);
+
   render();
+  if (!state.company) openMenu('setup', null, true);
+  else if (state.event) openMenu('event', null, true);
   if (loadNotice) notify(loadNotice);
 })();
