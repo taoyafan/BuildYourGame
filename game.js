@@ -398,7 +398,7 @@
       staff: [], project: null, catalog: [], tools: [], candidates: {},
       event: null, over: false, accrued: 0,
       ledger: { opening: 100, income: 0, expense: 0, payroll: 0 },
-      report: null, history: [], tutorial: {}, notices: {}, bridgeUsed: false, lastRelease: null
+      report: null, reports: [], history: [], tutorial: {}, notices: {}, bridgeUsed: false, lastRelease: null
     };
   }
 
@@ -542,16 +542,22 @@
     const project = state.project;
     const capacity = rates(state);
     const remaining = Math.max(0, project.total - project.done);
+    const protoTarget = project.total * 0.25;
+    const demoTarget = project.total * 0.55;
     let days = remaining <= 0 ? 0 : null;
+    let protoDays = project.done >= protoTarget ? 0 : null;
+    let demoDays = project.done >= demoTarget ? 0 : null;
     if (remaining > 0 && capacity.code && project.focus === 'develop') {
       const probe = clone(state);
       days = 0;
       while (probe.project.done < probe.project.total - 0.001 && days < 10000) {
         produceDay(probe);
         days += 1;
+        if (protoDays === null && probe.project.done >= protoTarget - 0.001) protoDays = days;
+        if (demoDays === null && probe.project.done >= demoTarget - 0.001) demoDays = days;
       }
     }
-    return { ...capacity, days, metrics: projectMetrics(project) };
+    return { ...capacity, days, protoDays, demoDays, metrics: projectMetrics(project) };
   }
 
   function buyTool(state, role) {
@@ -815,7 +821,9 @@
       next.cash = round(next.cash - payroll);
       next.ledger.payroll = payroll;
       next.ledger.expense = round(next.ledger.expense + payroll);
-      next.report = { month: next.day / 30, ...next.ledger, closing: next.cash, net: round(next.ledger.income - next.ledger.expense) };
+      const report = { month: next.day / 30, ...next.ledger, closing: next.cash, net: round(next.ledger.income - next.ledger.expense) };
+      next.report = report;
+      next.reports = [...(next.reports || []), report];
       next.ledger = { opening: next.cash, income: 0, expense: 0, payroll: 0 };
       next.accrued = 0;
       next.over = next.cash < 0;
@@ -843,6 +851,7 @@
     if (!Array.isArray(state.history) || !state.history.every(item => item && Number.isInteger(item.day) && text(item.title) && text(item.text))) return false;
     if (state.event && (!identifier(state.event.id) || !text(state.event.title) || !text(state.event.text) || !Array.isArray(state.event.choices) || !state.event.choices.length || !state.event.choices.every(item => item && identifier(item.id) && text(item.title) && text(item.detail)))) return false;
     if (state.report && (!Number.isInteger(state.report.month) || !['opening', 'income', 'expense', 'payroll', 'closing', 'net'].every(key => number(state.report[key])))) return false;
+    if (state.reports !== undefined && (!Array.isArray(state.reports) || state.reports.length > 600 || !state.reports.every(item => item && Number.isInteger(item.month) && item.month >= 1 && ['opening', 'income', 'expense', 'payroll', 'closing', 'net'].every(key => number(item[key]))))) return false;
     if (state.project) {
       const project = state.project;
       if (!identifier(project.id) || !text(project.name) || !Object.hasOwn(TYPES, project.type) || !tier(project.scale) || !['total', 'done', 'artTotal', 'artDone', 'codeValue', 'artValue', 'defects', 'defectDebt', 'polish', 'invested', 'followers', 'tests', 'testCount', 'started'].every(key => nonnegative(project[key])) || project.total <= 0 || project.artTotal <= 0 || project.done > project.total + 0.001 || project.artDone > project.artTotal + 0.001 || !['develop', 'polish', 'bugs'].includes(project.focus) || !project.checkpoints || typeof project.checkpoints !== 'object' || typeof project.assets !== 'boolean' || typeof project.plain !== 'boolean' || project.test && !feedback(project.test)) return false;
@@ -852,7 +861,11 @@
   }
 
   function restoreStudio(saved) {
-    if (validStudio(saved)) return clone(saved);
+    if (validStudio(saved)) {
+      const next = clone(saved);
+      if (!Array.isArray(next.reports)) next.reports = [];
+      return next;
+    }
     if (!validState(saved)) throw new Error('这不是有效的工作室存档，当前进度未改变。');
     const next = createStudio(saved.seed);
     next.day = (saved.month - 1) * 30 + 1;

@@ -590,6 +590,48 @@ test('forecast uses actual trait stages and has no production or money side effe
   assert.ok(Math.abs(state.project.invested - game.monthlyCost(state) / 30 * days) < 1e-8);
 });
 
+test('forecast separates the demo gate estimate from the full completion estimate', () => {
+  const start = game.startProject(staffedStudio(), { name: '分段预测', type: 'action', scale: 0 });
+  const forecast = game.projectForecast(start);
+  assert.ok(forecast.demoDays > 0);
+  assert.ok(forecast.demoDays < forecast.days);
+  let probe = start;
+  let crossed = 0;
+  while (probe.project.done < probe.project.total * 0.55 - 0.001) {
+    if (probe.event) {
+      const choice = probe.event.choices.find(item => item.id === 'continue') || probe.event.choices.find(item => item.id === 'plain') || probe.event.choices[0];
+      probe = game.resolveStudioEvent(probe, choice.id);
+    }
+    probe = game.stepDay(probe);
+    crossed += 1;
+  }
+  assert.equal(forecast.demoDays, crossed);
+  assert.ok(forecast.days > crossed);
+  assert.equal(game.projectForecast(probe).demoDays, 0);
+  const paused = { ...start, project: { ...start.project, focus: 'polish' } };
+  assert.equal(game.projectForecast(paused).demoDays, null);
+  assert.equal(game.projectForecast(paused).days, null);
+});
+
+test('forecast reports the prototype gate estimate ahead of the demo gate', () => {
+  const start = game.startProject(staffedStudio(), { name: '原型预测', type: 'action', scale: 0 });
+  const forecast = game.projectForecast(start);
+  assert.ok(forecast.protoDays > 0);
+  assert.ok(forecast.protoDays < forecast.demoDays);
+  let probe = start;
+  let crossed = 0;
+  while (probe.project.done < probe.project.total * 0.25 - 0.001) {
+    if (probe.event) {
+      const choice = probe.event.choices.find(item => item.id === 'continue') || probe.event.choices.find(item => item.id === 'plain') || probe.event.choices[0];
+      probe = game.resolveStudioEvent(probe, choice.id);
+    }
+    probe = game.stepDay(probe);
+    crossed += 1;
+  }
+  assert.equal(forecast.protoDays, crossed);
+  assert.equal(game.projectForecast(probe).protoDays, 0);
+});
+
 test('legacy large teams and released catalogs remain loadable without money creation', () => {
   const large = { ...game.createGame(42), team: 2, cash: 73.25 };
   const converted = game.restoreStudio(large);
@@ -637,7 +679,28 @@ test('daily seeded companies preserve valid saves and reconciled bills over mult
       if (!state.project && !state.event) state = game.startProject(state, { name: `作品 ${state.catalog.length}`, type: Object.keys(game.TYPES)[seed % 3], scale: seed % 3 });
       if (!state.event) state = game.stepDay(state);
       assert.equal(game.validStudio(state), true, `seed ${seed}, day ${day}`);
-      if (state.report) assert.ok(Math.abs(state.report.opening + state.report.income - state.report.expense - state.report.closing) < 0.015);
+      if (state.report) {
+        assert.ok(Math.abs(state.report.opening + state.report.income - state.report.expense - state.report.closing) < 0.015);
+        assert.equal(state.reports.length, state.report.month, `seed ${seed}, day ${day}: 每月都应归档一份账单`);
+        assert.equal(state.reports[state.reports.length - 1].month, state.report.month);
+      }
     }
   }
+});
+
+test('monthly bills are archived, balanced and survive save round trips', () => {
+  let state = game.nameCompany(game.createStudio(7), '账单验证');
+  state = game.publishRecruitment(state, 'code');
+  state = game.hire(state, state.candidates.code.people[0].id);
+  for (let day = 0; day < 70 && !state.over; day++) {
+    if (state.event) state = game.resolveStudioEvent(state, state.event.choices[0].id);
+    else state = game.stepDay(state);
+  }
+  assert.ok(state.reports.length >= 2, '至少两个月的账单');
+  state.reports.forEach(report => assert.ok(Math.abs(report.opening + report.income - report.expense - report.closing) < 0.015));
+  assert.equal(state.reports[state.reports.length - 1].month, state.report.month);
+  const restored = game.restoreStudio(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(restored.reports, state.reports);
+  const legacy = game.restoreStudio(JSON.parse(JSON.stringify({ ...state, reports: undefined })));
+  assert.deepEqual(legacy.reports, []);
 });

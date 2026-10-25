@@ -1,0 +1,4 @@
+.workbuddy/
+*.tmp.cjs
+*.tmp.js
+*.tmp.html
