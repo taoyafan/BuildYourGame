@@ -16,14 +16,14 @@ module.exports = function (env) {
 
   function advice() {
     const state = env.getState();
-    if (state.over) return { title: '公司未能支付月底开支', text: '作品与收支记录已保留，可以导出本次经营记录。', menu: 'finance' };
-    if (state.event) return { title: state.event.title, text: '关键决策正在等待，不会因加速跳过。', menu: 'event' };
-    if (!state.staff.some(person => person.role === 'code')) return { title: '先找到能把想法做出来的同事', text: '你负责产品方向与预算，程序员负责开发和修复。', menu: 'recruit-code' };
-    if (!state.project) return { title: state.catalog.length ? '下一款，延续优势还是换个方向？' : '团队已经可以启动第一款作品', text: '选定作品类型与名称，比较工作量和当前产能。', menu: 'project' };
-    if (state.project.focus !== 'develop' && state.project.done < state.project.total) return { title: '团队正在改进已有体验', text: '打磨和修复会暂缓新内容；完成后可切回内容开发。', menu: 'project' };
-    if (state.project.done >= state.project.total) return { title: '计划内容已完成，等待交付', text: '检查试玩、缺陷与关注情况后，可在项目菜单正式发售。', menu: 'project' };
-    if (game.playtestOffer(state).available && !state.project.test) return { title: 'Demo 已可测试', text: '没有试玩前不显示玩家评价，测试可以帮助识别短板。', menu: 'testing' };
-    return { title: '工作正在持续进行', text: '招聘、工具和工作重点可随时调整；现有安排无需重复确认。', menu: 'project' };
+    if (state.over) return { title: '公司未能支付月底开支', text: '作品与收支记录已保留，可以导出本次经营记录。', menu: 'finance', symbol: 'receipt-text' };
+    if (state.event) return { title: state.event.title, text: '关键决策正在等待，不会因加速跳过。', menu: 'event', symbol: 'message-circle' };
+    if (!state.staff.some(person => person.role === 'code')) return { title: '先找到能把想法做出来的同事', text: '你负责产品方向与预算，程序员负责开发和修复。', menu: 'recruit-code', symbol: 'user-plus' };
+    if (!state.project) return { title: state.catalog.length ? '下一款，延续优势还是换个方向？' : '团队已经可以启动第一款作品', text: '选定作品类型与名称，比较工作量和当前产能。', menu: 'project', symbol: 'gamepad-2' };
+    if (state.project.focus !== 'develop' && state.project.done < state.project.total) return { title: '团队正在改进已有体验', text: '打磨和修复会暂缓新内容；完成后可切回内容开发。', menu: 'project', symbol: 'wrench' };
+    if (state.project.done >= state.project.total) return { title: '计划内容已完成，等待交付', text: '检查试玩、缺陷与关注情况后，可在项目菜单正式发售。', menu: 'project', symbol: 'rocket' };
+    if (game.playtestOffer(state).available && !state.project.test) return { title: 'Demo 已可测试', text: '没有试玩前不显示玩家评价，测试可以帮助识别短板。', menu: 'testing', symbol: 'flask-conical' };
+    return { title: '工作正在持续进行', text: '招聘、工具和工作重点可随时调整；现有安排无需重复确认。', menu: 'project', symbol: 'activity' };
   }
 
   function recruitmentBlocks(role) {

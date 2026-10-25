@@ -51,6 +51,7 @@
 
   const PAD = 14;
   const HEADER_H = 52;
+  const MASTHEAD_H = 46;
   const NAV_H = 56;
 
   const C = {
@@ -58,6 +59,7 @@
     ink: '#1c2b26', body: '#3d4f49', muted: '#75857f', faint: '#a7b4af',
     line: '#e2e9e5', bg: '#f5f8f6', card: '#ffffff',
     blue: '#2f6f9f', amber: '#b45309', red: '#a63d3d', white: '#ffffff',
+    art: '#b07920', artBg: '#faf2df',
     toast: 'rgba(22,38,32,0.92)'
   };
 
@@ -190,6 +192,71 @@
     ctx.stroke();
     ctx.restore();
   }
+
+  // ==================== 图标（手绘线性图标，匹配网页版 Lucide 风格） ====================
+  // 24×24 归一化坐标：M/L 直线，C 三次贝塞尔，Q 二次贝塞尔，A 圆弧(圆心,半径,起角,止角)，RR 圆角矩形，DOT 实心点
+
+  const ICONS = {
+    sun: [['DOT', 12, 12, 4, 'stroke'], ['M', 12, 2], ['L', 12, 4.4], ['M', 12, 19.6], ['L', 12, 22], ['M', 2, 12], ['L', 4.4, 12], ['M', 19.6, 12], ['L', 22, 12], ['M', 4.9, 4.9], ['L', 6.6, 6.6], ['M', 17.4, 17.4], ['L', 19.1, 19.1], ['M', 19.1, 4.9], ['L', 17.4, 6.6], ['M', 6.6, 17.4], ['L', 4.9, 19.1]],
+    download: [['M', 12, 3], ['L', 12, 15], ['M', 7, 10], ['L', 12, 15], ['L', 17, 10], ['M', 4, 17], ['L', 4, 21], ['L', 20, 21], ['L', 20, 17]],
+    upload: [['M', 12, 15], ['L', 12, 3], ['M', 7, 8], ['L', 12, 3], ['L', 17, 8], ['M', 4, 17], ['L', 4, 21], ['L', 20, 21], ['L', 20, 17]],
+    rotate: [['A', 12, 12, 9, Math.PI, Math.PI * 1.5], ['L', 5.3, 5.7], ['L', 3, 8], ['M', 3, 3], ['L', 3, 8], ['L', 8, 8]],
+    gamepad: [['RR', 2, 8, 20, 9, 4.5], ['M', 6, 12.5], ['L', 10, 12.5], ['M', 8, 10.5], ['L', 8, 14.5], ['DOT', 15, 11.5, 0.7, 'fill'], ['DOT', 18, 13.5, 0.7, 'fill']],
+    users: [['DOT', 9, 7.5, 3.4, 'stroke'], ['M', 15, 21], ['L', 15, 19.5], ['A', 11, 19.5, 4, Math.PI, 0], ['L', 7, 15.5], ['A', 3, 19.5, 4, Math.PI, 0], ['L', 3, 21], ['M', 19.5, 21], ['L', 19.5, 19.4], ['A', 16.4, 16.2, 3.6, Math.PI, 0], ['A', 16, 7, 4, -Math.PI / 2, Math.PI / 2]],
+    wrench: [['M', 14, 10.5], ['L', 4.5, 19.5], ['A', 16.5, 7.5, 3.6, -0.26, 4.97]],
+    flask: [['M', 10, 2], ['L', 10, 7.5], ['M', 8.5, 2], ['L', 15.5, 2], ['M', 10, 7.5], ['L', 5, 17.3], ['Q', 5.6, 21, 9.2, 21], ['L', 14.8, 21], ['Q', 18.4, 21, 19, 17.3], ['L', 14, 7.5], ['M', 7.2, 16], ['L', 16.8, 16]],
+    megaphone: [['M', 3, 11], ['L', 21, 6], ['L', 21, 18], ['L', 3, 13], ['L', 3, 11], ['A', 8.7, 16, 3, 0.26, 2.88]],
+    receipt: [['M', 4, 2.5], ['L', 20, 2.5], ['L', 20, 15.5], ['L', 18, 17], ['L', 16, 15.5], ['L', 14, 17], ['L', 12, 15.5], ['L', 10, 17], ['L', 8, 15.5], ['L', 6, 17], ['L', 4, 15.5], ['L', 4, 2.5], ['M', 8, 7], ['L', 16, 7], ['M', 8, 10], ['L', 16, 10], ['M', 8, 13], ['L', 14, 13]],
+    message: [['RR', 3, 4, 18, 12.5, 5], ['M', 8, 16.5], ['L', 6.5, 21], ['L', 13.5, 16.5]],
+    userplus: [['DOT', 9, 7.5, 3.4, 'stroke'], ['M', 15, 21], ['L', 15, 19.5], ['A', 11, 19.5, 4, Math.PI, 0], ['L', 7, 15.5], ['A', 3, 19.5, 4, Math.PI, 0], ['L', 3, 21], ['M', 19, 8], ['L', 19, 14], ['M', 16, 11], ['L', 22, 11]],
+    flag: [['M', 4, 22], ['L', 4, 3.5], ['M', 4, 4], ['C', 7, 3, 9.5, 6, 12.5, 6], ['C', 15.5, 6, 17.5, 4, 20.5, 4], ['L', 20.5, 13], ['C', 17.5, 13, 15.5, 15, 12.5, 15], ['C', 9.5, 15, 7, 12, 4, 13], ['L', 4, 4]],
+    sparkles: [['M', 10, 1.5], ['L', 11.7, 8.3], ['L', 18.5, 10], ['L', 11.7, 11.7], ['L', 10, 18.5], ['L', 8.3, 11.7], ['L', 1.5, 10], ['L', 8.3, 8.3], ['L', 10, 1.5], ['M', 19, 3], ['L', 19.6, 5.4], ['L', 22, 6], ['L', 19.6, 6.6], ['L', 19, 9], ['L', 18.4, 6.6], ['L', 16, 6], ['L', 18.4, 5.4], ['L', 19, 3]],
+    rocket: [['M', 12, 2.5], ['C', 14.5, 5.5, 15.5, 9, 15, 12.5], ['L', 9, 12.5], ['C', 8.5, 9, 9.5, 5.5, 12, 2.5], ['DOT', 12, 8, 1.4, 'stroke'], ['M', 9, 12], ['L', 5.5, 16.5], ['L', 9.5, 15.5], ['M', 15, 12], ['L', 18.5, 16.5], ['L', 14.5, 15.5], ['M', 10.5, 14.5], ['L', 12, 19.5], ['L', 13.5, 14.5]],
+    activity: [['M', 2.5, 12], ['L', 6, 12], ['L', 9, 20.5], ['L', 15, 3.5], ['L', 18, 12], ['L', 21.5, 12]],
+    arrow: [['M', 7, 17], ['L', 17, 7], ['M', 8, 7], ['L', 17, 7], ['L', 17, 16]],
+    'arrow-left': [['M', 19, 12], ['L', 5, 12], ['M', 12, 19], ['L', 5, 12], ['L', 12, 5]],
+    x: [['M', 6, 6], ['L', 18, 18], ['M', 18, 6], ['L', 6, 18]],
+    play: [['M', 8, 5], ['L', 19, 12], ['L', 8, 19], ['L', 8, 5]],
+    pause: [['M', 8.5, 5], ['L', 11.5, 5], ['L', 11.5, 19], ['L', 8.5, 19], ['L', 8.5, 5], ['M', 12.5, 5], ['L', 15.5, 5], ['L', 15.5, 19], ['L', 12.5, 19], ['L', 12.5, 5]]
+  };
+  const ICON_FILLED = { play: true, pause: true };
+
+  function drawIcon(name, cx, cy, size, color, weight) {
+    const cmds = ICONS[name];
+    if (!cmds) return;
+    const k = size / 24;
+    const ox = cx - 12 * k;
+    const oy = cy - 12 * k;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = weight || 1.7;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (const c of cmds) {
+      const t = c[0];
+      if (t === 'M') ctx.moveTo(ox + c[1] * k, oy + c[2] * k);
+      else if (t === 'L') ctx.lineTo(ox + c[1] * k, oy + c[2] * k);
+      else if (t === 'C') ctx.bezierCurveTo(ox + c[1] * k, oy + c[2] * k, ox + c[3] * k, oy + c[4] * k, ox + c[5] * k, oy + c[6] * k);
+      else if (t === 'Q') ctx.quadraticCurveTo(ox + c[1] * k, oy + c[2] * k, ox + c[3] * k, oy + c[4] * k);
+      else if (t === 'A') {
+        ctx.moveTo(ox + (c[1] + c[3] * Math.cos(c[4])) * k, oy + (c[2] + c[3] * Math.sin(c[4])) * k);
+        ctx.arc(ox + c[1] * k, oy + c[2] * k, c[3] * k, c[4], c[5]);
+      } else if (t === 'RR') rr(ox + c[1] * k, oy + c[2] * k, c[3] * k, c[4] * k, c[5] * k);
+      else if (t === 'DOT') {
+        ctx.moveTo(ox + (c[1] + c[3]) * k, oy + c[2] * k);
+        ctx.arc(ox + c[1] * k, oy + c[2] * k, c[3] * k, 0, Math.PI * 2);
+        if (c[4] === 'fill') ctx.fill();
+      }
+    }
+    if (ICON_FILLED[name]) ctx.fill();
+    else ctx.stroke();
+    ctx.restore();
+  }
+
+  const NAV_ICONS = { project: 'gamepad', team: 'users', tools: 'wrench', testing: 'flask', market: 'megaphone', finance: 'receipt' };
+  const ADVICE_ICONS = { 'receipt-text': 'receipt', 'message-circle': 'message', 'user-plus': 'userplus', 'gamepad-2': 'gamepad', wrench: 'wrench', rocket: 'rocket', 'flask-conical': 'flask', activity: 'activity' };
 
   function hit(x, y, w, h, action, data, disabled) {
     hits.push({ x, y, w, h, action, data: data || null, disabled: !!disabled });
@@ -612,8 +679,8 @@
   }
 
   function renderMain() {
-    const viewTop = HEADER_H + 4;
-    const viewH = H - HEADER_H - NAV_H - 8;
+    const viewTop = MASTHEAD_H + HEADER_H + 4;
+    const viewH = H - MASTHEAD_H - HEADER_H - NAV_H - 8;
     scrollState.main = clamp(scrollState.main, 0, Math.max(0, lastMainH - viewH));
     const scroll = scrollState.main;
     const x = PAD;
@@ -653,15 +720,20 @@
     const deskPad = 12;
     const deskX = x;
     const deskW = w;
-    let inner = deskPad + 26 + (project ? 84 + 34 + 66 + 3 * 48 + 46 : 88) + deskPad;
+    // 建议横幅高度先算（网页版中它位于项目卡底部）
+    const hintLines = wrapText(hint.text, w - 96, 11, 400).slice(0, 2);
+    const advH = 16 + 20 + hintLines.length * 15 + 10;
+    let inner = deskPad + 26 + (project ? 84 + 34 + 66 + 3 * 48 + 46 : 88) + advH + deskPad;
     at(y, inner, sy => {
       panel(deskX, sy, deskW, inner - 8, { fill: C.card, stroke: C.line, radius: 12 });
       drawText(project ? game.TYPES[project.type].name + ' / ' + content.stage(project) : '工作室 / 新的计划', deskX + deskPad, sy + 22, 10.5, 400, C.muted);
-      drawText(ellipsis(project ? '《' + project.name + '》' : '下一款，做什么？', deskW - 110, 15, 500), deskX + deskPad, sy + 42, 15, 500, C.ink);
+      drawText(ellipsis(project ? '《' + project.name + '》' : '下一款，做什么？', deskW - 92, 15, 500), deskX + deskPad, sy + 42, 15, 500, C.ink);
       const btnLabel = project ? '项目' : '立项';
-      panel(deskX + deskW - 62, sy + 14, 50, 28, { fill: C.greenSoft, stroke: C.greenLine, radius: 8 });
-      drawText(btnLabel, deskX + deskW - 37, sy + 28, 12, 500, C.greenDeep, 'center');
-      hit(deskX + deskW - 62, sy + 14, 50, 28, 'menu', { menu: 'project' });
+      const btnIcon = project ? 'gamepad' : 'flag';
+      panel(deskX + deskW - 76, sy + 14, 64, 28, { fill: C.greenSoft, stroke: C.greenLine, radius: 8 });
+      drawIcon(btnIcon, deskX + deskW - 60, sy + 28, 14, C.greenDeep);
+      drawText(btnLabel, deskX + deskW - 36, sy + 28, 11.5, 500, C.greenDeep, 'center');
+      hit(deskX + deskW - 76, sy + 14, 64, 28, 'menu', { menu: 'project' });
 
       let cy = sy + deskPad + 40;
       if (project) {
@@ -696,44 +768,52 @@
         drawText(state.company || '为工作室取一个名字', deskX + deskPad + 14, sy + deskPad + 66, 13.5, 500, C.greenDeep);
         drawText(book ? '上一作累计售出 ' + number(book.units) + ' 份，回款 ' + money(book.received) + '。' : '从一位同事、一个想法开始。', deskX + deskPad + 14, sy + deskPad + 86, 11.5, 400, C.body);
       }
+
+      // 建议横幅：浅绿底 + 绿色左边框 + 深色文字（与网页版一致，位于项目卡底部）
+      const advY = sy + inner - 8 - deskPad - advH;
+      panel(deskX + deskPad, advY, deskW - deskPad * 2, advH, { fill: C.greenSoft, radius: 8 });
+      ctx.fillStyle = C.green;
+      ctx.fillRect(deskX + deskPad, advY, 3, advH);
+      drawText(ellipsis(hint.title, deskW - deskPad * 2 - 58, 12.5, 600), deskX + deskPad + 12, advY + 16, 12.5, 600, C.ink);
+      hintLines.forEach((ln, i) => drawText(ln, deskX + deskPad + 12, advY + 34 + i * 15, 11, 400, C.muted));
+      const abx = deskX + deskW - deskPad - 32;
+      panel(abx, advY + advH / 2 - 16, 32, 32, { fill: C.card, radius: 16 });
+      drawIcon(ADVICE_ICONS[hint.symbol] || 'arrow', abx + 16, advY + advH / 2, 15, C.green);
+      hit(abx, advY + advH / 2 - 16, 32, 32, 'menu', { menu: hint.menu });
     });
     y += inner;
 
-    // 建议横幅
-    const hintLines = wrapText(hint.text, w - 84, 11.5, 400).slice(0, 2);
-    const advH = 40 + hintLines.length * 16;
-    at(y, advH, sy => {
-      panel(x, sy, w, advH - 8, { fill: C.green, radius: 12 });
-      drawText(ellipsis(hint.title, w - 90, 13, 500), x + 14, sy + 20, 13, 500, C.white);
-      hintLines.forEach((ln, i) => drawText(ln, x + 14, sy + 38 + i * 16, 11.5, 400, 'rgba(255,255,255,0.82)'));
-      panel(x + w - 46, sy + (advH - 8) / 2 - 17, 34, 34, { fill: 'rgba(255,255,255,0.16)', radius: 17 });
-      drawText('→', x + w - 29, sy + (advH - 8) / 2, 16, 500, C.white, 'center');
-      hit(x + w - 46, sy + (advH - 8) / 2 - 17, 34, 34, 'menu', { menu: hint.menu });
-    });
-    y += advH;
-
     // 团队近况
-    const staffRows = state.staff.length ? state.staff.length * 62 + 40 : 74;
+    const rowH = 52;
+    const staffRows = state.staff.length ? state.staff.length * rowH : 26;
     const peopleH = 30 + staffRows + 78;
     at(y, peopleH, sy => {
       panel(x, sy, w, peopleH - 8, { fill: C.card, stroke: C.line, radius: 12 });
       drawText('工作室近况', x + 14, sy + 22, 13.5, 500, C.ink);
-      panel(x + w - 62, sy + 10, 48, 28, { fill: C.greenSoft, stroke: C.greenLine, radius: 8 });
-      drawText('团队', x + w - 38, sy + 24, 12, 500, C.greenDeep, 'center');
-      hit(x + w - 62, sy + 10, 48, 28, 'menu', { menu: 'team' });
+      panel(x + w - 76, sy + 10, 64, 28, { fill: C.greenSoft, stroke: C.greenLine, radius: 8 });
+      drawIcon('users', x + w - 60, sy + 24, 14, C.greenDeep);
+      drawText('团队', x + w - 36, sy + 24, 11.5, 500, C.greenDeep, 'center');
+      hit(x + w - 76, sy + 10, 64, 28, 'menu', { menu: 'team' });
       const listTop = sy + 36;
       if (state.staff.length) {
         state.staff.forEach((person, i) => {
-          const py = listTop + i * 62;
-          panel(x + 10, py, w - 20, 54, { fill: '#fafcfb', stroke: C.line, radius: 10 });
-          panel(x + 20, py + 9, 36, 36, { fill: person.role === 'code' ? C.greenSoft : '#eef3f8', stroke: person.role === 'code' ? C.greenLine : '#cfdeeb', radius: 18 });
-          drawText(person.name.slice(-1), x + 38, py + 28, 14, 500, person.role === 'code' ? C.greenDeep : C.blue, 'center');
+          const py = listTop + i * rowH;
+          if (i > 0) {
+            ctx.strokeStyle = C.line;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + 14, py + 0.5);
+            ctx.lineTo(x + w - 14, py + 0.5);
+            ctx.stroke();
+          }
+          panel(x + 14, py + 11, 30, 30, { fill: person.role === 'code' ? C.greenSoft : C.artBg, radius: 6 });
+          drawText(person.name.slice(-1), x + 29, py + 27, 13, 500, person.role === 'code' ? C.green : C.art, 'center');
           const task = project ? (person.role === 'art' ? '视觉制作' : { develop: '功能开发', polish: '玩法打磨', bugs: '缺陷修复' }[project.focus]) : '等待新项目';
-          drawText(ellipsis(person.name, w * 0.4, 12.5, 500), x + 66, py + 19, 12.5, 500, C.ink);
-          drawText(game.ROLES[person.role].name + ' · ' + task, x + 66, py + 37, 10.5, 400, C.muted);
-          drawText(person.work.toFixed(1), x + w - 22, py + 20, 12.5, 500, C.ink, 'right');
-          drawText('累计工作量', x + w - 22, py + 36, 9, 400, C.faint, 'right');
-          hit(x + 10, py, w - 20, 54, 'menu', { menu: 'person', id: person.id });
+          drawText(ellipsis(person.name, w * 0.4, 12, 500), x + 54, py + 18, 12, 500, C.ink);
+          drawText(game.ROLES[person.role].name + ' · ' + task, x + 54, py + 35, 10, 400, C.muted);
+          drawText(person.work.toFixed(1), x + w - 14, py + 18, 12, 500, C.ink, 'right');
+          drawText('累计工作量', x + w - 14, py + 34, 8.5, 400, C.faint, 'right');
+          hit(x + 10, py, w - 20, rowH, 'menu', { menu: 'person', id: person.id });
         });
       } else {
         drawText('还没有员工。你负责制作方向，先发布程序员招聘。', x + 14, listTop + 12, 11.5, 400, C.muted);
@@ -749,6 +829,30 @@
     lastMainH = y + 10;
   }
 
+  function renderMasthead() {
+    // 底边线（网页版为 1px 墨色）
+    ctx.strokeStyle = C.ink;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, MASTHEAD_H + 0.5);
+    ctx.lineTo(W, MASTHEAD_H + 0.5);
+    ctx.stroke();
+    // 左：太阳标 + 公司名 + 标语
+    panel(PAD, 9, 28, 28, { fill: C.card, stroke: C.ink, radius: 14 });
+    drawIcon('sun', PAD + 14, 23, 16, C.green);
+    const nameX = PAD + 36;
+    drawText(ellipsis(state.company || '日光工作室', W - nameX - 156, 14, 600), nameX, 17, 14, 600, C.ink);
+    drawText('把下一款游戏，做出来。', nameX, 33, 9.5, 400, C.muted);
+    // 右：存档状态 + 导出 / 导入 / 重新创业（与网页版同序）
+    drawText(storageAvailable ? '本机自动存档' : '存档不可用', W - PAD - 104, 23, 9, 400, C.muted, 'right');
+    [['export', 'download'], ['import', 'upload'], ['restart', 'rotate']].forEach(([action, icon], i) => {
+      const bx = W - PAD - 96 + i * 32;
+      panel(bx, 8, 30, 30, { fill: C.card, stroke: C.line, radius: 8 });
+      drawIcon(icon, bx + 15, 23, 15, C.muted);
+      hit(bx, 8, 30, 30, action);
+    });
+  }
+
   function renderClockBar() {
     panel(0, 0, W, HEADER_H, { fill: C.card, radius: 0 });
     ctx.strokeStyle = C.line;
@@ -762,35 +866,47 @@
     drawText('第 ' + month + ' 月 · ' + day + ' 日', PAD, 18, 15, 500, C.ink);
     drawText(ellipsis(pauseReason(), W - 190, 10.5, 400), PAD, 38, 10.5, 400, C.muted);
 
+    // 控制区与网页版同序：[播放/暂停] [1x 4x 12x 分组]
     const canToggle = !!state.company && !state.event && !state.over && !routes.length;
-    panel(W - 52, 8, 40, 40, { fill: canToggle ? C.green : '#eef1ef', radius: 20 });
-    drawText(playing ? '‖' : '▶', W - 32, 29, 15, 500, canToggle ? C.white : C.faint, 'center');
-    if (canToggle) hit(W - 52, 8, 40, 40, 'clock');
+    panel(W - PAD - 142, 8, 40, 40, { fill: canToggle ? C.green : '#eef1ef', radius: 20 });
+    drawIcon(canToggle ? (playing ? 'pause' : 'play') : 'play', W - PAD - 122, 29, 16, canToggle ? C.white : C.faint);
+    if (canToggle) hit(W - PAD - 142, 8, 40, 40, 'clock');
 
+    const gx = W - PAD - 98;
+    panel(gx, 8, 98, 36, { fill: C.card, stroke: C.line, radius: 6 });
     [1, 4, 12].forEach((value, i) => {
-      const bx = W - 152 + i * 34;
+      const bx = gx + i * 33;
       const active = speed === value;
-      panel(bx, 14, 30, 28, { fill: active ? C.greenSoft : 'transparent', stroke: active ? C.green : C.line, radius: 8 });
-      drawText(value + 'x', bx + 15, 29, 10.5, 500, active ? C.greenDeep : C.muted, 'center');
-      hit(bx, 14, 30, 28, 'speed', { value });
+      if (active) panel(bx + 1, 9, 31, 34, { fill: C.greenSoft, radius: 5 });
+      if (i > 0) {
+        ctx.strokeStyle = C.line;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bx, 14);
+        ctx.lineTo(bx, 38);
+        ctx.stroke();
+      }
+      drawText(value + 'x', bx + 16.5, 27, 12, active ? 700 : 400, active ? C.green : C.muted, 'center');
+      hit(bx, 8, 33, 36, 'speed', { value });
     });
   }
 
   function renderNav() {
     const y = H - NAV_H;
     panel(0, y, W, NAV_H, { fill: C.card, radius: 0 });
-    ctx.strokeStyle = C.line;
+    ctx.strokeStyle = C.ink;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(W, y + 0.5);
     ctx.stroke();
     const cw = W / NAV.length;
     NAV.forEach((item, i) => {
       const cx = i * cw;
       const active = routes.length && routes[routes.length - 1].menu === item[0];
-      if (active) panel(cx + 6, y + 8, cw - 12, NAV_H - 16, { fill: C.greenSoft, radius: 10 });
-      drawText(item[1], cx + cw / 2, y + NAV_H / 2 + 6, 10.5, 500, active ? C.greenDeep : C.muted, 'center');
+      if (active) panel(cx + 6, y + 6, cw - 12, NAV_H - 12, { fill: C.greenSoft, radius: 10 });
+      drawIcon(NAV_ICONS[item[0]], cx + cw / 2, y + 20, 17, active ? C.green : C.muted);
+      drawText(item[1], cx + cw / 2, y + 39, 10.5, 500, active ? C.greenDeep : C.muted, 'center');
       hit(cx, y, cw, NAV_H, 'menu', { menu: item[0] });
     });
   }
@@ -808,14 +924,14 @@
     ctx.stroke();
     if (routes.length > 1) {
       panel(PAD, 10, 36, 36, { fill: C.greenSoft, radius: 10 });
-      drawText('‹', PAD + 18, 29, 18, 500, C.greenDeep, 'center');
+      drawIcon('arrow-left', PAD + 18, 28, 16, C.greenDeep);
       hit(PAD, 10, 36, 36, 'back');
     } else {
       drawText('工作室 / 经营决策', PAD, 29, 10.5, 400, C.muted);
     }
     if (state.company) {
       panel(W - PAD - 36, 10, 36, 36, { fill: C.greenSoft, radius: 10 });
-      drawText('✕', W - PAD - 18, 29, 14, 500, C.greenDeep, 'center');
+      drawIcon('x', W - PAD - 18, 28, 14, C.greenDeep);
       hit(W - PAD - 36, 10, 36, 36, 'close');
     }
     let special;
@@ -845,7 +961,7 @@
     if (!toast || Date.now() > toast.until) return;
     const lines = wrapText(toast.text, W - 72, 12, 400).slice(0, 2);
     const h = 18 + lines.length * 17;
-    const y = HEADER_H + 10;
+    const y = MASTHEAD_H + HEADER_H + 10;
     const tw = W - 48;
     panel(24, y, tw, h, { fill: C.toast, radius: 10 });
     lines.forEach((ln, i) => drawText(ln, 24 + tw / 2, y + 14 + i * 17, 12, 400, C.white, 'center'));
@@ -857,7 +973,7 @@
     ctx.fillRect(0, 0, W, H);
     hits = [];
     if (routes.length) renderMenu();
-    else { renderClockBar(); renderMain(); renderNav(); }
+    else { renderMasthead(); renderClockBar(); renderMain(); renderNav(); }
     drawToast();
   }
 
@@ -1054,7 +1170,7 @@
     touchInfo.y = t.clientY;
     touchInfo.moved += Math.abs(dy);
     const key = routes.length ? 'menu' : 'main';
-    const viewH = routes.length ? H - 96 - 12 : H - HEADER_H - NAV_H - 8;
+    const viewH = routes.length ? H - 96 - 12 : H - MASTHEAD_H - HEADER_H - NAV_H - 8;
     const contentH = routes.length ? lastMenuH : lastMainH;
     scrollState[key] = clamp(scrollState[key] - dy, 0, Math.max(0, contentH - viewH));
     draw();
@@ -1090,7 +1206,7 @@
     get playing() { return playing; },
     get routes() { return routes.map(r => r.menu); },
     get draft() { return formDraft; },
-    get hits() { return hits.map(h => ({ action: h.action, x: h.x, y: h.y, w: h.w, h: h.h })); },
+    get hits() { return hits.map(h => ({ action: h.action, data: h.data, x: h.x, y: h.y, w: h.w, h: h.h })); },
     openMenu, closeMenu, dispatch, draw, notify,
     tick: gameTick,
     setSpeed: v => { speed = v; },

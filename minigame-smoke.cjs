@@ -17,8 +17,10 @@ const CJK = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
 function createCtxStub() {
   let fontSize = 12;
   const noop = () => { };
-  return {
+  const stub = {
     _font: '',
+    _strokes: 0,
+    _fills: 0,
     get font() { return this._font; },
     set font(value) {
       this._font = value;
@@ -33,11 +35,14 @@ function createCtxStub() {
     },
     scale: noop, clearRect: noop, fillRect: noop, strokeRect: noop, rect: noop,
     beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop, quadraticCurveTo: noop, bezierCurveTo: noop,
-    arc: noop, arcTo: noop, stroke: noop, fill: noop,
+    arc: noop, arcTo: noop,
+    stroke() { stub._strokes += 1; },
+    fill() { stub._fills += 1; },
     save: noop, restore: noop, clip: noop, setLineDash: noop,
     fillText: noop, drawImage: noop,
     fillStyle: '', strokeStyle: '', lineWidth: 1, textAlign: 'left', textBaseline: 'alphabetic'
   };
+  return stub;
 }
 
 const ctxStub = createCtxStub();
@@ -113,6 +118,13 @@ function tap(x, y) {
   ok(!!clock, '主界面有时钟按钮');
   ok(StudioDebug.hits.some(h => h.action === 'speed'), '主界面有速度按钮');
   ok(StudioDebug.hits.filter(h => h.action === 'menu').length >= 6, '主界面有导航菜单');
+  ok(StudioDebug.hits.some(h => h.action === 'export'), '顶栏有导出按钮');
+  ok(StudioDebug.hits.some(h => h.action === 'import'), '顶栏有导入按钮');
+  ok(StudioDebug.hits.some(h => h.action === 'restart'), '顶栏有重新创业按钮');
+  ok(StudioDebug.hits.some(h => h.action === 'menu' && h.data && h.data.menu === 'recruit-code'), '建议横幅按钮可达（无程序员时指向招聘）');
+  const strokesBefore = ctxStub._strokes;
+  StudioDebug.draw();
+  ok(ctxStub._strokes > strokesBefore, '主界面执行了矢量绘制（图标与线条）');
   tap(clock.x + clock.w / 2, clock.y + clock.h / 2);
   ok(StudioDebug.playing === true, '点击时钟开始经营');
   const day0 = StudioDebug.state.day;

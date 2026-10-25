@@ -13,5 +13,6 @@
     "lazyloadPlaceholderEnable": false,
     "autoAudits": false
   },
-  "condition": {}
+  "condition": {},
+  "simulatorPluginLibVersion": {}
 }
