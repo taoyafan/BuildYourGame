@@ -63,6 +63,17 @@
   // 取「状态栏高度 / 胶囊顶部」较大值 + 余量，顶部内容整体下移让开二者。
   const TOP_INSET = Math.max(info.statusBarHeight || 20, capsuleTop) + 6;
 
+  // 底部安全区：home 手势控制条（iPhone X 类设备底部黑色小横条，宽约 140px、高 5px）
+  // 同样浮于画布之上，会压住底部导航的文字标签。按「控制条离底部的距离」把底部导航
+  // 整体上提，让标签完整露出。safeArea.bottom 与 screenHeight 之差即底部安全区高度；
+  // 封顶 16px——只需让开控制条本身，不把导航推得太高（用户要求"上提一点点"）。
+  let HOME_INSET = 0;
+  try {
+    if (info.safeArea && info.safeArea.bottom > 0 && info.screenHeight > 0) {
+      HOME_INSET = Math.min(Math.max(0, info.screenHeight - info.safeArea.bottom), 16);
+    }
+  } catch (error) { /* 无 safeArea 的设备（无 home 条）保持 0 */ }
+
   const canvas = wx.createCanvas();
   canvas.width = W * DPR;
   canvas.height = H * DPR;
@@ -708,7 +719,7 @@
 
   function renderMain() {
     const viewTop = TOP_INSET + MASTHEAD_H + HEADER_H + 4;
-    const viewH = H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - 8;
+    const viewH = H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - HOME_INSET - 8;
     scrollState.main = clamp(scrollState.main, 0, Math.max(0, lastMainH - viewH));
     const scroll = scrollState.main;
     const x = PAD;
@@ -935,7 +946,8 @@
   }
 
   function renderNav() {
-    const y = H - NAV_H;
+    // 整体上提 HOME_INSET：底边停在 home 手势控制条上方，文字标签不被黑条压住
+    const y = H - NAV_H - HOME_INSET;
     panel(0, y, W, NAV_H, { fill: C.card, radius: 0 });
     ctx.strokeStyle = C.ink;
     ctx.lineWidth = 1;
@@ -993,7 +1005,8 @@
     const centerMax = Math.max(40, (titleRightLimit - W / 2) * 2);
     drawText(ellipsis(special.title, centerMax, 15.5, 500), W / 2, rowY + 18, 15.5, 500, C.ink, 'center');
 
-    const view = { top: headH + 8, h: H - headH - 20 };
+    // 滚动区底部同样让开 home 控制条：滚到底时最后一项不被黑条压住
+    const view = { top: headH + 8, h: H - headH - 20 - HOME_INSET };
     const x = PAD;
     const w = W - PAD * 2;
     scrollState.menu = clamp(scrollState.menu, 0, Math.max(0, lastMenuH - view.h));
@@ -1248,7 +1261,7 @@
     touchInfo.y = t.clientY;
     touchInfo.moved += Math.abs(dx) + Math.abs(dy);
     const key = routes.length ? 'menu' : 'main';
-    const viewH = routes.length ? H - (TOP_INSET + 84) - 20 : H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - 8;
+    const viewH = routes.length ? H - (TOP_INSET + 84) - 20 - HOME_INSET : H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - HOME_INSET - 8;
     const contentH = routes.length ? lastMenuH : lastMainH;
     scrollState[key] = clamp(scrollState[key] - dy, 0, Math.max(0, contentH - viewH));
     // 团队横带横向滚动（与纵向滚动互不干扰：纵拖仍然滚页面）
@@ -1298,6 +1311,7 @@
     get toast() { return toast ? { text: toast.text, left: Math.max(0, toast.until - Date.now()) } : null; },
     get strip() { return stripRect; },
     get peopleScroll() { return peopleScroll; },
+    get homeInset() { return HOME_INSET; },
     openMenu, closeMenu, dispatch, draw, notify,
     tick: gameTick,
     setSpeed: v => { speed = v; },

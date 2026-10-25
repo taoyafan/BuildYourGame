@@ -41,9 +41,9 @@ function createCtxStub() {
 }
 const ctxStub = createCtxStub();
 
-// iPhone X 类：W=390，状态栏 44，胶囊 left=281 top=45 宽 94 高 37（底部 82）
+// iPhone X 类：W=390，状态栏 44，胶囊 left=281 top=45 宽 94 高 37（底部 82）；safeArea.bottom 810 → 底部安全区 34 → HOME_INSET 封顶 16
 global.wx = {
-  getSystemInfoSync: () => ({ windowWidth: 390, windowHeight: 844, pixelRatio: 3, statusBarHeight: 44 }),
+  getSystemInfoSync: () => ({ windowWidth: 390, windowHeight: 844, pixelRatio: 3, statusBarHeight: 44, screenHeight: 844, safeArea: { top: 44, right: 390, bottom: 810, left: 0, width: 390, height: 766 } }),
   getMenuButtonBoundingClientRect: () => ({ left: 281, right: 375, top: 45, bottom: 82, width: 94, height: 37 }),
   createCanvas: () => ({ width: 0, height: 0, getContext: () => ctxStub }),
   getStorageSync: key => (storage.has(key) ? storage.get(key) : ''),
@@ -101,7 +101,7 @@ function textRight(entry) {
   ok(StudioDebug.state.project && StudioDebug.state.staff.length === 1, '已立项并有 1 名员工');
 
   StudioDebug.draw();
-  const W = 390, PAD = 14;
+  const W = 390, H = 844, PAD = 14;
   // 1. 顶部安全区：胶囊（281..375, 45..82）不得压到任何热区
   const capsuleZone = { x: 273, y: 41, w: 110, h: 46 };
   const onCapsule = StudioDebug.hits.filter(h => h.x < capsuleZone.x + capsuleZone.w && h.x + h.w > capsuleZone.x && h.y < capsuleZone.y + capsuleZone.h && h.y + h.h > capsuleZone.y);
@@ -151,6 +151,14 @@ function textRight(entry) {
   touch.move({ touches: [{ clientX: strip.x + 40 - 30, clientY: strip.y + 24 }] });
   touch.end({ touches: [] });
   ok(StudioDebug.peopleScroll === 0, '单名员工内容不足一屏时横向滚动保持 0（不抖动）');
+  // 8. 底部导航上提：整条与文字标签都避开 home 控制条（真机条位于 H-15..H-10）
+  const navHits2 = StudioDebug.hits.filter(h => h.action === 'menu' && h.y > 750);
+  ok(navHits2.length === 6, '底部导航 6 个按钮都有热区');
+  ok(StudioDebug.homeInset === 16, 'safeArea 底部差 34 → 封顶 16pt 上提量');
+  ok(navHits2.every(h => h.y + h.h === H - StudioDebug.homeInset), '底部导航整体上提 ' + StudioDebug.homeInset + 'pt，底边（' + (H - StudioDebug.homeInset) + '）在 home 控制条顶（' + (H - 15) + '）之上');
+  const navLabels = ctxStub._texts.filter(t => t.y > 700 && (t.text === '项目' || t.text === '团队' || t.text === '公司'));
+  ok(navLabels.length >= 3, '导航文字标签已渲染');
+  ok(navLabels.every(t => t.y <= H - 25), '标签基线（' + Math.max(...navLabels.map(t => t.y)) + '）距 home 控制条顶（' + (H - 15) + '）留足 10pt，不再被压字');
 
   console.log('\n真机参数校验全部通过：' + passed + ' 项');
   process.exit(0);

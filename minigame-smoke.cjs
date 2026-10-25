@@ -50,7 +50,8 @@ function createCtxStub() {
 const ctxStub = createCtxStub();
 
 global.wx = {
-  getSystemInfoSync: () => ({ windowWidth: 375, windowHeight: 667, pixelRatio: 2 }),
+  // screenHeight 667 + safeArea.bottom 633 → 底部安全区 34，HOME_INSET 封顶 16（模拟 iPhone X 类 home 控制条）
+  getSystemInfoSync: () => ({ windowWidth: 375, windowHeight: 667, pixelRatio: 2, screenHeight: 667, statusBarHeight: 20, safeArea: { top: 20, right: 375, bottom: 633, left: 0, width: 375, height: 613 } }),
   getMenuButtonBoundingClientRect: () => ({ left: 280, right: 367, top: 24, bottom: 56, width: 87, height: 32 }),
   createCanvas: () => ({ width: 0, height: 0, getContext: () => ctxStub }),
   getStorageSync: key => (storage.has(key) ? storage.get(key) : ''),
@@ -138,6 +139,13 @@ function textRight(entry) {
   // 时钟控制区右缘：胶囊（垫片 top=24 height=32 → 底部 56）压不到时钟条（顶部 92），应到达屏幕边缘
   const controlRight = Math.max(...StudioDebug.hits.filter(h => h.action === 'speed' || h.action === 'clock').map(h => h.x + h.w));
   ok(controlRight >= 375 - 14 && controlRight <= 375 - 14 + 2, '倍速/暂停控制区右对齐到屏幕边缘（375-14=361），不再提前让位胶囊');
+  // 底部导航整体上提 HOME_INSET：底边停在 home 控制条上方，文字标签不被黑色小横条压住
+  // （注意：项目卡的「项目」按钮与近况区的「团队」按钮同名，必须用导航行位置过滤）
+  const navItems = ['project', 'team', 'tools', 'testing', 'market', 'finance'];
+  const navRow = StudioDebug.hits.filter(h => h.action === 'menu' && h.data && navItems.includes(h.data.menu) && h.y + h.h === 667 - StudioDebug.homeInset);
+  ok(navRow.length === 6, '底部导航 6 个按钮都有热区');
+  ok(StudioDebug.homeInset === 16, '检测到 home 控制条：safeArea 底部差 34 封顶为 16pt 上提量');
+  ok(navRow.every(h => h.y + h.h === 667 - StudioDebug.homeInset), '底部导航整体上提 ' + StudioDebug.homeInset + 'pt，底边（651）避开 home 控制条');
   ok(StudioDebug.hits.some(h => h.action === 'menu' && h.data && h.data.menu === 'recruit-code'), '建议横幅按钮可达（无程序员时指向招聘）');
   // 顶部安全区：原生胶囊（垫片 left=280）与刘海区域不得压到任何热区
   const capsuleZone = { x: 272, y: 20, w: 103, h: 40 };
@@ -284,8 +292,9 @@ function textRight(entry) {
   await flush();
   ok(StudioDebug.routes.length === 0, '再次命名后回到主界面');
   StudioDebug.draw();
-  const navHit = StudioDebug.hits.find(h => h.action === 'menu' && h.y > 600);
+  const navHit = StudioDebug.hits.find(h => h.action === 'menu' && h.data && ['project', 'team', 'tools', 'testing', 'market', 'finance'].includes(h.data.menu) && h.y + h.h === 667 - StudioDebug.homeInset);
   ok(!!navHit, '底部导航有热区');
+  ok(navHit.y + navHit.h === 667 - StudioDebug.homeInset, '重启后底部导航仍保持上提（底边 ' + (667 - StudioDebug.homeInset) + '）');
 
   // ---------- 阶段 B：存档路径 ----------
 
