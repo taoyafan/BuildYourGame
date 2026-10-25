@@ -123,6 +123,12 @@ function tap(x, y) {
   ok(StudioDebug.hits.some(h => h.action === 'import'), '顶栏有导入按钮');
   ok(StudioDebug.hits.some(h => h.action === 'restart'), '顶栏有重新创业按钮');
   ok(StudioDebug.hits.some(h => h.action === 'menu' && h.data && h.data.menu === 'recruit-code'), '建议横幅按钮可达（无程序员时指向招聘）');
+  // 顶部安全区：原生胶囊（垫片 left=280）与刘海区域不得压到任何热区
+  const capsuleZone = { x: 272, y: 20, w: 103, h: 40 };
+  const onCapsule = StudioDebug.hits.filter(h => h.x < capsuleZone.x + capsuleZone.w && h.x + h.w > capsuleZone.x && h.y < capsuleZone.y + capsuleZone.h && h.y + h.h > capsuleZone.y);
+  ok(onCapsule.length === 0, '主界面无热区压在原生胶囊区域');
+  const exportHit = StudioDebug.hits.find(h => h.action === 'export');
+  ok(exportHit && exportHit.y >= 30, '顶栏按钮已下移让位刘海/状态栏（TOP_INSET）');
   const strokesBefore = ctxStub._strokes;
   StudioDebug.draw();
   ok(ctxStub._strokes > strokesBefore, '主界面执行了矢量绘制（图标与线条）');

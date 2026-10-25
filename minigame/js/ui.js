@@ -42,14 +42,24 @@
   const H = info.windowHeight || 667;
   const DPR = info.pixelRatio || 2;
 
-  // 右上角微信原生胶囊按钮安全区：顶栏右侧元素必须避开它（胶囊浮于画布之上）
-  let SAFE_RIGHT = W - 100;
+  // 右上角微信原生胶囊按钮安全区：顶栏右侧元素必须避开它（胶囊浮于画布之上）。
+  // 个别设备/模拟器上该 API 可能返回物理像素或失效值，需做合理性校验，无效时回退保守预留。
+  let SAFE_RIGHT = W - 110;
+  let capsuleTop = 24;
   try {
     if (wx.getMenuButtonBoundingClientRect) {
       const rect = wx.getMenuButtonBoundingClientRect();
-      if (rect && rect.left > 0) SAFE_RIGHT = Math.min(W - 60, rect.left - 8);
+      if (rect && rect.left > 40 && rect.left < W - 40) {
+        SAFE_RIGHT = Math.min(SAFE_RIGHT, rect.left - 8);
+      }
+      if (rect && rect.top > 0 && rect.top < H / 2) capsuleTop = rect.top;
     }
   } catch (error) { /* 保留回退值 */ }
+
+  // 顶部安全区：刘海与状态栏同样浮于画布之上（大刘海可宽达 209px、高约 37px，
+  // 正压在顶栏中央），原生胶囊在刘海右侧下方。胶囊顶部必在刘海底部之下，
+  // 取「状态栏高度 / 胶囊顶部」较大值 + 余量，顶部内容整体下移让开二者。
+  const TOP_INSET = Math.max(info.statusBarHeight || 20, capsuleTop) + 6;
 
   const canvas = wx.createCanvas();
   canvas.width = W * DPR;
@@ -688,8 +698,8 @@
   }
 
   function renderMain() {
-    const viewTop = MASTHEAD_H + HEADER_H + 4;
-    const viewH = H - MASTHEAD_H - HEADER_H - NAV_H - 8;
+    const viewTop = TOP_INSET + MASTHEAD_H + HEADER_H + 4;
+    const viewH = H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - 8;
     scrollState.main = clamp(scrollState.main, 0, Math.max(0, lastMainH - viewH));
     const scroll = scrollState.main;
     const x = PAD;
@@ -839,31 +849,33 @@
   }
 
   function renderMasthead() {
+    // 顶栏整体下移 TOP_INSET：避开顶部大刘海（中央）与原生胶囊（右上）
+    const top = TOP_INSET;
     // 底边线（网页版为 1px 墨色）
     ctx.strokeStyle = C.ink;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, MASTHEAD_H + 0.5);
-    ctx.lineTo(W, MASTHEAD_H + 0.5);
+    ctx.moveTo(0, top + MASTHEAD_H + 0.5);
+    ctx.lineTo(W, top + MASTHEAD_H + 0.5);
     ctx.stroke();
     // 左：太阳标 + 公司名 + 标语
-    panel(PAD, 8, 28, 28, { fill: C.card, stroke: C.ink, radius: 14 });
-    drawIcon('sun', PAD + 14, 22, 16, C.green);
+    panel(PAD, top + 8, 28, 28, { fill: C.card, stroke: C.ink, radius: 14 });
+    drawIcon('sun', PAD + 14, top + 22, 16, C.green);
     const nameX = PAD + 36;
-    drawText(ellipsis(state.company || '日光工作室', SAFE_RIGHT - 100 - nameX, 14, 600), nameX, 19, 14, 600, C.ink);
-    drawText('把下一款游戏，做出来。', nameX, 35, 9.5, 400, C.muted);
+    drawText(ellipsis(state.company || '日光工作室', SAFE_RIGHT - 100 - nameX, 14, 600), nameX, top + 19, 14, 600, C.ink);
+    drawText('把下一款游戏，做出来。', nameX, top + 35, 9.5, 400, C.muted);
     // 右：存档状态 + 导出 / 导入 / 重新创业，整体避开右上角原生胶囊
-    drawText(storageAvailable ? '本机存档' : '存档不可用', SAFE_RIGHT - 92, 27, 9, 400, C.muted, 'right');
+    drawText(storageAvailable ? '本机存档' : '存档不可用', SAFE_RIGHT - 92, top + 27, 9, 400, C.muted, 'right');
     [['export', 'download'], ['import', 'upload'], ['restart', 'rotate']].forEach(([action, icon], i) => {
       const bx = SAFE_RIGHT - 88 + i * 30;
-      panel(bx, 12, 28, 28, { fill: C.card, stroke: C.line, radius: 8 });
-      drawIcon(icon, bx + 14, 26, 14, C.muted);
-      hit(bx, 12, 28, 28, action);
+      panel(bx, top + 12, 28, 28, { fill: C.card, stroke: C.line, radius: 8 });
+      drawIcon(icon, bx + 14, top + 26, 14, C.muted);
+      hit(bx, top + 12, 28, 28, action);
     });
   }
 
   function renderClockBar() {
-    const top = MASTHEAD_H;
+    const top = TOP_INSET + MASTHEAD_H;
     panel(0, top, W, HEADER_H, { fill: C.card, radius: 0 });
     ctx.strokeStyle = C.line;
     ctx.lineWidth = 1;
@@ -925,34 +937,39 @@
   function renderMenu() {
     const route = routes[routes.length - 1];
     panel(0, 0, W, H, { fill: C.bg, radius: 0 });
-    // 头部
-    panel(0, 0, W, HEADER_H, { fill: C.card, radius: 0 });
+    // 头部整体下移 TOP_INSET：面包屑与关闭/返回按钮都要避开顶部大刘海与原生胶囊
+    const headH = TOP_INSET + 84;
+    panel(0, 0, W, headH, { fill: C.card, radius: 0 });
     ctx.strokeStyle = C.line;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, HEADER_H);
-    ctx.lineTo(W, HEADER_H);
+    ctx.moveTo(0, headH);
+    ctx.lineTo(W, headH);
     ctx.stroke();
+    // 面包屑（仅一级菜单；二级菜单让位给返回按钮）
+    if (routes.length === 1) {
+      drawText('工作室 / 经营决策', PAD, TOP_INSET + 14, 10.5, 400, C.muted);
+    }
+    // 动作行：返回（二级）/ 标题 / 关闭，纵向已避开刘海与胶囊
+    const rowY = TOP_INSET + 32;
     if (routes.length > 1) {
-      panel(PAD, 10, 36, 36, { fill: C.greenSoft, radius: 10 });
-      drawIcon('arrow-left', PAD + 18, 28, 16, C.greenDeep);
-      hit(PAD, 10, 36, 36, 'back');
-    } else {
-      drawText('工作室 / 经营决策', PAD, 29, 10.5, 400, C.muted);
+      panel(PAD, rowY, 36, 36, { fill: C.greenSoft, radius: 10 });
+      drawIcon('arrow-left', PAD + 18, rowY + 18, 16, C.greenDeep);
+      hit(PAD, rowY, 36, 36, 'back');
     }
     if (state.company) {
-      panel(SAFE_RIGHT - 36, 10, 36, 36, { fill: C.greenSoft, radius: 10 });
-      drawIcon('x', SAFE_RIGHT - 18, 28, 14, C.greenDeep);
-      hit(SAFE_RIGHT - 36, 10, 36, 36, 'close');
+      panel(SAFE_RIGHT - 36, rowY, 36, 36, { fill: C.greenSoft, radius: 10 });
+      drawIcon('x', SAFE_RIGHT - 18, rowY + 18, 14, C.greenDeep);
+      hit(SAFE_RIGHT - 36, rowY, 36, 36, 'close');
     }
     let special;
     if (route.menu === 'history') special = { title: '经营记录' };
     else if (route.menu === 'project' && !state.project) special = { title: '新作立项' };
     else special = content.menuContents(route) || { title: '工作室', blocks: [] };
     const rightZone = W - SAFE_RIGHT + 42;
-    drawText(ellipsis(special.title, W - PAD * 2 - Math.max(50, rightZone), 15.5, 500), W / 2, 74, 15.5, 500, C.ink, 'center');
+    drawText(ellipsis(special.title, W - PAD * 2 - Math.max(50, rightZone), 15.5, 500), W / 2, rowY + 18, 15.5, 500, C.ink, 'center');
 
-    const view = { top: 96, h: H - 96 - 12 };
+    const view = { top: headH + 8, h: H - headH - 20 };
     const x = PAD;
     const w = W - PAD * 2;
     scrollState.menu = clamp(scrollState.menu, 0, Math.max(0, lastMenuH - view.h));
@@ -973,7 +990,7 @@
     if (!toast || Date.now() > toast.until) return;
     const lines = wrapText(toast.text, W - 72, 12, 400).slice(0, 2);
     const h = 18 + lines.length * 17;
-    const y = MASTHEAD_H + HEADER_H + 10;
+    const y = TOP_INSET + MASTHEAD_H + HEADER_H + 10;
     const tw = W - 48;
     panel(24, y, tw, h, { fill: C.toast, radius: 10 });
     lines.forEach((ln, i) => drawText(ln, 24 + tw / 2, y + 14 + i * 17, 12, 400, C.white, 'center'));
@@ -1182,7 +1199,7 @@
     touchInfo.y = t.clientY;
     touchInfo.moved += Math.abs(dy);
     const key = routes.length ? 'menu' : 'main';
-    const viewH = routes.length ? H - 96 - 12 : H - MASTHEAD_H - HEADER_H - NAV_H - 8;
+    const viewH = routes.length ? H - (TOP_INSET + 84) - 20 : H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - 8;
     const contentH = routes.length ? lastMenuH : lastMainH;
     scrollState[key] = clamp(scrollState[key] - dy, 0, Math.max(0, contentH - viewH));
     draw();
