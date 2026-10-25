@@ -49,6 +49,7 @@ const ctxStub = createCtxStub();
 
 global.wx = {
   getSystemInfoSync: () => ({ windowWidth: 375, windowHeight: 667, pixelRatio: 2 }),
+  getMenuButtonBoundingClientRect: () => ({ left: 280, right: 367, top: 24, bottom: 56, width: 87, height: 32 }),
   createCanvas: () => ({ width: 0, height: 0, getContext: () => ctxStub }),
   getStorageSync: key => (storage.has(key) ? storage.get(key) : ''),
   setStorageSync: (key, value) => { storage.set(key, String(value)); },
@@ -145,6 +146,8 @@ function tap(x, y) {
   ok(pool && pool.people.length > 0, '发布招聘产生候选人');
   StudioDebug.openMenu('candidate', pool.people[0].id);
   StudioDebug.draw();
+  ok(StudioDebug.hits.some(h => h.action === 'close'), '菜单页有关闭按钮（避开原生胶囊）');
+  ok(StudioDebug.hits.some(h => h.action === 'back'), '二级菜单页有返回按钮');
   StudioDebug.dispatch('hire', { id: pool.people[0].id });
   ok(StudioDebug.state.staff.some(p => p.id === pool.people[0].id), '录用成功');
   ok(StudioDebug.state.staff.some(p => p.role === 'code'), '团队拥有程序员');

@@ -42,6 +42,15 @@
   const H = info.windowHeight || 667;
   const DPR = info.pixelRatio || 2;
 
+  // 右上角微信原生胶囊按钮安全区：顶栏右侧元素必须避开它（胶囊浮于画布之上）
+  let SAFE_RIGHT = W - 100;
+  try {
+    if (wx.getMenuButtonBoundingClientRect) {
+      const rect = wx.getMenuButtonBoundingClientRect();
+      if (rect && rect.left > 0) SAFE_RIGHT = Math.min(W - 60, rect.left - 8);
+    }
+  } catch (error) { /* 保留回退值 */ }
+
   const canvas = wx.createCanvas();
   canvas.width = W * DPR;
   canvas.height = H * DPR;
@@ -51,7 +60,7 @@
 
   const PAD = 14;
   const HEADER_H = 52;
-  const MASTHEAD_H = 46;
+  const MASTHEAD_H = 54;
   const NAV_H = 56;
 
   const C = {
@@ -838,56 +847,58 @@
     ctx.lineTo(W, MASTHEAD_H + 0.5);
     ctx.stroke();
     // 左：太阳标 + 公司名 + 标语
-    panel(PAD, 9, 28, 28, { fill: C.card, stroke: C.ink, radius: 14 });
-    drawIcon('sun', PAD + 14, 23, 16, C.green);
+    panel(PAD, 8, 28, 28, { fill: C.card, stroke: C.ink, radius: 14 });
+    drawIcon('sun', PAD + 14, 22, 16, C.green);
     const nameX = PAD + 36;
-    drawText(ellipsis(state.company || '日光工作室', W - nameX - 156, 14, 600), nameX, 17, 14, 600, C.ink);
-    drawText('把下一款游戏，做出来。', nameX, 33, 9.5, 400, C.muted);
-    // 右：存档状态 + 导出 / 导入 / 重新创业（与网页版同序）
-    drawText(storageAvailable ? '本机自动存档' : '存档不可用', W - PAD - 104, 23, 9, 400, C.muted, 'right');
+    drawText(ellipsis(state.company || '日光工作室', SAFE_RIGHT - 100 - nameX, 14, 600), nameX, 19, 14, 600, C.ink);
+    drawText('把下一款游戏，做出来。', nameX, 35, 9.5, 400, C.muted);
+    // 右：存档状态 + 导出 / 导入 / 重新创业，整体避开右上角原生胶囊
+    drawText(storageAvailable ? '本机存档' : '存档不可用', SAFE_RIGHT - 92, 27, 9, 400, C.muted, 'right');
     [['export', 'download'], ['import', 'upload'], ['restart', 'rotate']].forEach(([action, icon], i) => {
-      const bx = W - PAD - 96 + i * 32;
-      panel(bx, 8, 30, 30, { fill: C.card, stroke: C.line, radius: 8 });
-      drawIcon(icon, bx + 15, 23, 15, C.muted);
-      hit(bx, 8, 30, 30, action);
+      const bx = SAFE_RIGHT - 88 + i * 30;
+      panel(bx, 12, 28, 28, { fill: C.card, stroke: C.line, radius: 8 });
+      drawIcon(icon, bx + 14, 26, 14, C.muted);
+      hit(bx, 12, 28, 28, action);
     });
   }
 
   function renderClockBar() {
-    panel(0, 0, W, HEADER_H, { fill: C.card, radius: 0 });
+    const top = MASTHEAD_H;
+    panel(0, top, W, HEADER_H, { fill: C.card, radius: 0 });
     ctx.strokeStyle = C.line;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, HEADER_H);
-    ctx.lineTo(W, HEADER_H);
+    ctx.moveTo(0, top + HEADER_H);
+    ctx.lineTo(W, top + HEADER_H);
     ctx.stroke();
     const month = content.monthOf(state.day);
     const day = (state.day - 1) % 30 + 1;
-    drawText('第 ' + month + ' 月 · ' + day + ' 日', PAD, 18, 15, 500, C.ink);
-    drawText(ellipsis(pauseReason(), W - 190, 10.5, 400), PAD, 38, 10.5, 400, C.muted);
+    const dateW = Math.max(48, SAFE_RIGHT - 142 - PAD - 6);
+    drawText(ellipsis('第 ' + month + ' 月 · ' + day + ' 日', dateW, 15, 500), PAD, top + 18, 15, 500, C.ink);
+    drawText(ellipsis(pauseReason(), dateW, 10.5, 400), PAD, top + 38, 10.5, 400, C.muted);
 
-    // 控制区与网页版同序：[播放/暂停] [1x 4x 12x 分组]
+    // 控制区与网页版同序：[播放/暂停] [1x 4x 12x 分组]，整体避开原生胶囊
     const canToggle = !!state.company && !state.event && !state.over && !routes.length;
-    panel(W - PAD - 142, 8, 40, 40, { fill: canToggle ? C.green : '#eef1ef', radius: 20 });
-    drawIcon(canToggle ? (playing ? 'pause' : 'play') : 'play', W - PAD - 122, 29, 16, canToggle ? C.white : C.faint);
-    if (canToggle) hit(W - PAD - 142, 8, 40, 40, 'clock');
+    panel(SAFE_RIGHT - 142, top + 8, 40, 40, { fill: canToggle ? C.green : '#eef1ef', radius: 20 });
+    drawIcon(canToggle ? (playing ? 'pause' : 'play') : 'play', SAFE_RIGHT - 122, top + 29, 16, canToggle ? C.white : C.faint);
+    if (canToggle) hit(SAFE_RIGHT - 142, top + 8, 40, 40, 'clock');
 
-    const gx = W - PAD - 98;
-    panel(gx, 8, 98, 36, { fill: C.card, stroke: C.line, radius: 6 });
+    const gx = SAFE_RIGHT - 98;
+    panel(gx, top + 8, 98, 36, { fill: C.card, stroke: C.line, radius: 6 });
     [1, 4, 12].forEach((value, i) => {
       const bx = gx + i * 33;
       const active = speed === value;
-      if (active) panel(bx + 1, 9, 31, 34, { fill: C.greenSoft, radius: 5 });
+      if (active) panel(bx + 1, top + 9, 31, 34, { fill: C.greenSoft, radius: 5 });
       if (i > 0) {
         ctx.strokeStyle = C.line;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(bx, 14);
-        ctx.lineTo(bx, 38);
+        ctx.moveTo(bx, top + 14);
+        ctx.lineTo(bx, top + 38);
         ctx.stroke();
       }
-      drawText(value + 'x', bx + 16.5, 27, 12, active ? 700 : 400, active ? C.green : C.muted, 'center');
-      hit(bx, 8, 33, 36, 'speed', { value });
+      drawText(value + 'x', bx + 16.5, top + 27, 12, active ? 700 : 400, active ? C.green : C.muted, 'center');
+      hit(bx, top + 8, 33, 36, 'speed', { value });
     });
   }
 
@@ -930,15 +941,16 @@
       drawText('工作室 / 经营决策', PAD, 29, 10.5, 400, C.muted);
     }
     if (state.company) {
-      panel(W - PAD - 36, 10, 36, 36, { fill: C.greenSoft, radius: 10 });
-      drawIcon('x', W - PAD - 18, 28, 14, C.greenDeep);
-      hit(W - PAD - 36, 10, 36, 36, 'close');
+      panel(SAFE_RIGHT - 36, 10, 36, 36, { fill: C.greenSoft, radius: 10 });
+      drawIcon('x', SAFE_RIGHT - 18, 28, 14, C.greenDeep);
+      hit(SAFE_RIGHT - 36, 10, 36, 36, 'close');
     }
     let special;
     if (route.menu === 'history') special = { title: '经营记录' };
     else if (route.menu === 'project' && !state.project) special = { title: '新作立项' };
     else special = content.menuContents(route) || { title: '工作室', blocks: [] };
-    drawText(ellipsis(special.title, W - PAD * 2 - (state.company ? 90 : 50), 15.5, 500), W / 2, 74, 15.5, 500, C.ink, 'center');
+    const rightZone = W - SAFE_RIGHT + 42;
+    drawText(ellipsis(special.title, W - PAD * 2 - Math.max(50, rightZone), 15.5, 500), W / 2, 74, 15.5, 500, C.ink, 'center');
 
     const view = { top: 96, h: H - 96 - 12 };
     const x = PAD;
