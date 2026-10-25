@@ -108,11 +108,14 @@
   let resumeAfterMenu = false;
   let routes = [];
   let toast = null;
+  let toastTimer = null;
   let formDraft = { name: '', type: '', scale: 0 };
   let expandedMonths = {};
   let hits = [];
   let lastMainH = 0;
   let lastMenuH = 0;
+  let peopleScroll = 0;   // 团队近况横带（网页版 .people-list 移动端 overflow-x）的横向滚动量
+  let stripRect = null;   // 当前可见的横带区域（屏幕坐标），不可见时为 null 并禁掉横向滚动
   const scrollState = { main: 0, menu: 0 };
 
   const content = require('./content.js')({
@@ -689,14 +692,18 @@
     return 84;
   }
 
+  // 网页版 .production-meters = grid 一行三列（移动端 gap 12）：三个指标并排一行
+  // 每个指标内部：标签与数值同行两端对齐 + 进度条 + 说明小字；宽度按列宽自适应截断
   function drawMeter(label, value, detail, color, x, y, w) {
-    drawText(label, x + 14, y + 12, 12, 400, C.muted);
-    drawText(value.toFixed(1), x + w - 14, y + 12, 13, 500, C.ink, 'right');
-    panel(x + 14, y + 22, w - 28, 5, { fill: '#edf1ef', radius: 2.5 });
-    const bw = (w - 28) * clamp(value / 100, 0, 1);
-    if (bw > 1) panel(x + 14, y + 22, bw, 5, { fill: color, radius: 2.5 });
-    drawText(detail, x + 14, y + 38, 10.5, 400, C.faint);
-    return 48;
+    const valueText = value.toFixed(1);
+    const vw = measure(valueText, 12, 500);
+    drawText(ellipsis(label, Math.max(18, w - 6 - vw - 4), 10, 400), x + 2, y + 11, 10, 400, C.muted);
+    drawText(valueText, x + w - 2, y + 11, 12, 500, C.ink, 'right');
+    panel(x + 2, y + 20, w - 4, 5, { fill: '#edf1ef', radius: 2.5 });
+    const bw = (w - 4) * clamp(value / 100, 0, 1);
+    if (bw > 1) panel(x + 2, y + 20, bw, 5, { fill: color, radius: 2.5 });
+    drawText(ellipsis(detail, w - 4, 9.5, 400), x + 2, y + 36, 9.5, 400, C.faint);
+    return 46;
   }
 
   function renderMain() {
@@ -744,7 +751,7 @@
     // 建议横幅高度先算（网页版中它位于项目卡底部）
     const hintLines = wrapText(hint.text, w - 96, 11, 400).slice(0, 2);
     const advH = 16 + 20 + hintLines.length * 15 + 10;
-    let inner = deskPad + 26 + (project ? 84 + 34 + 66 + 3 * 48 + 46 : 88) + advH + deskPad;
+    let inner = deskPad + 26 + (project ? 84 + 34 + 66 + 52 + 46 : 88) + advH + deskPad;
     at(y, inner, sy => {
       panel(deskX, sy, deskW, inner - 8, { fill: C.card, stroke: C.line, radius: 12 });
       drawText(project ? game.TYPES[project.type].name + ' / ' + content.stage(project) : '工作室 / 新的计划', deskX + deskPad, sy + 22, 10.5, 400, C.muted);
@@ -767,11 +774,19 @@
         drawText('开发 ' + forecast.code.toFixed(2) + ' 工作量/天', deskX + deskPad, cy + 12, 11, 400, C.body);
         drawText('视觉 ' + forecast.art.toFixed(2) + ' 工作量/天', deskX + deskW - deskPad, cy + 12, 11, 400, C.body, 'right');
         cy += 24;
+        // 玩法 / 视觉 / 稳定性：网页版 .production-meters 一行三列并排（gap 12），不再逐条竖排
         const mw = deskW - deskPad * 2;
-        cy += drawMeter('玩法完成情况', forecast.metrics.gameplay, project.focus === 'polish' ? '集中打磨中' : '开发与打磨逐步形成', C.green, deskX + deskPad, cy, mw);
-        cy += drawMeter('视觉表现', forecast.metrics.visual, project.assets ? '含采购素材成果' : '由美术实际制作形成', C.blue, deskX + deskPad, cy, mw);
-        cy += drawMeter('稳定性', forecast.metrics.stability, '已知缺陷 ' + project.defects + ' 项', C.amber, deskX + deskPad, cy, mw);
-        cy += 4;
+        const meterGap = 12;
+        const meterW = (mw - meterGap * 2) / 3;
+        const meterDefs = [
+          ['玩法完成情况', forecast.metrics.gameplay, project.focus === 'polish' ? '集中打磨中' : '开发与打磨逐步形成', C.green],
+          ['视觉表现', forecast.metrics.visual, project.assets ? '含采购素材成果' : '由美术实际制作形成', C.art],
+          ['稳定性', forecast.metrics.stability, '已知缺陷 ' + project.defects + ' 项', C.blue]
+        ];
+        meterDefs.forEach((def, i) => {
+          drawMeter(def[0], def[1], def[2], def[3], deskX + deskPad + i * (meterW + meterGap), cy, meterW);
+        });
+        cy += 46 + 6;
         const cells = [
           ['关注人数', number(project.followers)],
           [project.test ? '试玩口碑' : '玩家评价', project.test ? project.test.score.toFixed(1) + ' / 100' : '尚无评价'],
@@ -804,46 +819,44 @@
     });
     y += inner;
 
-    // 团队近况
-    const rowH = 52;
-    const staffRows = state.staff.length ? state.staff.length * rowH : 26;
-    const peopleH = 30 + staffRows + 78;
+    // 团队近况：网页版移动端为固定高度横带（.people-desk flex:0 0 90px），
+    // 人员卡片一排固定 170px 宽、左右滑动（.people-list flex + overflow-x），最近动态在移动端隐藏
+    stripRect = null;
+    const stripH = 48;
+    const peopleH = 42 + stripH + 10;
     at(y, peopleH, sy => {
       panel(x, sy, w, peopleH - 8, { fill: C.card, stroke: C.line, radius: 12 });
-      drawText('工作室近况', x + 14, sy + 22, 13.5, 500, C.ink);
-      panel(x + w - 76, sy + 10, 64, 28, { fill: C.greenSoft, stroke: C.greenLine, radius: 8 });
-      drawIcon('users', x + w - 60, sy + 24, 14, C.greenDeep);
-      drawText('团队', x + w - 36, sy + 24, 11.5, 500, C.greenDeep, 'center');
-      hit(x + w - 76, sy + 10, 64, 28, 'menu', { menu: 'team' });
-      const listTop = sy + 36;
+      drawText('工作室近况', x + 14, sy + 18, 11.5, 500, C.ink);
+      panel(x + w - 76, sy + 8, 64, 26, { fill: C.greenSoft, stroke: C.greenLine, radius: 8 });
+      drawIcon('users', x + w - 60, sy + 21, 14, C.greenDeep);
+      drawText('团队', x + w - 36, sy + 21, 11.5, 500, C.greenDeep, 'center');
+      hit(x + w - 76, sy + 8, 64, 26, 'menu', { menu: 'team' });
+      const stripTop = sy + 40;
       if (state.staff.length) {
+        const cardW = 170;
+        const cardGap = 12;
+        const contentW = state.staff.length * cardW + (state.staff.length - 1) * cardGap;
+        stripRect = { x: x + 8, y: stripTop, w: w - 16, h: stripH, contentW };
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x + 6, stripTop - 6, w - 12, stripH + 12);
+        ctx.clip();
         state.staff.forEach((person, i) => {
-          const py = listTop + i * rowH;
-          if (i > 0) {
-            ctx.strokeStyle = C.line;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(x + 14, py + 0.5);
-            ctx.lineTo(x + w - 14, py + 0.5);
-            ctx.stroke();
-          }
-          panel(x + 14, py + 11, 30, 30, { fill: person.role === 'code' ? C.greenSoft : C.artBg, radius: 6 });
-          drawText(person.name.slice(-1), x + 29, py + 27, 13, 500, person.role === 'code' ? C.green : C.art, 'center');
+          const px = x + 12 + i * (cardW + cardGap) - peopleScroll;
+          if (px + cardW <= stripRect.x || px >= stripRect.x + stripRect.w) return; // 视外不绘制、不注册热区
+          panel(px + 8, stripTop + 10, 26, 26, { fill: person.role === 'code' ? C.greenSoft : C.artBg, radius: 6 });
+          drawText(person.name.slice(-1), px + 21, stripTop + 24, 12, 500, person.role === 'code' ? C.green : C.art, 'center');
           const task = project ? (person.role === 'art' ? '视觉制作' : { develop: '功能开发', polish: '玩法打磨', bugs: '缺陷修复' }[project.focus]) : '等待新项目';
-          drawText(ellipsis(person.name, w * 0.4, 12, 500), x + 54, py + 18, 12, 500, C.ink);
-          drawText(game.ROLES[person.role].name + ' · ' + task, x + 54, py + 35, 10, 400, C.muted);
-          drawText(person.work.toFixed(1), x + w - 14, py + 18, 12, 500, C.ink, 'right');
-          drawText('累计工作量', x + w - 14, py + 34, 8.5, 400, C.faint, 'right');
-          hit(x + 10, py, w - 20, rowH, 'menu', { menu: 'person', id: person.id });
+          drawText(ellipsis(person.name, cardW - 58, 11, 500), px + 42, stripTop + 17, 11, 500, C.ink);
+          drawText(ellipsis(game.ROLES[person.role].name + ' · ' + task, cardW - 58, 9, 400), px + 42, stripTop + 32, 9, 400, C.muted);
+          drawText(person.work.toFixed(1), px + cardW - 8, stripTop + 17, 11, 500, C.ink, 'right');
+          drawText('累计工作量', px + cardW - 8, stripTop + 31, 8, 400, C.faint, 'right');
+          hit(px, stripTop, cardW, stripH, 'menu', { menu: 'person', id: person.id });
         });
+        ctx.restore();
       } else {
-        drawText('还没有员工。你负责制作方向，先发布程序员招聘。', x + 14, listTop + 12, 11.5, 400, C.muted);
+        drawText('还没有员工。你负责制作方向，先发布程序员招聘。', x + 14, stripTop + 16, 11, 400, C.muted);
       }
-      const note = state.history[0];
-      const noteTop = listTop + staffRows + 4;
-      drawText('最近动态', x + 14, noteTop + 14, 10, 400, C.faint);
-      drawText(ellipsis(note ? note.title : '工作室等待成立', w - 28, 12.5, 500), x + 14, noteTop + 32, 12.5, 500, C.ink);
-      wrapText(note ? note.text : '先输入公司名称。', w - 28, 11, 400).slice(0, 2).forEach((ln, i) => drawText(ln, x + 14, noteTop + 50 + i * 15, 11, 400, C.muted));
     });
     y += peopleH;
     ctx.restore();
@@ -957,26 +970,28 @@
     if (routes.length === 1) {
       drawText('工作室 / 经营决策', PAD, TOP_INSET + 14, 10.5, 400, C.muted);
     }
-    // 动作行：返回（二级）/ 标题 / 关闭，纵向已避开刘海与胶囊
-    const rowY = TOP_INSET + 32;
+    // 动作行：返回（二级）/ 标题 / 关闭。整行下移到 TOP_INSET+36，保证 36pt 高的按钮整行落在胶囊底部之下
+    const rowY = TOP_INSET + 36;
     if (routes.length > 1) {
       panel(PAD, rowY, 36, 36, { fill: C.greenSoft, radius: 10 });
       drawIcon('arrow-left', PAD + 18, rowY + 18, 16, C.greenDeep);
       hit(PAD, rowY, 36, 36, 'back');
     }
+    // ✕ 右对齐：胶囊底部高于本行时才贴屏幕右缘（与网页版一致），否则回退胶囊安全区
+    const closeRight = (capsuleTop + capsuleHeight <= rowY) ? W - PAD : SAFE_RIGHT;
     if (state.company) {
-      panel(SAFE_RIGHT - 36, rowY, 36, 36, { fill: C.greenSoft, radius: 10 });
-      drawIcon('x', SAFE_RIGHT - 18, rowY + 18, 14, C.greenDeep);
-      hit(SAFE_RIGHT - 36, rowY, 36, 36, 'close');
+      panel(closeRight - 36, rowY, 36, 36, { fill: C.greenSoft, radius: 10 });
+      drawIcon('x', closeRight - 18, rowY + 18, 14, C.greenDeep);
+      hit(closeRight - 36, rowY, 36, 36, 'close');
     }
     let special;
     if (route.menu === 'history') special = { title: '经营记录' };
     else if (route.menu === 'project' && !state.project) special = { title: '新作立项' };
     else special = content.menuContents(route) || { title: '工作室', blocks: [] };
-    // 标题在「返回按钮左缘 → 关闭按钮左缘」之间居中并封顶宽度，右缘永不越过 ✕
-    const titleLeft = (routes.length > 1 ? PAD + 36 : PAD) + 10;
-    const titleRight = (state.company ? SAFE_RIGHT - 36 : W - PAD) - 10;
-    drawText(ellipsis(special.title, Math.max(60, titleRight - titleLeft), 15.5, 500), (titleLeft + titleRight) / 2, rowY + 18, 15.5, 500, C.ink, 'center');
+    // 标题保持屏幕正中，仅做宽度封顶：右缘不越过 ✕ 左缘（或屏幕右内边距）
+    const titleRightLimit = (state.company ? closeRight - 36 : W - PAD) - 8;
+    const centerMax = Math.max(40, (titleRightLimit - W / 2) * 2);
+    drawText(ellipsis(special.title, centerMax, 15.5, 500), W / 2, rowY + 18, 15.5, 500, C.ink, 'center');
 
     const view = { top: headH + 8, h: H - headH - 20 };
     const x = PAD;
@@ -1016,6 +1031,7 @@
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, W, H);
     hits = [];
+    stripRect = null; // 每次重画重置；横带不可见（菜单视图或滚出视口）时禁掉横向滚动
     if (routes.length) renderMenu();
     else { renderMasthead(); renderClockBar(); renderMain(); renderNav(); }
     drawToast();
@@ -1031,9 +1047,21 @@
     return playing ? '正常经营中' : '手动暂停';
   }
 
+  function clearToast(redraw) {
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    if (toast) { toast = null; if (redraw) draw(); }
+  }
+
   function notify(message) {
-    // 约 2.4 秒自动消失；点按提示条本体可立即取消（见 onTouchEnd）
+    // 2.4 秒后由定时器强制清除并重画——暂停/无交互时 gameTick 早退、不会自动重画，
+    // 仅靠 until 判定会让过期 toast 永久挂在屏上直到下次交互，必须显式定时清除
+    if (toastTimer) clearTimeout(toastTimer);
     toast = { text: String(message), until: Date.now() + 2400 };
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      toast = null;
+      draw();
+    }, 2500);
     draw();
   }
 
@@ -1204,20 +1232,29 @@
   wx.onTouchStart(event => {
     const t = event.touches && event.touches[0];
     if (!t) return;
-    touchInfo = { x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY, t0: Date.now(), moved: 0 };
+    // 落在团队横带内：本次拖动同时驱动横向滚动（网页版移动端 .people-list 左右滑动）
+    const inStrip = !!stripRect && t.clientX >= stripRect.x && t.clientX <= stripRect.x + stripRect.w
+      && t.clientY >= stripRect.y - 8 && t.clientY <= stripRect.y + stripRect.h + 8;
+    touchInfo = { x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY, t0: Date.now(), moved: 0, strip: inStrip };
   });
 
   wx.onTouchMove(event => {
     if (!touchInfo) return;
     const t = event.touches && event.touches[0];
     if (!t) return;
+    const dx = t.clientX - touchInfo.x;
     const dy = t.clientY - touchInfo.y;
+    touchInfo.x = t.clientX;
     touchInfo.y = t.clientY;
-    touchInfo.moved += Math.abs(dy);
+    touchInfo.moved += Math.abs(dx) + Math.abs(dy);
     const key = routes.length ? 'menu' : 'main';
     const viewH = routes.length ? H - (TOP_INSET + 84) - 20 : H - TOP_INSET - MASTHEAD_H - HEADER_H - NAV_H - 8;
     const contentH = routes.length ? lastMenuH : lastMainH;
     scrollState[key] = clamp(scrollState[key] - dy, 0, Math.max(0, contentH - viewH));
+    // 团队横带横向滚动（与纵向滚动互不干扰：纵拖仍然滚页面）
+    if (touchInfo.strip && stripRect) {
+      peopleScroll = clamp(peopleScroll - dx, 0, Math.max(0, stripRect.contentW - stripRect.w));
+    }
     draw();
   });
 
@@ -1229,8 +1266,7 @@
     // 点按提示条本体即取消：既缩短停留时间，也给玩家立即消除的入口
     const box = toastBox();
     if (box && info.sx >= box.x && info.sx <= box.x + box.w && info.sy >= box.y && info.sy <= box.y + box.h) {
-      toast = null;
-      draw();
+      clearToast(true);
       return;
     }
     for (let i = hits.length - 1; i >= 0; i--) {
@@ -1260,6 +1296,8 @@
     get draft() { return formDraft; },
     get hits() { return hits.map(h => ({ action: h.action, data: h.data, x: h.x, y: h.y, w: h.w, h: h.h })); },
     get toast() { return toast ? { text: toast.text, left: Math.max(0, toast.until - Date.now()) } : null; },
+    get strip() { return stripRect; },
+    get peopleScroll() { return peopleScroll; },
     openMenu, closeMenu, dispatch, draw, notify,
     tick: gameTick,
     setSpeed: v => { speed = v; },

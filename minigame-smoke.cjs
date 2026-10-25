@@ -154,6 +154,16 @@ function textRight(entry) {
   ok(toast0 && toast0.left > 2000 && toast0.left <= 2400, '提示条时长约 2.4 秒（原 4.2 秒）');
   tap(24 + (375 - 48) / 2, 30 + 54 + 52 + 10 + 17);
   ok(StudioDebug.toast === null, '点按提示条本体可立即取消');
+  // 暂停/无交互时 gameTick 早退、没有任何 draw 触发：过期 toast 只能靠 setTimeout 强制清除
+  const realSetTimeout = global.setTimeout;
+  let timerFn = null;
+  let timerDelay = 0;
+  global.setTimeout = (fn, ms) => { timerFn = fn; timerDelay = ms; return 1; };
+  StudioDebug.notify('定时清除测试');
+  global.setTimeout = realSetTimeout;
+  ok(timerFn && timerDelay >= 2400 && timerDelay <= 2600, 'notify 注册约 2.5 秒的强制清除定时器');
+  timerFn();
+  ok(StudioDebug.toast === null, '定时器到点后 toast 被强制清除（不再永久挂屏）');
   // 点击顶栏重新创业只进确认页，公司进度不被清空
   const companyBeforeTap = StudioDebug.state.company;
   tap(restartBtn.x + restartBtn.w / 2, restartBtn.y + restartBtn.h / 2);
@@ -212,6 +222,15 @@ function textRight(entry) {
   StudioDebug.dispatch('focus', { focus: 'develop' });
   StudioDebug.draw();
   ok(true, '含里程碑轨道的主界面渲染无异常');
+  // 主视图布局对齐网页版：玩法/视觉/稳定性一行三列并排，不再竖排三排
+  ctxStub._texts.length = 0;
+  StudioDebug.draw();
+  const meterLabels = ctxStub._texts.filter(t => t.text === '玩法完成情况' || t.text === '视觉表现' || t.text === '稳定性');
+  ok(meterLabels.length === 3, '三个指标都渲染（玩法 / 视觉 / 稳定性）');
+  const meterYs = meterLabels.map(t => t.y);
+  ok(Math.max(...meterYs) - Math.min(...meterYs) <= 2, '三个指标在同一行（一行三列，不再是上中下三排）');
+  const meterXs = meterLabels.map(t => t.x).sort((a, b) => a - b);
+  ok(meterXs[1] - meterXs[0] > 60 && meterXs[2] - meterXs[1] > 60, '三个指标横向均匀分布为三列');
 
   // 7. 遍历全部菜单
   const menus = ['project', 'team', 'tools', 'visual', 'testing', 'market', 'finance', 'history', 'restart', 'recruit-code', 'recruit-art'];
@@ -230,8 +249,12 @@ function textRight(entry) {
     StudioDebug.draw();
     ok(true, '员工详情渲染无异常');
     const personClose = StudioDebug.hits.find(h => h.action === 'close');
+    ok(personClose.x + personClose.w === 375 - 14, '菜单关闭按钮右对齐到屏幕边缘（375-14=361），不再挡标题');
     const rowTexts = ctxStub._texts.filter(t => t.align === 'center' && t.y >= personClose.y && t.y <= personClose.y + personClose.h);
     ok(rowTexts.length > 0 && rowTexts.every(t => textRight(t) <= personClose.x), '菜单标题右缘不越过关闭按钮左缘（✕ 不压字）');
+    // 标题保持屏幕正中（用户要求：移动 ✕ 而不是移动文字）
+    const titleEntry = rowTexts[0];
+    ok(Math.abs(titleEntry.x - 375 / 2) <= 1, '菜单标题居中于屏幕（187.5），不是区间居中');
   }
 
   // 8. 导出与导入
@@ -312,6 +335,35 @@ function textRight(entry) {
   ok(StudioDebug.playing === false, '退到后台自动暂停');
   touch.show();
   ok(StudioDebug.playing === false, '回到前台保持暂停（由玩家继续）');
+
+  // B5 团队近况横带：网页版移动端为一排固定 170px 卡片左右滑动（.people-list flex + overflow-x）
+  storage.clear();
+  let teamState = core.createStudio();
+  teamState = core.nameCompany(teamState, '横带工作室');
+  teamState = core.publishRecruitment(teamState, 'code');
+  teamState = core.publishRecruitment(teamState, 'art');
+  teamState = core.hire(teamState, teamState.candidates.code.people[0].id);
+  teamState = core.hire(teamState, teamState.candidates.art.people[0].id);
+  teamState = core.hire(teamState, teamState.candidates.art.people[1].id);
+  storage.set('sunlight-studio-v2', JSON.stringify(teamState));
+  StudioDebug = loadUi();
+  StudioDebug.draw();
+  const staffHits = StudioDebug.hits.filter(h => h.action === 'menu' && h.data && h.data.menu === 'person');
+  ok(StudioDebug.state.staff.length === 3, '三名员工已录用');
+  ok(staffHits.length === 2, '首屏只放得下两张卡片：第 3 张滚出视外，不绘制也不注册热区');
+  ok(staffHits.every(h => h.y === staffHits[0].y), '员工卡片在同一横排（不再是上下多排导致一屏放不下）');
+  ok(staffHits.every(h => h.w === 170), '卡片固定 170px 宽（与网页版移动端一致）');
+  const strip2 = StudioDebug.strip;
+  ok(!!strip2 && strip2.contentW > strip2.w, '人员超出一屏时横带支持左右滑动');
+  const firstCardX = staffHits[0].x;
+  touch.start({ touches: [{ clientX: strip2.x + 40, clientY: strip2.y + 24 }] });
+  touch.move({ touches: [{ clientX: strip2.x - 60, clientY: strip2.y + 24 }] });
+  touch.end({ touches: [] });
+  ok(StudioDebug.peopleScroll > 0, '横带内左右拖动产生横向滚动');
+  StudioDebug.draw();
+  const afterHits = StudioDebug.hits.filter(h => h.action === 'menu' && h.data && h.data.menu === 'person');
+  ok(afterHits.length === 3, '左移后第 3 张卡片进入视内');
+  ok(afterHits[0].x < firstCardX, '横向滚动后卡片整体左移');
 
   console.log('\n全部通过：' + passed + ' 项断言');
   process.exit(0);
