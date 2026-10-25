@@ -21,6 +21,7 @@ function createCtxStub() {
     _font: '',
     _strokes: 0,
     _fills: 0,
+    _texts: [],
     get font() { return this._font; },
     set font(value) {
       this._font = value;
@@ -39,7 +40,8 @@ function createCtxStub() {
     stroke() { stub._strokes += 1; },
     fill() { stub._fills += 1; },
     save: noop, restore: noop, clip: noop, setLineDash: noop,
-    fillText: noop, drawImage: noop,
+    fillText(text, x, y) { stub._texts.push({ text: String(text), x, y, size: fontSize, align: stub.textAlign }); },
+    drawImage: noop,
     fillStyle: '', strokeStyle: '', lineWidth: 1, textAlign: 'left', textBaseline: 'alphabetic'
   };
   return stub;
@@ -93,6 +95,15 @@ function tap(x, y) {
   touch.end({ touches: [] });
 }
 
+// 由记录的 fillText 调用反推文字右缘（对齐方式 + 垫片测宽）
+function textRight(entry) {
+  ctxStub.setFontSize(entry.size);
+  const w = ctxStub.measureText(entry.text).width;
+  if (entry.align === 'center') return entry.x + w / 2;
+  if (entry.align === 'right') return entry.x;
+  return entry.x + w;
+}
+
 // ---------- 主流程 ----------
 
 (async () => {
@@ -121,7 +132,12 @@ function tap(x, y) {
   ok(StudioDebug.hits.filter(h => h.action === 'menu').length >= 6, '主界面有导航菜单');
   ok(StudioDebug.hits.some(h => h.action === 'export'), '顶栏有导出按钮');
   ok(StudioDebug.hits.some(h => h.action === 'import'), '顶栏有导入按钮');
-  ok(StudioDebug.hits.some(h => h.action === 'restart'), '顶栏有重新创业按钮');
+  // 重新创业按钮与网页版一致：打开确认页（可先导出），不在顶栏直接清档
+  const restartBtn = StudioDebug.hits.find(h => h.action === 'menu' && h.data && h.data.menu === 'restart');
+  ok(!!restartBtn, '顶栏重新创业按钮打开确认页而非直接重开');
+  // 时钟控制区右缘：胶囊（垫片 top=24 height=32 → 底部 56）压不到时钟条（顶部 92），应到达屏幕边缘
+  const controlRight = Math.max(...StudioDebug.hits.filter(h => h.action === 'speed' || h.action === 'clock').map(h => h.x + h.w));
+  ok(controlRight >= 375 - 14 && controlRight <= 375 - 14 + 2, '倍速/暂停控制区右对齐到屏幕边缘（375-14=361），不再提前让位胶囊');
   ok(StudioDebug.hits.some(h => h.action === 'menu' && h.data && h.data.menu === 'recruit-code'), '建议横幅按钮可达（无程序员时指向招聘）');
   // 顶部安全区：原生胶囊（垫片 left=280）与刘海区域不得压到任何热区
   const capsuleZone = { x: 272, y: 20, w: 103, h: 40 };
@@ -132,6 +148,20 @@ function tap(x, y) {
   const strokesBefore = ctxStub._strokes;
   StudioDebug.draw();
   ok(ctxStub._strokes > strokesBefore, '主界面执行了矢量绘制（图标与线条）');
+  // 提示条：约 2.4 秒自动消失，点按提示条本体可立即取消
+  StudioDebug.notify('测试提示');
+  const toast0 = StudioDebug.toast;
+  ok(toast0 && toast0.left > 2000 && toast0.left <= 2400, '提示条时长约 2.4 秒（原 4.2 秒）');
+  tap(24 + (375 - 48) / 2, 30 + 54 + 52 + 10 + 17);
+  ok(StudioDebug.toast === null, '点按提示条本体可立即取消');
+  // 点击顶栏重新创业只进确认页，公司进度不被清空
+  const companyBeforeTap = StudioDebug.state.company;
+  tap(restartBtn.x + restartBtn.w / 2, restartBtn.y + restartBtn.h / 2);
+  ok(StudioDebug.routes.includes('restart'), '点击重新创业进入确认页');
+  ok(StudioDebug.state.company === companyBeforeTap, '确认页阶段进度未被清空');
+  StudioDebug.dispatch('close');
+  ok(StudioDebug.routes.length === 0, '关闭确认页回到主界面');
+  StudioDebug.draw();
   tap(clock.x + clock.w / 2, clock.y + clock.h / 2);
   ok(StudioDebug.playing === true, '点击时钟开始经营');
   const day0 = StudioDebug.state.day;
@@ -196,8 +226,12 @@ function tap(x, y) {
   ok(true, '经营记录展开无异常');
   if (StudioDebug.state.staff.length) {
     StudioDebug.openMenu('person', StudioDebug.state.staff[0].id);
+    ctxStub._texts.length = 0;
     StudioDebug.draw();
     ok(true, '员工详情渲染无异常');
+    const personClose = StudioDebug.hits.find(h => h.action === 'close');
+    const rowTexts = ctxStub._texts.filter(t => t.align === 'center' && t.y >= personClose.y && t.y <= personClose.y + personClose.h);
+    ok(rowTexts.length > 0 && rowTexts.every(t => textRight(t) <= personClose.x), '菜单标题右缘不越过关闭按钮左缘（✕ 不压字）');
   }
 
   // 8. 导出与导入

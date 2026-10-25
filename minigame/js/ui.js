@@ -46,6 +46,7 @@
   // 个别设备/模拟器上该 API 可能返回物理像素或失效值，需做合理性校验，无效时回退保守预留。
   let SAFE_RIGHT = W - 110;
   let capsuleTop = 24;
+  let capsuleHeight = 32;
   try {
     if (wx.getMenuButtonBoundingClientRect) {
       const rect = wx.getMenuButtonBoundingClientRect();
@@ -53,6 +54,7 @@
         SAFE_RIGHT = Math.min(SAFE_RIGHT, rect.left - 8);
       }
       if (rect && rect.top > 0 && rect.top < H / 2) capsuleTop = rect.top;
+      if (rect && rect.height > 0 && rect.height < 80) capsuleHeight = rect.height;
     }
   } catch (error) { /* 保留回退值 */ }
 
@@ -219,7 +221,7 @@
     sun: [['DOT', 12, 12, 4, 'stroke'], ['M', 12, 2], ['L', 12, 4.4], ['M', 12, 19.6], ['L', 12, 22], ['M', 2, 12], ['L', 4.4, 12], ['M', 19.6, 12], ['L', 22, 12], ['M', 4.9, 4.9], ['L', 6.6, 6.6], ['M', 17.4, 17.4], ['L', 19.1, 19.1], ['M', 19.1, 4.9], ['L', 17.4, 6.6], ['M', 6.6, 17.4], ['L', 4.9, 19.1]],
     download: [['M', 12, 3], ['L', 12, 15], ['M', 7, 10], ['L', 12, 15], ['L', 17, 10], ['M', 4, 17], ['L', 4, 21], ['L', 20, 21], ['L', 20, 17]],
     upload: [['M', 12, 15], ['L', 12, 3], ['M', 7, 8], ['L', 12, 3], ['L', 17, 8], ['M', 4, 17], ['L', 4, 21], ['L', 20, 21], ['L', 20, 17]],
-    rotate: [['A', 12, 12, 9, Math.PI, Math.PI * 1.5], ['L', 5.3, 5.7], ['L', 3, 8], ['M', 3, 3], ['L', 3, 8], ['L', 8, 8]],
+    rotate: [['A', 12, 12, 9, Math.PI * 1.5, Math.PI * 3], ['M', 3, 3], ['L', 3, 8], ['L', 8, 8], ['M', 11.3, 3.2], ['Q', 6.5, 3.4, 4.4, 6], ['L', 3.2, 8.1]],
     gamepad: [['RR', 2, 8, 20, 9, 4.5], ['M', 6, 12.5], ['L', 10, 12.5], ['M', 8, 10.5], ['L', 8, 14.5], ['DOT', 15, 11.5, 0.7, 'fill'], ['DOT', 18, 13.5, 0.7, 'fill']],
     users: [['DOT', 9, 7.5, 3.4, 'stroke'], ['M', 15, 21], ['L', 15, 19.5], ['A', 11, 19.5, 4, Math.PI, 0], ['L', 7, 15.5], ['A', 3, 19.5, 4, Math.PI, 0], ['L', 3, 21], ['M', 19.5, 21], ['L', 19.5, 19.4], ['A', 16.4, 16.2, 3.6, Math.PI, 0], ['A', 16, 7, 4, -Math.PI / 2, Math.PI / 2]],
     wrench: [['M', 14, 10.5], ['L', 4.5, 19.5], ['A', 16.5, 7.5, 3.6, -0.26, 4.97]],
@@ -866,11 +868,12 @@
     drawText('把下一款游戏，做出来。', nameX, top + 35, 9.5, 400, C.muted);
     // 右：存档状态 + 导出 / 导入 / 重新创业，整体避开右上角原生胶囊
     drawText(storageAvailable ? '本机存档' : '存档不可用', SAFE_RIGHT - 92, top + 27, 9, 400, C.muted, 'right');
-    [['export', 'download'], ['import', 'upload'], ['restart', 'rotate']].forEach(([action, icon], i) => {
+    [['export', 'download'], ['import', 'upload'], ['menu', 'rotate']].forEach(([action, icon], i) => {
       const bx = SAFE_RIGHT - 88 + i * 30;
       panel(bx, top + 12, 28, 28, { fill: C.card, stroke: C.line, radius: 8 });
       drawIcon(icon, bx + 14, top + 26, 14, C.muted);
-      hit(bx, top + 12, 28, 28, action);
+      // 重新创业与网页版一致：先打开确认页（可先导出存档），不在顶栏直接清档
+      hit(bx, top + 12, 28, 28, action, action === 'menu' ? { menu: 'restart' } : null);
     });
   }
 
@@ -885,17 +888,21 @@
     ctx.stroke();
     const month = content.monthOf(state.day);
     const day = (state.day - 1) % 30 + 1;
-    const dateW = Math.max(48, SAFE_RIGHT - 142 - PAD - 6);
+    // 时钟条位于顶栏下方：原生胶囊通常只压住顶栏行，压不到时钟条。
+    // 胶囊底部高于控制区顶部时，倍速/暂停右对齐到屏幕边缘（与网页版一致，日期也不再被截断）；
+    // 个别高胶囊设备上则回退到胶囊安全区，保证永不被遮。
+    const clockRight = (capsuleTop + capsuleHeight <= top + 8) ? W - PAD : SAFE_RIGHT;
+    const dateW = Math.max(48, clockRight - 142 - PAD - 6);
     drawText(ellipsis('第 ' + month + ' 月 · ' + day + ' 日', dateW, 15, 500), PAD, top + 18, 15, 500, C.ink);
     drawText(ellipsis(pauseReason(), dateW, 10.5, 400), PAD, top + 38, 10.5, 400, C.muted);
 
-    // 控制区与网页版同序：[播放/暂停] [1x 4x 12x 分组]，整体避开原生胶囊
+    // 控制区与网页版同序：[播放/暂停] [1x 4x 12x 分组]
     const canToggle = !!state.company && !state.event && !state.over && !routes.length;
-    panel(SAFE_RIGHT - 142, top + 8, 40, 40, { fill: canToggle ? C.green : '#eef1ef', radius: 20 });
-    drawIcon(canToggle ? (playing ? 'pause' : 'play') : 'play', SAFE_RIGHT - 122, top + 29, 16, canToggle ? C.white : C.faint);
-    if (canToggle) hit(SAFE_RIGHT - 142, top + 8, 40, 40, 'clock');
+    panel(clockRight - 142, top + 8, 40, 40, { fill: canToggle ? C.green : '#eef1ef', radius: 20 });
+    drawIcon(canToggle ? (playing ? 'pause' : 'play') : 'play', clockRight - 122, top + 29, 16, canToggle ? C.white : C.faint);
+    if (canToggle) hit(clockRight - 142, top + 8, 40, 40, 'clock');
 
-    const gx = SAFE_RIGHT - 98;
+    const gx = clockRight - 98;
     panel(gx, top + 8, 98, 36, { fill: C.card, stroke: C.line, radius: 6 });
     [1, 4, 12].forEach((value, i) => {
       const bx = gx + i * 33;
@@ -966,8 +973,10 @@
     if (route.menu === 'history') special = { title: '经营记录' };
     else if (route.menu === 'project' && !state.project) special = { title: '新作立项' };
     else special = content.menuContents(route) || { title: '工作室', blocks: [] };
-    const rightZone = W - SAFE_RIGHT + 42;
-    drawText(ellipsis(special.title, W - PAD * 2 - Math.max(50, rightZone), 15.5, 500), W / 2, rowY + 18, 15.5, 500, C.ink, 'center');
+    // 标题在「返回按钮左缘 → 关闭按钮左缘」之间居中并封顶宽度，右缘永不越过 ✕
+    const titleLeft = (routes.length > 1 ? PAD + 36 : PAD) + 10;
+    const titleRight = (state.company ? SAFE_RIGHT - 36 : W - PAD) - 10;
+    drawText(ellipsis(special.title, Math.max(60, titleRight - titleLeft), 15.5, 500), (titleLeft + titleRight) / 2, rowY + 18, 15.5, 500, C.ink, 'center');
 
     const view = { top: headH + 8, h: H - headH - 20 };
     const x = PAD;
@@ -986,14 +995,20 @@
     lastMenuH = end + 12;
   }
 
-  function drawToast() {
-    if (!toast || Date.now() > toast.until) return;
+  // 提示条几何：主视图贴在时钟条下方，菜单视图贴在菜单头部下方
+  function toastBox() {
+    if (!toast || Date.now() > toast.until) { toast = null; return null; }
     const lines = wrapText(toast.text, W - 72, 12, 400).slice(0, 2);
     const h = 18 + lines.length * 17;
-    const y = TOP_INSET + MASTHEAD_H + HEADER_H + 10;
-    const tw = W - 48;
-    panel(24, y, tw, h, { fill: C.toast, radius: 10 });
-    lines.forEach((ln, i) => drawText(ln, 24 + tw / 2, y + 14 + i * 17, 12, 400, C.white, 'center'));
+    const y = (routes.length ? TOP_INSET + 84 : TOP_INSET + MASTHEAD_H + HEADER_H) + 10;
+    return { x: 24, y, w: W - 48, h, lines };
+  }
+
+  function drawToast() {
+    const box = toastBox();
+    if (!box) return;
+    panel(box.x, box.y, box.w, box.h, { fill: C.toast, radius: 10 });
+    box.lines.forEach((ln, i) => drawText(ln, box.x + box.w / 2, box.y + 14 + i * 17, 12, 400, C.white, 'center'));
   }
 
   function draw() {
@@ -1017,7 +1032,8 @@
   }
 
   function notify(message) {
-    toast = { text: String(message), until: Date.now() + 4200 };
+    // 约 2.4 秒自动消失；点按提示条本体可立即取消（见 onTouchEnd）
+    toast = { text: String(message), until: Date.now() + 2400 };
     draw();
   }
 
@@ -1210,6 +1226,13 @@
     const info = touchInfo;
     touchInfo = null;
     if (info.moved > 8 || Date.now() - info.t0 > 600) return;
+    // 点按提示条本体即取消：既缩短停留时间，也给玩家立即消除的入口
+    const box = toastBox();
+    if (box && info.sx >= box.x && info.sx <= box.x + box.w && info.sy >= box.y && info.sy <= box.y + box.h) {
+      toast = null;
+      draw();
+      return;
+    }
     for (let i = hits.length - 1; i >= 0; i--) {
       const r = hits[i];
       if (r.disabled) continue;
@@ -1236,6 +1259,7 @@
     get routes() { return routes.map(r => r.menu); },
     get draft() { return formDraft; },
     get hits() { return hits.map(h => ({ action: h.action, data: h.data, x: h.x, y: h.y, w: h.w, h: h.h })); },
+    get toast() { return toast ? { text: toast.text, left: Math.max(0, toast.until - Date.now()) } : null; },
     openMenu, closeMenu, dispatch, draw, notify,
     tick: gameTick,
     setSpeed: v => { speed = v; },
