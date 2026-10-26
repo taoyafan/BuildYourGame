@@ -1,4 +1,4 @@
 {
   "extends": "./temp/tsconfig.cocos.json",
-  "compilerOptions": { "strict": false, "allowJs": true }
+  "compilerOptions": { "strict": false, "allowJs": true, "lib": ["es2020", "dom"] }
 }

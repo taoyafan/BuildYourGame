@@ -9,7 +9,6 @@
     "build:douyin": "node tools/build.cjs bytedance-mini-game"
   },
   "devDependencies": {
-    "@resvg/resvg-js": "2.6.2",
-    "esbuild": "0.25.0"
+    "@resvg/resvg-js": "2.6.2"
   }
 }
