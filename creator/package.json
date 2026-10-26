@@ -1,0 +1,15 @@
+{
+  "name": "sunlight-studio",
+  "uuid": "4c23275d-44fc-42da-b6f7-6c44d9dd6d8a",
+  "creator": { "version": "3.8.8" },
+  "scripts": {
+    "prepare:assets": "node tools/prepare.cjs",
+    "build:web": "node tools/build.cjs web-mobile",
+    "build:wechat": "node tools/build.cjs wechatgame",
+    "build:douyin": "node tools/build.cjs bytedance-mini-game"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "esbuild": "0.25.0"
+  }
+}

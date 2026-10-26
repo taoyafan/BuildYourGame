@@ -1,0 +1,28 @@
+[
+  {
+    "__type__": "cc.SceneAsset",
+    "_name": "Studio",
+    "scene": {
+      "__id__": 1
+    }
+  },
+  {
+    "__type__": "cc.Scene",
+    "_name": "Studio",
+    "_children": [],
+    "_components": [
+      {
+        "__id__": 2
+      }
+    ],
+    "_autoReleaseAssets": false,
+    "_id": "a0240c65-b333-487a-aa08-51a3cfc778f2"
+  },
+  {
+    "__type__": "81ec9QAGqlBzald6ugn2TMh",
+    "node": {
+      "__id__": 1
+    },
+    "_enabled": true
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "name": "日光工作室",
+  "platform": "bytedance-mini-game",
+  "debug": false,
+  "orientation": "portrait",
+  "startScene": "a0240c65-b333-487a-aa08-51a3cfc778f2",
+  "packages": { "bytedance-mini-game": { "orientation": "portrait" } }
+}

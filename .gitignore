@@ -2,3 +2,15 @@
 *.tmp.cjs
 *.tmp.js
 *.tmp.html
+creator/library/
+creator/temp/
+creator/local/
+creator/build/
+creator/profiles/
+creator/node_modules/
+creator/assets/scripts/generated/
+creator/assets/scripts/generated.meta
+creator/assets/resources/office.png
+creator/assets/resources/office.png.meta
+creator/assets/resources/icons/
+creator/assets/resources/icons.meta
