@@ -1301,7 +1301,7 @@
   else if (state.event) openMenu('event', null, true);
   if (loadNotice) notify(loadNotice);
 
-  // 调试/测试钩子（Node 冒烟测试与开发者工具调试用）
+  // 开发者工具调试入口
   globalThis.StudioDebug = {
     get state() { return state; },
     get playing() { return playing; },
