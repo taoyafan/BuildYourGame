@@ -26,26 +26,26 @@ export function bestChannel(state: any) {
 
 export function advice(state: any) {
   const project = state.project;
-  if (state.over) return { title: '公司未能支付月底开支', text: '作品与账单都保留着，可以在公司菜单导出或重新创业。', menu: 'finance' };
+  if (state.over) return { title: '公司未能支付月底开支', text: '可在公司菜单导出或重新创业。', menu: 'finance' };
   if (state.event) return { title: state.event.title, text: '需要你做个决定，时间已暂停。', menu: 'event' };
-  if (!state.staff.some((person: any) => person.role === 'code')) return { title: '招一位程序员', text: '程序员把想法做成游戏。起步阶段只能通过熟人介绍，工资低、能力参差。', menu: 'recruit', id: 'code:' + bestChannel(state) };
+  if (!state.staff.some((person: any) => person.role === 'code')) return { title: '招一位程序员', text: '程序员负责把想法做成游戏。', menu: 'recruit', id: 'code:' + bestChannel(state) };
   if (!project) {
-    if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品，先把整个流程走一遍。', menu: 'new-project' };
-    return { title: '为下一款作品立项', text: core.channelOpen(state, 'web') && state.staff.every((person: any) => person.skill < 60) ? '招聘网站已开放，可以先换一批更有经验的同事。' : '参考上一作的复盘，延续优势、弥补短板。', menu: 'new-project' };
+    if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品。', menu: 'new-project' };
+    return { title: '为下一款作品立项', text: core.channelOpen(state, 'web') && state.staff.every((person: any) => person.skill < 60) ? '招聘网站已开放，可换更有经验的同事。' : '参考上一作复盘，弥补短板。', menu: 'new-project' };
   }
-  if (project.focus !== 'develop') return { title: core.FOCUS[project.focus].name + '中', text: '新内容暂停开发，完成后团队会自动回到内容开发。', menu: 'project' };
+  if (project.focus !== 'develop') return { title: (project.focus === 'special' ? core.TYPES[project.type].special.name : core.FOCUS[project.focus].name) + '中', text: '新内容暂停，完成后自动回到开发。', menu: 'project' };
   if (project.done >= project.total - 0.001) {
-    const missing = core.launchChecklist(state).filter(item => !item.ok).map(item => item.label);
-    return { title: '内容完成，准备发售', text: missing.length ? '发售前还可以完善：' + missing.join('、') + '。' : '各项准备都已就绪，可以发售了。', menu: 'project' };
+    const missing = core.launchChecklist(state).filter(item => !item.ok).length;
+    return { title: '内容完成，准备发售', text: missing ? '还可完善 ' + missing + ' 项，见项目菜单。' : '各项准备就绪，可以发售。', menu: 'project' };
   }
   const forecast = core.projectForecast(state);
   const progress = project.done / project.total;
-  if (!forecast.code) return { title: '没有程序员在开发', text: '招聘程序员后，开发才会继续。', menu: 'recruit', id: 'code:' + bestChannel(state) };
-  if (progress >= 0.55 && !project.test && core.playtestOffer(state).available) return { title: '招募玩家试玩 Demo', text: '试玩能发现隐藏的缺陷，并告诉你玩家最在意什么。', menu: 'testing' };
-  if (progress >= 0.55 && !project.promoted && project.followers < 1500) return { title: '推广 Demo', text: '首发销量主要来自关注者。现在关注 ' + number(project.followers) + ' 人。', menu: 'market' };
-  if (progress < 0.25) return { title: '开发可玩原型', text: forecast.protoDays === null ? '团队正在准备。' : '按现在的速度，约 ' + forecast.protoDays + ' 天做出原型。', menu: 'project' };
-  if (progress < 0.55) return { title: '制作 Demo', text: '约 ' + forecast.demoDays + ' 天后 Demo 可以给玩家试玩。', menu: 'project' };
-  return { title: '完成剩余内容', text: '约 ' + forecast.days + ' 天后内容完成。可以随时调整团队与工作重点。', menu: 'project' };
+  if (!forecast.code) return { title: '没有程序员在开发', text: '招聘程序员后才能继续开发。', menu: 'recruit', id: 'code:' + bestChannel(state) };
+  if (progress >= 0.55 && !project.test && core.playtestOffer(state).available) return { title: '招募玩家试玩 Demo', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing' };
+  if (progress >= 0.55 && !project.promoted && project.followers < 1500) return { title: '推广 Demo', text: '关注 ' + number(project.followers) + ' 人，推广能扩大首发。', menu: 'market' };
+  if (progress < 0.25) return { title: '开发可玩原型', text: forecast.protoDays === null ? '团队正在准备。' : '约 ' + forecast.protoDays + ' 天做出原型。', menu: 'project' };
+  if (progress < 0.55) return { title: '制作 Demo', text: '约 ' + forecast.demoDays + ' 天后 Demo 可以试玩。', menu: 'project' };
+  return { title: '完成剩余内容', text: '约 ' + forecast.days + ' 天后内容完成。', menu: 'project' };
 }
 
 function recruitMenu(state: any, id: string) {
@@ -61,7 +61,7 @@ function recruitMenu(state: any, id: string) {
     blocks.push({ type: 'text', text: '这批名单保持到第 ' + (pool.batch + 1) * 14 + ' 天，之后可以查看新一批。', muted: true });
   }
   const fresh = !pool || pool.batch !== Math.floor((state.day - 1) / 14);
-  if (fresh) blocks.push({ type: 'buttons', items: [{ text: pool ? '查看新一批简历' : '发布招聘', action: 'recruit', data: { role, channel }, primary: true, anchor: 'recruit' }] });
+  if (fresh) blocks.push({ type: 'buttons', items: [{ text: (pool ? '查看新一批简历' : '发布招聘') + ' · ' + money(core.CHANNELS[channel].fee), action: 'recruit', data: { role, channel }, primary: true, disabled: state.cash < core.CHANNELS[channel].fee, anchor: 'recruit' }] });
   blocks.push({ type: 'text', text: '工位 ' + state.staff.length + ' / ' + core.seats(state) + '；工资按在职天数累计，月底结算。', muted: true });
   return { title: '招聘' + core.ROLES[role].name, blocks };
 }
@@ -114,7 +114,7 @@ function projectMenu(state: any) {
       { type: 'focus', items: focus },
       { type: 'section', title: '发售准备' },
       { type: 'checklist', items: core.launchChecklist(state) },
-      { type: 'buttons', items: [
+      { type: 'buttons', anchor: 'launch-actions', items: [
         { text: '正式发售', action: 'launch', primary: true, disabled: !complete, anchor: 'launch' },
         { text: '画面方案', action: 'menu', data: { menu: 'visual' } },
         { text: '试玩', action: 'menu', data: { menu: 'testing' }, disabled: !!menuLock(state, 'testing'), anchor: 'menu-testing' },
@@ -162,7 +162,7 @@ function toolsMenu(state: any) {
       ...Object.keys(core.STUDIO_TOOLS).map(role => {
         const tool = core.STUDIO_TOOLS[role];
         const before = core.rates({ ...state, tools: state.tools.filter((item: string) => item !== role) });
-        const after = core.rates({ ...state, tools: [...new Set([...state.tools, role])] });
+        const after = core.rates({ ...state, tools: state.tools.includes(role) ? state.tools : [...state.tools, role] });
         return { type: 'card', title: tool.name, text: tool.text + '\n当前团队：' + before[role].toFixed(2) + ' → ' + after[role].toFixed(2) + ' /天', button: { text: state.tools.includes(role) ? '已购置' : '购置 · ' + money(tool.cost), action: 'buy-tool', data: { role }, primary: true, disabled: state.tools.includes(role) || state.cash < tool.cost, anchor: 'tool-' + role } };
       })
     ]
@@ -175,15 +175,14 @@ function visualMenu(state: any) {
   const metrics = core.projectMetrics(project);
   const artists = state.staff.filter((person: any) => person.role === 'art').length;
   const cost = core.assetsCost(project);
-  const cheap = core.tutorialActive(state);
   return {
     title: '画面方案',
     blocks: [
       { type: 'lines', items: [['视觉表现', metrics.visual.toFixed(1)], ['美术人数', String(artists)], ['画面完成', (project.artDone / project.artTotal * 100).toFixed(0) + '%']] },
       { type: 'text', text: '画面不会随开发自动变好。美术持续制作，越早加入越有时间做完；素材能立刻完成一部分；也可以保持朴素，交给玩家评判。' },
-      { type: 'buttons', items: [
-        { text: project.assets ? '素材已采购' : '采购现成素材 · ' + money(cost), action: 'assets', primary: cheap, disabled: !!project.assets || state.cash < cost, anchor: 'assets' },
-        { text: '招聘美术', action: 'menu', data: { menu: 'recruit', id: 'art:' + bestChannel(state) }, primary: !cheap },
+      { type: 'buttons', anchor: 'visual-options', items: [
+        { text: project.assets ? '素材已采购' : '采购现成素材 · ' + money(cost), action: 'assets', disabled: !!project.assets || state.cash < cost, anchor: 'assets' },
+        { text: '招聘美术', action: 'menu', data: { menu: 'recruit', id: 'art:' + bestChannel(state) } },
         { text: project.plain ? '已选择朴素画面' : '保持朴素画面', action: 'plain', disabled: !!project.plain }
       ] }
     ]
@@ -203,7 +202,7 @@ function testingMenu(state: any) {
   } else {
     blocks.push({ type: 'text', text: '缺陷藏在作品里，只有让玩家试玩才能发现；试玩还会告诉你这类玩家最看重什么。' });
   }
-  blocks.push({ type: 'buttons', items: [
+  blocks.push({ type: 'buttons', anchor: 'tests', items: [
     { text: '招募 30 人 · 0.80 万（发现约六成缺陷）', action: 'test', data: { count: 30 }, primary: true, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
     { text: '招募 100 人 · 2.00 万（发现约九成缺陷）', action: 'test', data: { count: 100 }, disabled: !offer.available || state.cash < 2 }
   ] });
@@ -218,7 +217,7 @@ function marketMenu(state: any) {
     const trend = core.market(project.type, Math.ceil(state.day / 30));
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)], ['当前市场', trend.label]] });
     blocks.push({ type: 'text', text: '首发销量主要来自关注者。Demo 完成后会自然积累关注，推广能大幅加快。' + trend.description, muted: true });
-    core.PROMOTIONS.forEach((plan, index) => blocks.push({ type: 'card', title: plan.name, text: plan.text + ' 约新增 ' + number(plan.reach * trend.multiplier) + ' 人关注。', button: { text: '推广 · ' + money(plan.cost), action: 'promote', data: { tier: index }, primary: index === 0, disabled: project.done < project.total * 0.55 || state.cash < plan.cost, anchor: 'promote-' + index } }));
+    core.PROMOTIONS.forEach((plan, index) => blocks.push({ type: 'card', group: 'promotions', title: plan.name, text: plan.text + ' 约新增 ' + number(plan.reach * trend.multiplier) + ' 人关注。', button: { text: '推广 · ' + money(plan.cost), action: 'promote', data: { tier: index }, primary: index === 0, disabled: project.done < project.total * 0.55 || state.cash < plan.cost, anchor: 'promote-' + index } }));
   }
   blocks.push({ type: 'section', title: '已发售作品' });
   if (state.catalog.length) blocks.push({ type: 'catalog' });
@@ -296,7 +295,7 @@ function eventMenu(state: any) {
     blocks.push({ type: 'text', text: event.text, muted: true });
     blocks.push({ type: 'buttons', items: [{ text: released.tutorial ? '查看首作复盘' : '查看发售复盘', action: 'review', data: { id: released.id }, primary: true, anchor: 'review' }] });
   } else blocks.push({ type: 'text', text: event.text });
-  blocks.push({ type: 'choices', items: event.choices.map((choice: any) => ({ text: choice.title, detail: choice.detail, action: 'decision', data: { choice: choice.id }, recommended: !!choice.recommended, anchor: choice.recommended || event.choices.length === 1 ? 'choice-main' : undefined, disabled: choice.id === 'assets' && state.project && state.cash < core.assetsCost(state.project) || choice.id === 'move' && state.cash < core.OFFICES[1].cost })) });
+  blocks.push({ type: 'choices', anchor: 'choices', items: event.choices.map((choice: any) => ({ text: choice.title, detail: choice.detail, action: 'decision', data: { choice: choice.id }, recommended: !!choice.recommended, anchor: choice.recommended || event.choices.length === 1 ? 'choice-main' : undefined, disabled: choice.id === 'assets' && state.project && state.cash < core.assetsCost(state.project) || choice.id === 'move' && state.cash < core.OFFICES[1].cost })) });
   return { title: event.title, blocks };
 }
 
@@ -332,43 +331,63 @@ export function planPreview(state: any, draft: any) {
   return '工作量 ' + workload.toFixed(0) + '，' + time + focus;
 }
 
-// Tutorial bubble for the current screen; anchors are registered by the renderer.
+// Tutorial step for the current screen. `ack` explains an area and waits for "知道了"; `tap` introduces a
+// control and counts as seen once the player presses it; neither means "press the highlighted control".
 export function guide(state: any, route: any, playing: boolean) {
   if (!guideOn(state)) return null;
   const seen = state.tutorial.seen;
   const project = state.project;
   const hasCoder = state.staff.some((person: any) => person.role === 'code');
+  const hasArt = state.staff.some((person: any) => person.role === 'art');
+  const complete = !!project && project.done >= project.total - 0.001;
+  const explain = (key: string, anchor: string, text: string) => seen[key] ? null : { anchor, text, ack: key };
+  const introduce = (key: string, anchor: string, text: string) => seen[key] ? null : { anchor, text, tap: key };
   if (!route) {
     if (state.event) return { anchor: 'next', text: '有一个决定在等你，点这里查看。' };
-    if (!hasCoder) return { anchor: 'next', text: '欢迎！你是工作室的创始人。先招一位程序员，把游戏做出来。' };
-    if (!seen.goal) return { anchor: 'goal', text: '这里是公司目标。完成目标会解锁新能力，首作的目标就是把游戏做完。', ack: 'goal' };
-    if (!project && state.catalog.length === 0) return { anchor: 'next', text: '团队有了，给第一款游戏立项吧。' };
-    if (project && !seen.scene) return { anchor: 'scene', text: '上面是你的工作室，下面是作品雏形：开发越多内容越丰富，美术越强画面越精致。', ack: 'scene' };
-    if (project && !playing && !seen.clock) return { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。' };
-    if (project && project.checkpoints.demo && !project.test && !seen.nextAfterDemo) return { anchor: 'next', text: '这里总会提示下一步该做什么。', ack: 'nextAfterDemo' };
-    if (project && project.done >= project.total - 0.001 && project.focus === 'develop') return { anchor: 'next', text: '内容完成了！打开项目，检查发售准备后发售。' };
-    if (!project && state.catalog.length === 1) return { anchor: 'nav-market', text: '在市场里打开首作，看看复盘：哪里亏了，下一作怎么改。' };
+    const steps = [
+      () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标：完成后会解锁新能力。'),
+      () => hasCoder ? null : { anchor: 'nav-team', text: '「团队」负责招聘和管理同事。点这里，招一位程序员把游戏做出来。' },
+      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，每月底从资金扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
+      () => project || state.catalog.length ? null : { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里，为第一款游戏立项。' },
+      () => project ? explain('scene', 'scene', '上面是你的工作室，下面是作品雏形：开发越多内容越丰富，画面越好越精致。') : null,
+      () => project ? explain('track', 'track', '阶段进度：完成度 55% 可以试玩，100% 可以发售。线上方是到下一阶段的天数。') : null,
+      () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。' } : null,
+      () => state.reports.length ? introduce('navFinance', 'nav-finance', '第一个月结算了：工资和房租已从资金扣除。点「公司」看看上个月的账单，目标、搬家和存档也在这里。') : null,
+      () => project?.checkpoints.prototype ? introduce('navTools', 'nav-tools', '「工具」已开放：一次性付费，让对应岗位的同事干活更快。点开看看。') : null,
+      () => project?.checkpoints.prototype ? explain('stats', 'stats', '这四项是作品表现：玩法和视觉越高评价越好（玩法随开发和打磨提高，视觉需要美术或素材）；已知缺陷要试玩后才能发现；关注人数决定首发能卖多少。不同类型的玩家看重的不一样。') : null,
+      () => project?.checkpoints.demo ? introduce('navTesting', 'nav-testing', '「试玩」已开放：招募玩家试玩 Demo，发现缺陷、了解玩家偏好。点开看看。') : null,
+      () => project?.checkpoints.demo ? introduce('navMarket', 'nav-market', '「市场」已开放：推广 Demo 增加关注人数，也在这里查看已发售作品。点开看看。') : null,
+      () => project?.checkpoints.demo && !hasArt && !project.assets && !project.plain ? explain('plainArt', 'work', '作品画面还是灰色方块：没有美术，画面不会自己变好。可在「项目」→ 画面方案里处理。') : null,
+      () => project?.assets ? explain('visualStat', 'stat-visual', '素材到位：视觉分提高了，上面的作品画面也从灰色方块变成了彩色。') : null,
+      () => project?.test ? explain('defects', 'stat-defects', '已知缺陷：试玩发现的缺陷数。在「项目」里选择修复缺陷；再次试玩可能发现更多。') : null,
+      () => project?.test ? explain('insight', 'insight', '受众偏好和试玩分：这类玩家最看重的排在前面，改进时优先照顾；分数是最近一次试玩的评价。') : null,
+      () => complete && project.focus === 'develop' && !seen.checklist ? { anchor: 'nav-project', text: '内容完成了！点「项目」检查发售准备。' } : null,
+      () => !project && state.catalog.length === 1 ? { anchor: 'nav-market', text: '点「市场」打开首作，看看复盘：哪里亏了，下一作怎么改。' } : null
+    ];
+    for (const step of steps) { const result = step(); if (result) return result; }
     return null;
   }
   switch (route.menu) {
-    case 'recruit': return state.candidates[route.id] ? (hasCoder ? null : { anchor: 'candidate-0', text: '能力决定作品质量，速度决定开发进度。挑一位看看。' }) : { anchor: 'recruit', text: '发布招聘，熟人会推荐几位候选人。' };
+    case 'team': return hasCoder ? null : { anchor: 'recruit-code', text: '点「招聘程序员」。' };
+    case 'recruit': return state.candidates[route.id] ? (hasCoder ? null : { anchor: 'candidates', text: '能力影响作品质量，速度影响开发进度，月薪越高开支越大。比较一下，点开一位看看。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。不同渠道费用和人才水平不同。' };
     case 'candidate': return hasCoder ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
-    case 'new-project': return seen.form ? null : { anchor: 'project-form', text: '起个名字，选一个类型。首作建议小型作品：周期短、花费少。', ack: 'form' };
+    case 'new-project': return seen.form ? null : { anchor: 'project-form', text: '起个名字，再选一个类型。下方体量首作建议选小型：周期短、花费少。', ack: 'form' };
     case 'event':
-      if (state.event?.id === 'release') return { anchor: 'review', text: '首作是练习，先看看复盘。' };
-      return state.event?.choices.some((choice: any) => choice.recommended) ? { anchor: 'choice-main', text: '标着“推荐”的选项适合新手；也可以按自己的想法选。做出决定后时间会继续。' } : null;
-    case 'testing': return project && !project.test ? { anchor: 'test-30', text: '先招 30 人试玩，花费少，能发现大部分缺陷。' } : null;
+      if (state.event?.id === 'release') {
+        if (!seen.releaseResult) return { anchor: 'payout', text: '这是首发成绩：到账金额、售出份数和玩家评分。之后还会持续卖出，回款会继续增加。', ack: 'releaseResult' };
+        return { anchor: 'review', text: '首作是练习，小亏也正常。看看复盘：哪里亏了，下一作怎么改。' };
+      }
+      return state.event?.choices.some((choice: any) => choice.recommended) ? { anchor: 'choices', text: '几种做法都可以，标「推荐」的适合新手。' } : null;
+    case 'testing': return project && !project.test ? { anchor: 'tests', text: '30 人便宜，能发现约六成缺陷；100 人更贵，能发现约九成。' } : null;
     case 'market':
-      if (project && !project.promoted) return { anchor: 'promote-0', text: '推广能增加关注人数，首发销量主要来自关注者。' };
+      if (project && !project.promoted) return { anchor: 'promotions', text: '推广能增加关注人数，首发销量主要来自关注者。首作预算有限，可以先从小的开始。' };
       return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。' } : null;
     case 'project': {
-      if (!project || project.done < project.total - 0.001 || project.focus !== 'develop') return null;
-      if (project.found) return { anchor: 'focus-bugs', text: '先修复试玩发现的缺陷，修完会自动回来。缺陷会明显拉低评价。' };
-      if (!project.promoted && project.followers < 1500) return { anchor: 'menu-market', text: '关注的人还不多。推广一下，首发会卖得更好。' };
-      return { anchor: 'launch', text: '只有内容完成是必需的，其余各项会影响评价与销量。准备好就发售吧。' };
+      if (!complete || project.focus !== 'develop') return null;
+      if (!seen.checklist) return { anchor: 'checklist', text: (project.found ? '还有 ' + project.found + ' 项已知缺陷。' : '') + '只有内容完成是发售的必需条件，其余各项影响评价和销量。想补哪项就补哪项：修复缺陷在上方「工作重点」，试玩和推广在下方按钮；准备好再发售。', ack: 'checklist' };
+      return null;
     }
-    case 'visual': return project && !project.assets && !state.staff.some((person: any) => person.role === 'art') ? { anchor: 'assets', text: '首作推荐采购素材：立刻见效，不增加月开支。下一作再考虑招聘美术。' } : null;
-    case 'book': return null;
+    case 'visual': return project && !project.assets && !project.plain && !hasArt ? { anchor: 'visual-options', text: '采购素材立刻见效、不增加月开支；招聘美术持续提升画面，但每月要发工资；也可以保持朴素。' } : null;
     default: return null;
   }
 }

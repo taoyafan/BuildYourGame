@@ -137,6 +137,7 @@ export function drawWork(pen: Pen, w: number, h: number, type: string, progress:
     pen.line(x + bw, y, x, y + bh, gray(2), 1);
   };
   const ground = h * 0.74;
+  const k = Math.min(1, h / 96);
   if (type === 'sim') {
     pen.rect(0, 0, w, h, tier ? '#cfe9f5' : gray(0), 6);
     if (tier === 2) { pen.circle(w * 0.84, h * 0.2, 13, '#ffd77a'); pen.circle(w * 0.25, h * 0.17, 9, '#ffffff', 220); pen.circle(w * 0.3, h * 0.15, 11, '#ffffff', 220); }
@@ -144,7 +145,7 @@ export function drawWork(pen: Pen, w: number, h: number, type: string, progress:
     const count = Math.max(1, Math.ceil(progress * 7));
     for (let index = 0; index < count; index++) {
       const bw = 28 + rand() * 14;
-      const bh = 26 + rand() * 40;
+      const bh = (26 + rand() * 40) * k * 0.85;
       const x = 14 + index * (w - 40) / 7;
       if (!tier) { box(x, ground - bh, bw, bh, 1); continue; }
       const colors = ['#e8a87c', '#8fb9d9', '#f2d083', '#c9a3d6', '#9fd3b5'];

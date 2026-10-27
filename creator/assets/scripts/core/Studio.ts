@@ -16,9 +16,9 @@ export const OFFICES = [
   { name: '正式办公室', seats: 10, rent: 3, cost: 8 }
 ];
 export const CHANNELS: any = {
-  friends: { name: '熟人介绍', text: '朋友和同学推荐，能力参差，工资较低。', skill: [30, 58], pace: [60, 95], wage: [1, 0.02, 0.01, 0.4] },
-  web: { name: '招聘网站', text: '公开招聘，候选人更有经验，工资也更高。', skill: [50, 80], pace: [70, 105], wage: [1.6, 0.03, 0.015, 0.6], lock: '完成首作后开放' },
-  headhunt: { name: '行业推荐', text: '同行推荐的成熟开发者，能力强、要价高。', skill: [72, 95], pace: [85, 120], wage: [2.5, 0.035, 0.02, 0.8], lock: '搬进正式办公室后开放' }
+  friends: { name: '熟人介绍', fee: 0.2, text: '朋友和同学推荐，花费少，能力参差，工资较低。', skill: [30, 58], pace: [60, 95], wage: [1, 0.02, 0.01, 0.4] },
+  web: { name: '招聘网站', fee: 0.8, text: '公开招聘，候选人更有经验，工资也更高。', skill: [50, 80], pace: [70, 105], wage: [1.6, 0.03, 0.015, 0.6], lock: '完成首作后开放' },
+  headhunt: { name: '行业推荐', fee: 3, text: '同行推荐的成熟开发者，能力强、要价高，推荐费也贵。', skill: [72, 95], pace: [85, 120], wage: [2.5, 0.035, 0.02, 0.8], lock: '搬进正式办公室后开放' }
 };
 export const ROLES: any = {
   code: { name: '程序员', task: '负责内容开发、玩法打磨与缺陷修复', traits: ['prototype', 'careful', 'systems'] },
@@ -127,6 +127,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   const key = `${role}:${channel}`;
   if (next.candidates[key] && next.candidates[key].batch === batch) return next;
   const source = CHANNELS[channel];
+  spend(next, source.fee, `${source.name}招聘${ROLES[role].name}`);
   const people = Array.from({ length: 3 }, (_, index) => {
     const skill = Math.round(source.skill[0] + random(next) * (source.skill[1] - source.skill[0]));
     const pace = Math.round(source.pace[0] + random(next) * (source.pace[1] - source.pace[0]));
@@ -317,9 +318,9 @@ function findings(state: any, metrics: any, newlyFound: number) {
   const incomplete = metrics.progress < 99.9;
   const gameplay = incomplete
     ? `内容完成 ${metrics.progress.toFixed(0)}%，玩家觉得还不够玩，这是开发未完成，继续内容开发即可。${metrics.craft < 45 ? '已完成部分手感一般，内容做完后值得打磨。' : '已完成部分的手感得到认可。'}`
-    : metrics.gameplay < 70 ? '内容完整，但玩起来还不够有趣，可以打磨玩法或做专项改进。' : '玩法得到认可，继续打磨仍可能提高评价。';
+    : metrics.gameplay < 70 ? '内容完整，但玩起来还不够有趣（主界面「玩法」分），可以打磨玩法或做专项改进。' : '玩法得到认可，继续打磨仍可能提高评价。';
   const visual = metrics.visual < 35
-    ? (hasArt(state) ? '画面还在制作中，美术完成后会继续改善。' : '画面以占位图为主，玩家明显在意。可以招聘美术或采购素材。')
+    ? (hasArt(state) ? '画面还在制作中，美术完成后会继续改善。' : '画面很简陋：还没有美术，作品暂用灰色方块代替，玩家明显在意。可以招聘美术或采购素材。')
     : metrics.visual < 60 ? '画面能看，但不够出彩；美术越早加入，越有时间做精致。' : '画面清楚好看，已有的美术投入得到认可。';
   const stability = newlyFound ? `本轮发现 ${newlyFound} 项缺陷，目前已知 ${project.found} 项；修复后体验会更好。` : project.found ? `没有发现新缺陷，仍有 ${project.found} 项已知缺陷待修复。` : '本轮没有发现明显缺陷。';
   const items = [
@@ -348,7 +349,7 @@ export function feedbackChoices(state: any) {
   if (visualWeak && (tutorialActive(state) || (100 - metrics.visual) * weights[1] >= (100 - metrics.craft) * weights[0])) recommended = 'visual';
   const choices = [
     incomplete ? { id: 'develop', title: '继续内容开发', detail: '先把计划内容做完，完整的作品才是评价的基础。', reason: '内容还没做完，玩家觉得不够玩主要是因为这个，先继续开发。' } : { id: 'launch', title: '正式发售', detail: '内容已经完成，带着当前表现发售。', reason: '' },
-    metrics.visual < 60 ? { id: 'visual', title: '补充画面：招聘美术或采购素材', detail: '打开画面方案，比较费用与效果，不会自动付费。', reason: '画面还是占位图，而且不会随开发自动变好，越早安排越好。' } : null,
+    metrics.visual < 60 ? { id: 'visual', title: '补充画面：招聘美术或采购素材', detail: '打开画面方案，比较费用与效果，不会自动付费。', reason: '还没有美术，作品暂用灰色方块代替画面；画面不会随开发自动变好，越早安排越好。' } : null,
     project.special < SPECIAL_CAP ? { id: 'special', title: special.name, detail: `${special.text}暂停新内容，完成后自动回到开发。`, reason: `玩家希望这一点做得更好：${special.text}` } : null,
     project.polish < POLISH_CAP ? { id: 'polish', title: '集中打磨玩法', detail: '暂停新内容，提升已有玩法，到上限后自动回到开发。', reason: '内容完整，但玩起来还不够有趣。' } : null,
     project.found ? { id: 'bugs', title: `修复已知缺陷（${project.found} 项）`, detail: '暂停新内容，修完后自动回到开发。', reason: '已知缺陷会明显拉低评价，先修复。' } : null
@@ -407,7 +408,7 @@ export function launchChecklist(state: any) {
     { label: '计划内容完成', ok: project.done >= project.total - 0.001, required: true, text: `完成度 ${metrics.progress.toFixed(0)}%` },
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
     { label: '已知缺陷已修复', ok: !!project.test && !project.found, text: project.test ? (project.found ? `还有 ${project.found} 项` : '已知缺陷修完，再试玩可能发现剩余缺陷') : '尚未发现' },
-    { label: '画面', ok: metrics.visual >= 35, text: metrics.visual >= 35 ? `视觉 ${metrics.visual.toFixed(0)}` : '以占位图为主，评价会受影响' },
+    { label: '画面', ok: metrics.visual >= 35, text: metrics.visual >= 35 ? `视觉 ${metrics.visual.toFixed(0)}` : '画面很简陋，评价会受影响' },
     { label: '关注人数', ok: project.followers >= 1500, text: `${Math.round(project.followers)} 人${project.followers >= 1500 ? '' : '，推广能扩大首发'}` }
   ];
 }
@@ -418,10 +419,10 @@ function reviewOf(state: any, project: any, metrics: any, followers: number) {
   const reasons = [
     !project.tests && { title: '发售前没有试玩', text: '缺陷和玩家意见都在发售后才暴露。下一作在 Demo 阶段先招募试玩。' },
     followers < 1500 && { title: '关注人数偏少', text: `首发时只有 ${Math.round(followers)} 人关注。Demo 完成后在市场菜单推广，首发会更稳。` },
-    metrics.visual < 35 && { title: '画面是占位图', text: '下一作在立项后就招聘美术，或在原型后采购素材。' },
+    metrics.visual < 35 && { title: '画面很简陋', text: '主界面「视觉」分偏低。下一作立项后就招聘美术，或在原型后采购素材。' },
     metrics.visual >= 35 && metrics.visual < 50 && { title: '画面不够出彩', text: '素材只能解决一部分。下一作立项就招聘美术，让画面有时间做完。' },
-    metrics.stability < 70 && { title: '缺陷较多', text: '试玩发现缺陷后，留几天集中修复再发售。' },
-    metrics.gameplay < 72 && !project.polish && !project.special && { title: '玩法缺少打磨', text: '内容完成后留出时间打磨，或按试玩反馈做专项改进。' },
+    metrics.stability < 70 && { title: '缺陷较多', text: '试玩发现的缺陷显示在主界面「已知缺陷」。发售前在「项目」里集中修复几天。' },
+    metrics.gameplay < 72 && !project.polish && !project.special && { title: '玩法缺少打磨', text: '主界面「玩法」分会随打磨提高。内容完成后在「项目」里留时间打磨，或按试玩反馈做专项改进。' },
     coders.length && skill < 55 && { title: '团队经验不足', text: '起步阶段的同事能力有限。招聘网站开放后，可以找到更有经验的程序员。' }
   ].filter(Boolean).slice(0, 4);
   if (!reasons.length) reasons.push({ title: '各方面都比较扎实', text: '保持这套做法，下一作可以尝试更大的体量。' });
@@ -537,8 +538,8 @@ export function resolveStudioEvent(state: any, choice: string) {
 function visualHint(state: any, tested: boolean) {
   const cost = assetsCost(state.project);
   return {
-    id: 'visual', title: '画面还是占位图',
-    text: `${tested ? '试玩玩家' : '工作室自查发现'}：作品目前没有美术，画面以占位图为主。画面不会随开发自动变好，越早安排，美术越有时间做完。`,
+    id: 'visual', title: '画面很简陋',
+    text: `${tested ? '试玩玩家' : '工作室自查发现'}：作品还没有美术，画面暂用灰色方块代替，就是主界面作品画面现在的样子。画面不会随开发自动变好，越早安排，美术越有时间做完。`,
     choices: [
       { id: 'recruit', title: '查看美术招聘', detail: '比较候选人与月薪，美术会持续制作画面。' },
       { id: 'assets', title: `采购现成素材 · ${cost} 万`, detail: '一次性付费，立刻完成部分画面。首作省时省钱的做法。', recommended: true },

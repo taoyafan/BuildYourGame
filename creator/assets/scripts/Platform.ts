@@ -4,6 +4,19 @@ const host: any = globalThis as any;
 const api = host.wx || host.tt;
 const key = 'sunlight-studio-v2';
 
+// Browser notch/home-indicator insets in CSS pixels (0 when the page is not edge-to-edge).
+function webSafeArea() {
+  const document = host.document;
+  if (!document?.body || !host.getComputedStyle) return { top: 0, bottom: 0 };
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;visibility:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
+  document.body.appendChild(probe);
+  const style = host.getComputedStyle(probe);
+  const result = { top: parseFloat(style.paddingTop) || 0, bottom: parseFloat(style.paddingBottom) || 0 };
+  probe.remove();
+  return result;
+}
+
 export const platform = {
   read(name = key): string | null {
     const value = api ? api.getStorageSync(name) : sys.localStorage.getItem(name);
@@ -15,7 +28,11 @@ export const platform = {
   },
   insets() {
     const visible = view.getVisibleSize();
-    if (!api) return { top: 18, bottom: 16 };
+    if (!api) {
+      const safe = webSafeArea();
+      const scale = host.innerWidth ? visible.width / host.innerWidth : 1;
+      return { top: Math.max(18, (safe.top + 8) * scale), bottom: Math.max(16, safe.bottom * scale) };
+    }
     try {
       const info = api.getWindowInfo ? api.getWindowInfo() : api.getSystemInfoSync();
       const scale = visible.width / info.windowWidth;
