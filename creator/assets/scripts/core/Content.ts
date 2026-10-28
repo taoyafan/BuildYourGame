@@ -63,7 +63,7 @@ function recruitMenu(state: any, id: string) {
     blocks.push({ type: 'text', text: '这批名单保持到第 ' + (pool.batch + 1) * 14 + ' 天，之后可以查看新一批。', muted: true });
   }
   const fresh = !pool || pool.batch !== Math.floor((state.day - 1) / 14);
-  if (fresh) blocks.push({ type: 'buttons', items: [{ text: (pool ? '查看新一批简历' : '发布招聘') + ' · ' + money(core.CHANNELS[channel].fee), action: 'recruit', data: { role, channel }, primary: true, disabled: state.cash < core.CHANNELS[channel].fee, anchor: 'recruit' }] });
+  if (fresh) blocks.push({ type: 'buttons', items: [{ text: (pool ? '查看新一批简历' : '发布招聘') + ' · ' + money(core.CHANNELS[channel].fee), action: 'recruit', data: { role, channel }, disabled: state.cash < core.CHANNELS[channel].fee, anchor: 'recruit' }] });
   blocks.push({ type: 'text', text: '工位 ' + state.staff.length + ' / ' + core.seats(state) + '；工资按在职天数累计，月底结算。', muted: true });
   return { title: '招聘' + core.ROLES[role].name, blocks };
 }
@@ -87,7 +87,7 @@ function candidateMenu(state: any, id: string) {
         [person.role === 'code' ? '开发速度' : '画面制作速度', before[person.role].toFixed(2) + ' → ' + after[person.role].toFixed(2) + ' /天'],
         ...(forecast && current && forecast.days !== null ? [['内容预计剩余', (current.days === null ? '—' : current.days + ' 天') + ' → ' + forecast.days + ' 天']] : [])
       ] },
-      { type: 'buttons', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', data: { id: person.id }, primary: true, disabled: !!person.hired, anchor: 'hire' }] }
+      { type: 'buttons', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', data: { id: person.id }, disabled: !!person.hired, anchor: 'hire' }] }
     ]
   };
 }
@@ -117,7 +117,7 @@ function projectMenu(state: any) {
       { type: 'section', title: '发售准备' },
       { type: 'checklist', items: core.launchChecklist(state) },
       { type: 'buttons', anchor: 'launch-actions', items: [
-        { text: '正式发售', action: 'launch', primary: true, disabled: !complete, anchor: 'launch' },
+        { text: '正式发售', action: 'launch', disabled: !complete, anchor: 'launch' },
         { text: '画面方案', action: 'menu', data: { menu: 'visual' } },
         { text: '试玩', action: 'menu', data: { menu: 'testing' }, disabled: !!menuLock(state, 'testing'), anchor: 'menu-testing' },
         { text: '推广', action: 'menu', data: { menu: 'market' }, disabled: !!menuLock(state, 'market'), anchor: 'menu-market' }
@@ -261,7 +261,7 @@ function goalsMenu(state: any) {
     blocks: [
       { type: 'goals', items: goals.steps, current: goals.current.key },
       ...(goals.current.key === 'record' ? [{ type: 'note', icon: 'Trophy', text: goals.current.title + '：' + goals.current.text }] : []),
-      ...(canMove ? [{ type: 'buttons', items: [{ text: '搬进正式办公室 · ' + money(core.OFFICES[1].cost), action: 'move', primary: true, disabled: state.cash < core.OFFICES[1].cost }] }] : [])
+      ...(canMove ? [{ type: 'buttons', items: [{ text: '搬进正式办公室 · ' + money(core.OFFICES[1].cost), action: 'move', disabled: state.cash < core.OFFICES[1].cost }] }] : [])
     ]
   };
 }
@@ -295,7 +295,7 @@ function eventMenu(state: any) {
     blocks.push({ type: 'payout', amount: released.openingReceipt, label: '首发到账', note: '首发售出 ' + number(released.openingUnits) + ' 份 · 玩家评价 ' + released.reviewScore.toFixed(1) });
     if (released.review.quotes.length) blocks.push({ type: 'quotes', items: released.review.quotes });
     blocks.push({ type: 'text', text: event.text, muted: true });
-    blocks.push({ type: 'buttons', items: [{ text: released.tutorial ? '查看首作复盘' : '查看发售复盘', action: 'review', data: { id: released.id }, primary: true, anchor: 'review' }] });
+    blocks.push({ type: 'buttons', items: [{ text: released.tutorial ? '查看首作复盘' : '查看发售复盘', action: 'review', data: { id: released.id }, anchor: 'review' }] });
   } else blocks.push({ type: 'text', text: event.text });
   blocks.push({ type: 'choices', anchor: 'choices', items: event.choices.map((choice: any) => ({ text: choice.title, detail: choice.detail, action: 'decision', data: { choice: choice.id }, recommended: !!choice.recommended, anchor: choice.recommended || event.choices.length === 1 ? 'choice-main' : undefined, disabled: choice.id === 'assets' && state.project && state.cash < core.assetsCost(state.project) || choice.id === 'move' && state.cash < core.OFFICES[1].cost })) });
   return { title: event.title, blocks };
@@ -303,12 +303,12 @@ function eventMenu(state: any) {
 
 export function menu(state: any, route: any) {
   switch (route.menu) {
-    case 'project': return state.project ? projectMenu(state) : { title: '项目', blocks: [{ type: 'text', text: '还没有进行中的项目。' }, { type: 'buttons', items: [{ text: '立项', action: 'menu', data: { menu: 'new-project' }, primary: true }] }] };
+    case 'project': return state.project ? projectMenu(state) : { title: '项目', blocks: [{ type: 'text', text: '还没有进行中的项目。' }, { type: 'buttons', items: [{ text: '立项', action: 'menu', data: { menu: 'new-project' } }] }] };
     case 'team': return teamMenu(state);
     case 'recruit': return recruitMenu(state, route.id);
     case 'candidate': return candidateMenu(state, route.id);
     case 'person': return personMenu(state, route.id);
-    case 'dismiss': return { title: '确认结束雇佣', blocks: [{ type: 'text', text: '离职后停止工作和计薪；此前的工作和已累计的工资保留。' }, { type: 'buttons', items: [{ text: '确认离职', action: 'dismiss', data: { id: route.id }, primary: true }] }] };
+    case 'dismiss': return { title: '确认结束雇佣', blocks: [{ type: 'text', text: '离职后停止工作和计薪；此前的工作和已累计的工资保留。' }, { type: 'buttons', items: [{ text: '确认离职', action: 'dismiss', data: { id: route.id } }] }] };
     case 'tools': return toolsMenu(state);
     case 'visual': return visualMenu(state);
     case 'testing': return testingMenu(state);
@@ -316,7 +316,7 @@ export function menu(state: any, route: any) {
     case 'book': return bookMenu(state, route.id);
     case 'goals': return goalsMenu(state);
     case 'finance': return financeMenu(state);
-    case 'restart': return { title: '重新创业？', blocks: [{ type: 'text', text: '当前进度会被新公司覆盖。想保留这次经历，可以先导出存档。' }, { type: 'buttons', items: [{ text: '导出当前存档', action: 'export' }, { text: '确认重新创业', action: 'restart', primary: true }] }] };
+    case 'restart': return { title: '重新创业？', blocks: [{ type: 'text', text: '当前进度会被新公司覆盖。想保留这次经历，可以先导出存档。' }, { type: 'buttons', items: [{ text: '导出当前存档', action: 'export' }, { text: '确认重新创业', action: 'restart' }] }] };
     case 'event': return eventMenu(state);
     default: return { title: '工作室', blocks: [] };
   }

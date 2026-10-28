@@ -595,7 +595,7 @@ export class StudioApp extends Component {
     else if (route.menu === 'history') cursor = this.renderHistory(scroll.body);
     else for (const block of model.blocks) cursor = this.drawBlock(scroll.body, block, cursor);
     scroll.finish(cursor);
-    if (footer) this.button(this.stage, '返回工作室，继续经营', 20, this.height - this.bottom - 54, this.width - 40, 46, () => this.closeMenu(), false, false, 'Play');
+    if (footer) this.button(this.stage, '返回工作室，继续经营', 20, this.height - this.bottom - 54, this.width - 40, 46, () => this.closeMenu(), true, false, 'Play');
   }
 
   private renderSetup(body: Node) {
@@ -691,7 +691,7 @@ export class StudioApp extends Component {
       case 'buttons': {
         const start = y;
         for (const item of block.items) {
-          this.button(parent, item.text, 0, y, width, 46, () => this.dispatch(item.action, item.data), !!item.primary, !!item.disabled, undefined, item.anchor);
+          this.button(parent, item.text, 0, y, width, 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, undefined, item.anchor);
           y += 56;
         }
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
@@ -714,7 +714,7 @@ export class StudioApp extends Component {
         y += 30;
         y += this.paragraph(parent, block.text, y, true, 0, width, 13);
         const button = block.button;
-        this.button(parent, button.text, 0, y, width, 44, () => this.dispatch(button.action, button.data), !!button.primary, !!button.disabled, undefined, button.anchor);
+        this.button(parent, button.text, 0, y, width, 44, () => this.dispatch(button.action, button.data), true, !!button.disabled, undefined, button.anchor);
         if (block.group) {
           // Consecutive cards of one group share an anchor spanning from the first card's top.
           const top = this.groupTops.get(block.group) ?? start;
