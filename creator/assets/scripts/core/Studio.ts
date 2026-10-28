@@ -54,6 +54,8 @@ const clone = (value: any) => JSON.parse(JSON.stringify(value));
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 const round = (value: number) => Math.round(value * 100) / 100;
 const tier = (value: any) => Number.isInteger(value) && value >= 0 && value <= 2;
+// Object.hasOwn is missing on older mini-game runtimes (iOS < 15.4).
+const has = (object: any, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 
 export function random(state: any) {
   state.seed = (Math.imul(state.seed, 1664525) + 1013904223) >>> 0;
@@ -120,7 +122,7 @@ export function channelOpen(state: any, channel: string) {
 }
 
 export function publishRecruitment(state: any, role: string, channel = 'friends') {
-  if (!Object.hasOwn(ROLES, role) || !Object.hasOwn(CHANNELS, channel)) throw new Error('招聘岗位无效。');
+  if (!has(ROLES, role) || !has(CHANNELS, channel)) throw new Error('招聘岗位无效。');
   if (!channelOpen(state, channel)) throw new Error(`${CHANNELS[channel].name}${CHANNELS[channel].lock}。`);
   const next = studioAction(state);
   const batch = Math.floor((next.day - 1) / 14);
@@ -186,7 +188,7 @@ export function startProject(state: any, plan: any) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
   if (next.project) throw new Error('请先完成当前项目。');
-  if (!plan || !Object.hasOwn(TYPES, plan.type) || !tier(plan.scale)) throw new Error('请选择作品类型与体量。');
+  if (!plan || !has(TYPES, plan.type) || !tier(plan.scale)) throw new Error('请选择作品类型与体量。');
   const name = String(plan.name || '').trim().slice(0, 24);
   if (!name) throw new Error('请为作品取个名字。');
   const total = TYPES[plan.type].work * SCALES[plan.scale].work;
@@ -240,7 +242,7 @@ export function projectForecast(state: any) {
 }
 
 export function buyTool(state: any, role: string) {
-  if (!Object.hasOwn(STUDIO_TOOLS, role)) throw new Error('工具不存在。');
+  if (!has(STUDIO_TOOLS, role)) throw new Error('工具不存在。');
   const next = studioAction(state);
   if (next.tools.includes(role)) throw new Error('该工具已购置。');
   spend(next, STUDIO_TOOLS[role].cost, `购置${STUDIO_TOOLS[role].name}`);
@@ -289,7 +291,7 @@ export function focusBlock(state: any, focus: string) {
 }
 
 export function setFocus(state: any, focus: string) {
-  if (!Object.hasOwn(FOCUS, focus)) throw new Error('工作安排无效。');
+  if (!has(FOCUS, focus)) throw new Error('工作安排无效。');
   const reason = focusBlock(state, focus);
   if (reason) throw new Error(reason);
   const next = studioAction(state);
@@ -715,15 +717,15 @@ function validStudio(state: any) {
   const identifier = (value: any) => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
   const object = (value: any) => value && typeof value === 'object' && !Array.isArray(value);
   const day = (value: any) => value === null || Number.isInteger(value);
-  const person = (value: any) => value && identifier(value.id) && text(value.name) && Object.hasOwn(ROLES, value.role) && ROLES[value.role].traits.includes(value.trait) && number(value.skill) && value.skill >= 0 && value.skill <= 100 && number(value.pace) && value.pace > 0 && value.pace <= 200 && number(value.wage) && value.wage > 0 && nonnegative(value.work) && typeof value.hired === 'boolean';
+  const person = (value: any) => value && identifier(value.id) && text(value.name) && has(ROLES, value.role) && ROLES[value.role].traits.includes(value.trait) && number(value.skill) && value.skill >= 0 && value.skill <= 100 && number(value.pace) && value.pace > 0 && value.pace <= 200 && number(value.wage) && value.wage > 0 && nonnegative(value.work) && typeof value.hired === 'boolean';
   const metrics = (value: any) => value && ['progress', 'gameplay', 'visual', 'stability', 'defects'].every(key => nonnegative(value[key]));
   const feedback = (value: any) => value && Number.isInteger(value.day) && nonnegative(value.count) && number(value.score) && value.score >= 0 && value.score <= 100 && Array.isArray(value.findings) && value.findings.every((item: any) => item && text(item.key) && text(item.title) && number(item.value) && text(item.text));
   const choice = (value: any) => value && identifier(value.id) && text(value.title) && text(value.detail);
   if (!state || state.version !== 3 || !Number.isInteger(state.day) || state.day < 1 || !Number.isInteger(state.seed) || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || typeof state.bridgeUsed !== 'boolean') return false;
   if (!Number.isInteger(state.office) || !OFFICES[state.office] || !object(state.goals) || !['firstRelease', 'breakEven', 'moved'].every(key => day(state.goals[key])) || !nonnegative(state.fans) || !object(state.insights) || !Array.isArray(state.feed) || state.feed.length > 10) return false;
   if (!Array.isArray(state.staff) || state.staff.length > 16 || !state.staff.every(person) || new Set(state.staff.map((item: any) => item.id)).size !== state.staff.length) return false;
-  if (!Array.isArray(state.tools) || !state.tools.every((key: any) => Object.hasOwn(STUDIO_TOOLS, key)) || new Set(state.tools).size !== state.tools.length) return false;
-  if (!object(state.candidates) || !Object.entries(state.candidates).every(([key, pool]: any) => { const [role, channel] = key.split(':'); return Object.hasOwn(ROLES, role) && Object.hasOwn(CHANNELS, channel) && pool && Number.isInteger(pool.batch) && Array.isArray(pool.people) && pool.people.length <= 3 && pool.people.every((item: any) => person(item) && item.role === role); })) return false;
+  if (!Array.isArray(state.tools) || !state.tools.every((key: any) => has(STUDIO_TOOLS, key)) || new Set(state.tools).size !== state.tools.length) return false;
+  if (!object(state.candidates) || !Object.entries(state.candidates).every(([key, pool]: any) => { const [role, channel] = key.split(':'); return has(ROLES, role) && has(CHANNELS, channel) && pool && Number.isInteger(pool.batch) && Array.isArray(pool.people) && pool.people.length <= 3 && pool.people.every((item: any) => person(item) && item.role === role); })) return false;
   if (!state.ledger || !number(state.ledger.opening) || !['income', 'expense', 'payroll'].every(key => nonnegative(state.ledger[key]))) return false;
   if (!object(state.notices) || !object(state.tutorial) || typeof state.tutorial.skipped !== 'boolean' || !object(state.tutorial.seen)) return false;
   if (!Array.isArray(state.history) || !state.history.every((item: any) => item && Number.isInteger(item.day) && text(item.title) && text(item.text))) return false;
@@ -732,10 +734,10 @@ function validStudio(state: any) {
   if (!Array.isArray(state.reports) || state.reports.length > 600 || !state.reports.every((item: any) => item && Number.isInteger(item.month) && item.month >= 1 && ['opening', 'income', 'expense', 'payroll', 'closing', 'net'].every(key => number(item[key])))) return false;
   if (state.project) {
     const project = state.project;
-    if (!identifier(project.id) || !text(project.name) || !Object.hasOwn(TYPES, project.type) || !tier(project.scale) || !['total', 'done', 'artTotal', 'artDone', 'codeValue', 'artValue', 'defects', 'defectDebt', 'found', 'fixWork', 'polish', 'special', 'invested', 'followers', 'promoted', 'tests', 'testCount', 'started'].every(key => nonnegative(project[key])) || project.total <= 0 || project.artTotal <= 0 || project.done > project.total + 0.001 || project.artDone > project.artTotal + 0.001 || project.found > project.defects || !Object.hasOwn(FOCUS, project.focus) || !object(project.checkpoints) || typeof project.assets !== 'boolean' || typeof project.plain !== 'boolean' || project.test && !feedback(project.test)) return false;
+    if (!identifier(project.id) || !text(project.name) || !has(TYPES, project.type) || !tier(project.scale) || !['total', 'done', 'artTotal', 'artDone', 'codeValue', 'artValue', 'defects', 'defectDebt', 'found', 'fixWork', 'polish', 'special', 'invested', 'followers', 'promoted', 'tests', 'testCount', 'started'].every(key => nonnegative(project[key])) || project.total <= 0 || project.artTotal <= 0 || project.done > project.total + 0.001 || project.artDone > project.artTotal + 0.001 || project.found > project.defects || !has(FOCUS, project.focus) || !object(project.checkpoints) || typeof project.assets !== 'boolean' || typeof project.plain !== 'boolean' || project.test && !feedback(project.test)) return false;
   }
   const review = (value: any) => object(value) && Array.isArray(value.reasons) && value.reasons.every((item: any) => item && text(item.title) && text(item.text)) && Array.isArray(value.quotes) && value.quotes.every((item: any) => item && text(item.text));
-  if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && identifier(book.id) && text(book.name) && Object.hasOwn(TYPES, book.type) && tier(book.scale) && metrics(book.metrics) && ['released', 'invested', 'received', 'price', 'units', 'openingUnits', 'openingReceipt', 'openingFollowers', 'followers', 'dailyUnits', 'reviewScore', 'reviewCount', 'testCount', 'lastDayUnits', 'marks'].every(key => nonnegative(book[key])) && book.price > 0 && number(book.lastGrowth) && (book.testScore === null || number(book.testScore)) && typeof book.tested === 'boolean' && text(book.trend) && Array.isArray(book.team) && book.team.every((item: any) => item && text(item.name) && Object.hasOwn(ROLES, item.role) && Object.hasOwn(TRAITS, item.trait)) && Array.isArray(book.weekly) && book.weekly.length <= 52 && book.weekly.every(nonnegative) && review(book.review))) return false;
+  if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && identifier(book.id) && text(book.name) && has(TYPES, book.type) && tier(book.scale) && metrics(book.metrics) && ['released', 'invested', 'received', 'price', 'units', 'openingUnits', 'openingReceipt', 'openingFollowers', 'followers', 'dailyUnits', 'reviewScore', 'reviewCount', 'testCount', 'lastDayUnits', 'marks'].every(key => nonnegative(book[key])) && book.price > 0 && number(book.lastGrowth) && (book.testScore === null || number(book.testScore)) && typeof book.tested === 'boolean' && text(book.trend) && Array.isArray(book.team) && book.team.every((item: any) => item && text(item.name) && has(ROLES, item.role) && has(TRAITS, item.trait)) && Array.isArray(book.weekly) && book.weekly.length <= 52 && book.weekly.every(nonnegative) && review(book.review))) return false;
   return state.lastRelease === null || typeof state.lastRelease === 'string';
 }
 

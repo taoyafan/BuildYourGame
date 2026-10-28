@@ -2,6 +2,8 @@ import * as core from './Studio';
 
 export const money = (value: number) => Number(value).toFixed(2) + ' 万';
 export const number = (value: number) => Math.round(value).toLocaleString('zh-CN');
+// Spent this month: purchases already paid plus wages and rent accrued until month-end settlement.
+export const monthSpent = (state: any) => state.ledger.expense + state.accrued;
 
 export function stage(project: any) {
   const progress = project.done / project.total;
@@ -163,7 +165,7 @@ function toolsMenu(state: any) {
         const tool = core.STUDIO_TOOLS[role];
         const before = core.rates({ ...state, tools: state.tools.filter((item: string) => item !== role) });
         const after = core.rates({ ...state, tools: state.tools.includes(role) ? state.tools : [...state.tools, role] });
-        return { type: 'card', title: tool.name, text: tool.text + '\n当前团队：' + before[role].toFixed(2) + ' → ' + after[role].toFixed(2) + ' /天', button: { text: state.tools.includes(role) ? '已购置' : '购置 · ' + money(tool.cost), action: 'buy-tool', data: { role }, primary: true, disabled: state.tools.includes(role) || state.cash < tool.cost, anchor: 'tool-' + role } };
+        return { type: 'card', title: tool.name, text: tool.text + '\n当前团队：' + before[role].toFixed(2) + ' → ' + after[role].toFixed(2) + ' /天', button: { text: state.tools.includes(role) ? '已购置' : '购置 · ' + money(tool.cost), action: 'buy-tool', data: { role }, disabled: state.tools.includes(role) || state.cash < tool.cost, anchor: 'tool-' + role } };
       })
     ]
   };
@@ -203,7 +205,7 @@ function testingMenu(state: any) {
     blocks.push({ type: 'text', text: '缺陷藏在作品里，只有让玩家试玩才能发现；试玩还会告诉你这类玩家最看重什么。' });
   }
   blocks.push({ type: 'buttons', anchor: 'tests', items: [
-    { text: '招募 30 人 · 0.80 万（发现约六成缺陷）', action: 'test', data: { count: 30 }, primary: true, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
+    { text: '招募 30 人 · 0.80 万（发现约六成缺陷）', action: 'test', data: { count: 30 }, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
     { text: '招募 100 人 · 2.00 万（发现约九成缺陷）', action: 'test', data: { count: 100 }, disabled: !offer.available || state.cash < 2 }
   ] });
   if (!offer.available) blocks.push({ type: 'text', text: offer.reason || '先处理当前决策。', muted: true });
@@ -217,7 +219,7 @@ function marketMenu(state: any) {
     const trend = core.market(project.type, Math.ceil(state.day / 30));
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)], ['当前市场', trend.label]] });
     blocks.push({ type: 'text', text: '首发销量主要来自关注者。Demo 完成后会自然积累关注，推广能大幅加快。' + trend.description, muted: true });
-    core.PROMOTIONS.forEach((plan, index) => blocks.push({ type: 'card', group: 'promotions', title: plan.name, text: plan.text + ' 约新增 ' + number(plan.reach * trend.multiplier) + ' 人关注。', button: { text: '推广 · ' + money(plan.cost), action: 'promote', data: { tier: index }, primary: index === 0, disabled: project.done < project.total * 0.55 || state.cash < plan.cost, anchor: 'promote-' + index } }));
+    core.PROMOTIONS.forEach((plan, index) => blocks.push({ type: 'card', group: 'promotions', title: plan.name, text: plan.text + ' 约新增 ' + number(plan.reach * trend.multiplier) + ' 人关注。', button: { text: '推广 · ' + money(plan.cost), action: 'promote', data: { tier: index }, disabled: project.done < project.total * 0.55 || state.cash < plan.cost, anchor: 'promote-' + index } }));
   }
   blocks.push({ type: 'section', title: '已发售作品' });
   if (state.catalog.length) blocks.push({ type: 'catalog' });
@@ -266,7 +268,7 @@ function goalsMenu(state: any) {
 
 function financeMenu(state: any) {
   const blocks: any[] = [
-    { type: 'lines', items: [['资金', money(state.cash)], ['本月已累计应付', money(state.accrued)], ['预计月开支', money(core.monthlyCost(state))], ['办公室', core.OFFICES[state.office].name + ' · 房租 ' + money(core.OFFICES[state.office].rent) + '/月']] }
+    { type: 'lines', items: [['资金', money(state.cash)], ['本月已开支', money(monthSpent(state))], ['其中工资房租（月底扣除）', money(state.accrued)], ['预计月开支', money(core.monthlyCost(state))], ['办公室', core.OFFICES[state.office].name + ' · 房租 ' + money(core.OFFICES[state.office].rent) + '/月']] }
   ];
   if (state.office === 0) blocks.push({ type: 'buttons', items: [{ text: state.goals.breakEven === null ? '搬进正式办公室（第一次回本后开放）' : '搬进正式办公室 · ' + money(core.OFFICES[1].cost), action: 'move', disabled: state.goals.breakEven === null || state.cash < core.OFFICES[1].cost }] });
   if (state.report) {
@@ -333,21 +335,23 @@ export function planPreview(state: any, draft: any) {
 
 // Tutorial step for the current screen. `ack` explains an area and waits for "知道了"; `tap` introduces a
 // control and counts as seen once the player presses it; neither means "press the highlighted control".
-export function guide(state: any, route: any, playing: boolean) {
+export type GuideStep = { anchor: string; text: string; ack?: string; tap?: string };
+
+export function guide(state: any, route: any, playing: boolean): GuideStep | null {
   if (!guideOn(state)) return null;
   const seen = state.tutorial.seen;
   const project = state.project;
   const hasCoder = state.staff.some((person: any) => person.role === 'code');
   const hasArt = state.staff.some((person: any) => person.role === 'art');
   const complete = !!project && project.done >= project.total - 0.001;
-  const explain = (key: string, anchor: string, text: string) => seen[key] ? null : { anchor, text, ack: key };
-  const introduce = (key: string, anchor: string, text: string) => seen[key] ? null : { anchor, text, tap: key };
+  const explain = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };
+  const introduce = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, tap: key };
   if (!route) {
     if (state.event) return { anchor: 'next', text: '有一个决定在等你，点这里查看。' };
-    const steps = [
+    const steps: Array<() => GuideStep | null> = [
       () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标：完成后会解锁新能力。'),
       () => hasCoder ? null : { anchor: 'nav-team', text: '「团队」负责招聘和管理同事。点这里，招一位程序员把游戏做出来。' },
-      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，每月底从资金扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
+      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一从资金扣除；本月已开支是这个月到目前为止的花费。资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => project || state.catalog.length ? null : { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里，为第一款游戏立项。' },
       () => project ? explain('scene', 'scene', '上面是你的工作室，下面是作品雏形：开发越多内容越丰富，画面越好越精致。') : null,
       () => project ? explain('track', 'track', '阶段进度：完成度 55% 可以试玩，100% 可以发售。线上方是到下一阶段的天数。') : null,

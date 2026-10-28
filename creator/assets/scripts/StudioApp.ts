@@ -357,7 +357,7 @@ export class StudioApp extends Component {
     const finance = this.box(this.stage, 'Finance', 20, financesY, inner, 42, colors.paper, 10);
     this.anchors.set('finance', finance);
     const column = inner / 3;
-    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月应付', content.money(state.accrued)]].map(([name, value], index) => {
+    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月已开支', content.money(content.monthSpent(state))]].map(([name, value], index) => {
       this.text(finance, name, 12 + column * index, 3, column - 12, 16, 10, colors.muted);
       return this.text(finance, value, 12 + column * index, 18, column - 14, 22, 16, index === 0 ? colors.green : colors.ink, true);
     })[0];
@@ -587,7 +587,7 @@ export class StudioApp extends Component {
     else if (route.menu === 'history') cursor = this.renderHistory(scroll.body);
     else for (const block of model.blocks) cursor = this.drawBlock(scroll.body, block, cursor);
     scroll.finish(cursor);
-    if (footer) this.button(this.stage, '返回工作室，继续经营', 20, this.height - this.bottom - 54, this.width - 40, 46, () => this.closeMenu(), true, false, 'Play');
+    if (footer) this.button(this.stage, '返回工作室，继续经营', 20, this.height - this.bottom - 54, this.width - 40, 46, () => this.closeMenu(), false, false, 'Play');
   }
 
   private renderSetup(body: Node) {
