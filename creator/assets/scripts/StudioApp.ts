@@ -129,6 +129,7 @@ export class StudioApp extends Component {
     if (!this.playing || this.routes.length || this.inputRequest || this.state?.event || this.state?.over) return;
     this.elapsed += Math.min(delta, 0.25) * this.speed;
     let changed = false;
+    const settledMonth = this.state.report?.month;
     try {
       while (this.elapsed >= 1 && !this.state.event && !this.state.over) {
         this.elapsed -= 1;
@@ -142,7 +143,14 @@ export class StudioApp extends Component {
       }
       if (this.state.over) this.playing = false;
       if (changed) this.holdForGuide();
+      // Daily sales and payroll are summarised at month end instead of floating every day.
+      if (changed && this.shown) this.shown.cash = this.state.cash;
+      const report = this.state.report;
+      if (changed && report && report.month !== settledMonth) {
+        this.celebrations.push({ kind: 'settle', title: `第 ${report.month} 月结算`, text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
+      }
       if (changed) { this.save(); this.render(); this.celebrate(); }
+      if (changed && report && report.month !== settledMonth) this.floatAt(this.anchors.get('finance'), (report.net >= 0 ? '+' : '') + content.money(report.net), report.net >= 0 ? colors.green : colors.danger, 0.13);
     } catch (error) {
       this.playing = false;
       this.notify(error.message);
@@ -356,10 +364,10 @@ export class StudioApp extends Component {
     const financesY = top + 52;
     const finance = this.box(this.stage, 'Finance', 20, financesY, inner, 42, colors.paper, 10);
     this.anchors.set('finance', finance);
-    const column = inner / 3;
-    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月已开支', content.money(content.monthSpent(state))]].map(([name, value], index) => {
-      this.text(finance, name, 12 + column * index, 3, column - 12, 16, 10, colors.muted);
-      return this.text(finance, value, 12 + column * index, 18, column - 14, 22, 16, index === 0 ? colors.green : colors.ink, true);
+    const column = inner / 4;
+    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月收入', content.money(state.ledger.income)], ['本月已开支', content.money(content.monthSpent(state))]].map(([name, value], index) => {
+      this.text(finance, name, 10 + column * index, 3, column - 10, 16, 10, colors.muted);
+      return this.text(finance, value, 10 + column * index, 18, column - 12, 22, 15, index === 0 ? colors.green : index === 2 ? colors.amber : colors.ink, true);
     })[0];
     const navY = this.height - this.bottom - 58;
     this.box(this.stage, 'NavigationBackground', 0, navY - 8, width, 66 + this.bottom, colors.paper);
@@ -883,10 +891,10 @@ export class StudioApp extends Component {
     const width = this.width - 40;
     const big = ['breakeven', 'office', 'record'].includes(item.kind);
     const banner = this.box(this.effects, 'Banner', 20, this.top + 98, width, 70, big ? colors.amber : colors.night, 14, 240);
-    this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
+    this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
     this.text(banner, item.title, 50, 12, width - 64, 24, 16, '#ffffff', true);
     this.text(banner, item.text, 50, 36, width - 64, 20, 12, '#fff3d6');
-    if (item.kind !== 'notice') this.burst(this.effects, this.width / 2, this.top + 133, big ? Math.max(15, item.amount) : 5);
+    if (item.kind !== 'notice' && item.kind !== 'settle') this.burst(this.effects, this.width / 2, this.top + 133, big ? Math.max(15, item.amount) : 5);
     banner.setScale(0.9, 0.9, 1);
     const opacity = banner.addComponent(UIOpacity);
     opacity.opacity = 0;

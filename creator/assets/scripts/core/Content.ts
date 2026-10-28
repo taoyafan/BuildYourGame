@@ -268,7 +268,7 @@ function goalsMenu(state: any) {
 
 function financeMenu(state: any) {
   const blocks: any[] = [
-    { type: 'lines', items: [['资金', money(state.cash)], ['本月已开支', money(monthSpent(state))], ['其中工资房租（月底扣除）', money(state.accrued)], ['预计月开支', money(core.monthlyCost(state))], ['办公室', core.OFFICES[state.office].name + ' · 房租 ' + money(core.OFFICES[state.office].rent) + '/月']] }
+    { type: 'lines', items: [['资金', money(state.cash)], ['本月收入', money(state.ledger.income)], ['本月已开支', money(monthSpent(state))], ['其中工资房租（月底扣除）', money(state.accrued)], ['预计月开支', money(core.monthlyCost(state))], ['办公室', core.OFFICES[state.office].name + ' · 房租 ' + money(core.OFFICES[state.office].rent) + '/月']] }
   ];
   if (state.office === 0) blocks.push({ type: 'buttons', items: [{ text: state.goals.breakEven === null ? '搬进正式办公室（第一次回本后开放）' : '搬进正式办公室 · ' + money(core.OFFICES[1].cost), action: 'move', disabled: state.goals.breakEven === null || state.cash < core.OFFICES[1].cost }] });
   if (state.report) {
@@ -351,7 +351,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
     const steps: Array<() => GuideStep | null> = [
       () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标：完成后会解锁新能力。'),
       () => hasCoder ? null : { anchor: 'nav-team', text: '「团队」负责招聘和管理同事。点这里，招一位程序员把游戏做出来。' },
-      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一从资金扣除；本月已开支是这个月到目前为止的花费。资金 ÷ 月开支 ≈ 还能撑几个月。'),
+      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一从资金扣除；本月收入和本月已开支是这个月到目前为止的进账和花费。资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => project || state.catalog.length ? null : { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里，为第一款游戏立项。' },
       () => project ? explain('scene', 'scene', '上面是你的工作室，下面是作品雏形：开发越多内容越丰富，画面越好越精致。') : null,
       () => project ? explain('track', 'track', '阶段进度：完成度 55% 可以试玩，100% 可以发售。线上方是到下一阶段的天数。') : null,
