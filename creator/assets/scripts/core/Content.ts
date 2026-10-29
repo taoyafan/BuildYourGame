@@ -2,6 +2,7 @@ import * as core from './Studio';
 
 export const money = (value: number) => Number(value).toFixed(2) + ' 万';
 export const number = (value: number) => Math.round(value).toLocaleString('zh-CN');
+export const price = (value: number) => (value * 10000).toFixed(0) + ' 元/份';
 // Spent this month: purchases already paid plus wages and rent accrued until month-end settlement.
 export const monthSpent = (state: any) => state.ledger.expense + state.accrued;
 
@@ -56,7 +57,7 @@ function recruitMenu(state: any, id: string) {
   const pool = state.candidates[id];
   const blocks: any[] = [
     { type: 'tabs', items: Object.keys(core.CHANNELS).map(key => ({ text: core.CHANNELS[key].name, route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
-    { type: 'text', text: core.CHANNELS[channel].text + core.ROLES[role].task + '。', muted: true }
+    { type: 'text', text: core.CHANNELS[channel].text + core.ROLES[role].task + '。' + (role === 'design' ? '策划制作创意与深度，不代替程序推进内容；原型前加入也会参与潜力判断。' : ''), muted: true }
   ];
   if (!core.channelOpen(state, channel)) return { title: '招聘' + core.ROLES[role].name, blocks: [...blocks, { type: 'note', icon: 'Lock', text: core.CHANNELS[channel].name + core.CHANNELS[channel].lock + '。' }] };
   if (pool) {
@@ -97,7 +98,7 @@ function projectMenu(state: any) {
   const project = state.project;
   const forecast = core.projectForecast(state);
   const complete = project.done >= project.total - 0.001;
-  const known = state.insights[project.type];
+  const trend = core.market(project.type, Math.ceil(state.day / 30));
   const focus = Object.keys(core.FOCUS).filter(key => key !== 'rethink').map(key => {
     const reason = project.focus === 'rethink' ? '等待原型重新验证完成' : key === 'develop' ? (complete ? '计划内容已经完成' : '') : core.focusBlock(state, key);
     const name = key === 'special' ? core.TYPES[project.type].special.name : core.FOCUS[key].name;
@@ -111,12 +112,18 @@ function projectMenu(state: any) {
         ['内容预计剩余', complete ? '已完成' : forecast.days === null ? '暂停中' : forecast.days + ' 天'],
         ['已投入', money(project.invested)],
         ['原型潜力上限', project.potential === null ? '原型完成后判断' : String(project.potential)],
+        ['售价', price(core.TYPES[project.type].price * core.SCALES[project.scale].price)],
+        ['基础市场容量', number(core.MARKET_SIZE * core.SCALES[project.scale].reach) + ' 份'],
+        ['当前市场 / 首发需求', trend.label + ' / ×' + trend.multiplier.toFixed(2)],
         ['下届展会 / 报名截止', '第 ' + core.exhibitionOffer(state).day + ' / ' + core.exhibitionOffer(state).deadline + ' 天'],
         ['公布的发售日', project.deadline ? '第 ' + project.deadline + ' 天（剩余 ' + Math.max(0, project.deadline - state.day) + ' 天）' : '未公布'],
         ['目标受众', core.TYPES[project.type].audience],
-        ['受众最看重', known ? core.audienceFocus(project.type) : '试玩后可知']
+        ['受众最看重', core.audienceFocus(project.type)],
+        ['策划设计完成', (Math.min(1, project.designDone / (project.total * 0.35)) * 100).toFixed(0) + '%（创意与深度）']
       ] },
-      ...(state.catalog.length >= 1 ? [detailBlock(project), { type: 'text', text: '玩法偏好：' + core.detailFocus(project.type), muted: true }] : []),
+      { type: 'text', text: '基础市场容量不是保底销量，高口碑可拓展长尾；首发回款不等于最终利润。', muted: true },
+      detailBlock(project),
+      { type: 'text', text: '玩法偏好：' + core.detailFocus(project.type) + '。策划持续制作创意与深度；设计完成不等于程序内容已完成。', muted: true },
       ...(project.focus === 'rethink' ? [{ type: 'note', icon: 'Target', text: '正在重新验证原型，剩余 ' + project.rethink.toFixed(1) + ' 工作量；完成后再次决定是否继续。' }] : []),
       ...(project.done >= project.total * 0.55 && !project.deadline ? [{ type: 'section', title: '公布发售日 · 新增 150 人关注' }, { type: 'text', text: '承诺后延期会损失 10% 关注，也可不承诺，准备好再发售。', muted: true }, { type: 'buttons', items: [14, 30, 60].map(days => ({ text: days + ' 天后发售', action: 'deadline', data: { days } })) }] : []),
       { type: 'section', title: '程序员工作重点' },
@@ -263,6 +270,8 @@ function bookMenu(state: any, id: string) {
         ['累计销量', number(book.units) + ' 份'],
         ['最近一日', book.lastDayUnits + ' 份'],
         ['首发关注', number(book.openingFollowers) + ' 人'],
+        ['发售售价', price(book.price)],
+        ['基础市场容量', number(core.MARKET_SIZE * core.SCALES[book.scale].reach) + ' 份'],
         ['发售时市场', book.trend]
       ] },
       { type: 'lines', items: [['玩法 / 视觉 / 稳定性', book.metrics.gameplay.toFixed(0) + ' / ' + book.metrics.visual.toFixed(0) + ' / ' + book.metrics.stability.toFixed(0)]] },
@@ -360,9 +369,11 @@ export function planPreview(state: any, draft: any) {
   const type = core.TYPES[draft.type];
   const workload = type.work * core.SCALES[draft.scale].work;
   const forecast = core.projectForecast(core.startProject(state, { name: '预估', type: draft.type, scale: draft.scale, sequel: draft.sequel }));
-  const focus = state.insights[draft.type] ? type.audience + '最看重：' + core.audienceFocus(draft.type) + '。' : type.audience + '的偏好要试玩后才知道。';
+  const focus = type.audience + '最看重：' + core.audienceFocus(draft.type) + '。';
   const time = forecast.days === null ? '还没有程序员，招聘后才能开发。' : '当前团队约 ' + forecast.days + ' 天完成，期间工资与房租约 ' + money(core.monthlyCost(state) * forecast.days / 30) + '。';
-  return '工作量 ' + workload.toFixed(0) + '，' + time + focus + (draft.sequel ? '续作继承部分关注，但玩家期待更高。' : '') + (draft.scale ? '复杂度增加，能力不足会拖慢实现并带来更多缺陷。' : '');
+  const scale = core.SCALES[draft.scale];
+  const trend = core.market(draft.type, Math.ceil(state.day / 30));
+  return '工作量 ' + workload.toFixed(0) + '，' + time + '\n售价 ' + price(type.price * scale.price) + '；基础市场容量 ' + number(core.MARKET_SIZE * scale.reach) + ' 份，不是保底销量。\n' + focus + '\n当前市场：' + trend.label + '（首发需求 ×' + trend.multiplier.toFixed(2) + '），发售时可能变化。' + (draft.sequel ? '续作继承部分关注，但玩家期待更高。' : '') + (draft.scale ? '更大体量提高内容体量表现；复杂度增加，能力不足会拖慢实现并带来更多缺陷。' : '小型周期短，但售价与基础市场容量较小。');
 }
 
 // Tutorial step for the current screen. `ack` explains an area and waits for "知道了"; `tap` introduces a
@@ -455,11 +466,11 @@ function exhibitionsMenu(state: any) {
 }
 
 function rankingsMenu(state: any) {
-  const blocks: any[] = [{ type: 'text', text: '销量榜每周更新，发售首周标记为新品；竞争工作室均为虚构。年度评选在每年第 360 天举行。', muted: true }];
+  const blocks: any[] = [{ type: 'text', text: '按日销量比较，每周更新；首发销量按七日折算，首周标记为新品。竞争作品为虚构。年度评选在每年第 360 天举行。', muted: true }];
   const newcomers = state.catalog.filter((book: any) => state.day - book.released < 7);
   if (newcomers.length) blocks.push({ type: 'section', title: '首周新品' }, { type: 'lines', items: newcomers.map((book: any) => ['《' + book.name + '》', '第 ' + (book.rank || '—') + ' 名 · ' + rankChange(book)]) });
-  blocks.push({ type: 'section', title: '本周销量榜' });
-  if (state.rankings.length) blocks.push({ type: 'lines', items: state.rankings.slice(0, 20).map((entry: any) => [entry.rank + '. ' + entry.name, number(entry.units) + (entry.studio ? '' : ' · 本社')]) });
+  blocks.push({ type: 'section', title: '本期销量榜 · ' + state.rankings.length + ' 部作品' });
+  if (state.rankings.length) blocks.push({ type: 'lines', items: state.rankings.map((entry: any) => [entry.rank + '. ' + entry.name, number(entry.units) + ' 份/日' + (entry.studio ? '' : ' · 本社')]) });
   else blocks.push({ type: 'text', text: '第一周结束后公布。' });
   for (const award of [...state.awards].reverse().slice(0, 9)) {
     blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });

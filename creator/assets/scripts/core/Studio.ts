@@ -49,7 +49,7 @@ export const PROMOTIONS = [
 ];
 export const UNIT_MARKS = [1000, 5000, 10000, 50000];
 export const POLISH_CAP = 14;
-const MARKET_SIZE = 5000;
+export const MARKET_SIZE = 5000;
 export const SPECIAL_CAP = 10;
 export const PLAY_DETAILS = ['创意', '流畅度', '玩法深度', '内容体量'];
 const DETAIL_WEIGHTS: any = { story: [0.4, 0.15, 0.25, 0.2], sim: [0.15, 0.15, 0.45, 0.25], action: [0.15, 0.5, 0.2, 0.15] };
@@ -524,6 +524,14 @@ function reviewOf(state: any, project: any, metrics: any, followers: number) {
   return { reasons, quotes };
 }
 
+function openingSales(project: any, multiplier: number, score: number) {
+  const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : clamp(score / 100 * 0.85, 0.15, 0.95);
+  const ceiling = MARKET_SIZE * SCALES[project.scale].reach;
+  const units = Math.max(1, Math.round(Math.min(ceiling * 0.6, project.followers * (0.2 + fit * 0.5) * multiplier)));
+  const price = TYPES[project.type].price * SCALES[project.scale].price;
+  return { units, price, receipt: round(units * price) };
+}
+
 export function launchProject(state: any) {
   const next = studioAction(state);
   const project = next.project;
@@ -531,11 +539,7 @@ export function launchProject(state: any) {
   const metrics = projectMetrics(project);
   const trend = market(project.type, Math.ceil(next.day / 30));
   const score = round(clamp(audienceScore(metrics, project.type) - project.expectation + (random(next) - 0.5) * 3, 0, 100));
-  const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : clamp(score / 100 * 0.85, 0.15, 0.95);
-  const ceiling = MARKET_SIZE * SCALES[project.scale].reach;
-  const units = Math.max(1, Math.round(Math.min(ceiling * 0.6, project.followers * (0.2 + fit * 0.5) * trend.multiplier)));
-  const price = TYPES[project.type].price * SCALES[project.scale].price;
-  const receipt = round(units * price);
+  const { units, price, receipt } = openingSales(project, trend.multiplier, score);
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
   const book = {
     id: project.id, name: project.name, type: project.type, scale: project.scale,
@@ -576,7 +580,7 @@ export function launchProject(state: any) {
   checkMarks(next, book);
   updateRankings(next);
   const lesson = book.tutorial ? '首作是练习，小亏很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
-  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。${lesson}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${lesson}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -832,7 +836,8 @@ function studioCheckpoint(state: any) {
     if (ratio >= 1 && !project.checkpoints.ready) {
       project.checkpoints.ready = true;
       const missing = launchChecklist(state).filter(item => !item.ok).map(item => item.label);
-      return { id: 'ready', title: '计划内容完成', text: `《${project.name}》可以发售了。${missing.length ? `发售前还可以完善：${missing.join('、')}。` : '各项准备都已就绪。'}`, choices: [{ id: 'launch', title: '正式发售', detail: '首发销量取决于关注人数和玩家评价。', recommended: !missing.length }, { id: 'prepare', title: '先完善再发售', detail: '可以试玩、修复、打磨或推广，之后在项目菜单发售。', recommended: !!missing.length }] };
+      const trend = market(project.type, Math.ceil(state.day / 30));
+      return { id: 'ready', title: '计划内容完成', text: `《${project.name}》可以发售了。当前市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${missing.length ? `发售前还可以完善：${missing.join('、')}。` : '各项准备都已就绪。'}`, choices: [{ id: 'launch', title: '正式发售', detail: '首发销量取决于关注人数和玩家评价。', recommended: !missing.length }, { id: 'prepare', title: '先完善再发售', detail: '可以试玩、修复、打磨或推广，之后在项目菜单发售。', recommended: !!missing.length }] };
     }
   }
   if (state.goals.breakEven !== null && state.office === 0 && !state.notices.moveOffer) {

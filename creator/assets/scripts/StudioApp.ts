@@ -2,7 +2,7 @@ import {
   _decorator, Component, Node, Canvas, Camera, Color, Layers, UITransform, Label,
   view, screen, ResolutionPolicy, Graphics, Sprite, SpriteFrame, resources, ScrollView,
   Mask, EditBox, Button, HorizontalTextAlignment, VerticalTextAlignment, Texture2D,
-  game as engineGame, Game, tween, UIOpacity, Vec2, Vec3, BlockInputEvents, AudioClip, AudioSource
+  game as engineGame, Game, tween, UIOpacity, Vec2, Vec3, BlockInputEvents, AudioClip, AudioSource, EventTouch
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
@@ -61,6 +61,8 @@ export class StudioApp extends Component {
   private floatTimes = new Map<string, number>();
   private groupTops = new Map<string, number>();
   private menuAck: string | null = null;
+  private activeTouches = new Set<number>();
+  private renderPending = false;
   private clearNotice = () => { this.notice = ''; this.render(); };
 
   start() {
@@ -69,6 +71,9 @@ export class StudioApp extends Component {
     this.canvas.layer = Layers.Enum.UI_2D;
     this.node.addChild(this.canvas);
     this.canvas.addComponent(UITransform).setContentSize(view.getVisibleSize());
+    this.canvas.on(Node.EventType.TOUCH_START, this.touchStarted, this, true);
+    this.canvas.on(Node.EventType.TOUCH_END, this.touchFinished, this, true);
+    this.canvas.on(Node.EventType.TOUCH_CANCEL, this.touchFinished, this, true);
     const surface = this.canvas.addComponent(Canvas);
     const cameraNode = new Node('Camera');
     this.canvas.addChild(cameraNode);
@@ -124,6 +129,7 @@ export class StudioApp extends Component {
   }
 
   private background() {
+    this.activeTouches.clear();
     this.playing = false;
     this.resumeAfterMenu = false;
     this.elapsed = 0;
@@ -131,8 +137,17 @@ export class StudioApp extends Component {
     this.render();
   }
 
+  private touchStarted(event: EventTouch) {
+    this.activeTouches.add(event.getID());
+  }
+
+  private touchFinished(event: EventTouch) {
+    this.activeTouches.delete(event.getID());
+    if (!this.activeTouches.size && this.renderPending) this.scheduleOnce(() => this.render(), 0);
+  }
+
   update(delta: number) {
-    if (!this.playing || this.routes.length || this.inputRequest || this.state?.event || this.state?.over) return;
+    if (this.activeTouches.size || !this.playing || this.routes.length || this.inputRequest || this.state?.event || this.state?.over) return;
     this.elapsed += Math.min(delta, 0.25) * this.speed;
     let changed = false;
     const settledMonth = this.state.report?.month;
@@ -348,6 +363,8 @@ export class StudioApp extends Component {
 
   private render() {
     if (!this.stage || !this.state) return;
+    if (this.activeTouches.size) { this.renderPending = true; return; }
+    this.renderPending = false;
     this.clear();
     this.box(this.stage, 'Paper', 0, 0, this.width, this.height, colors.bg);
     if (this.inputRequest) this.renderInput();
@@ -477,7 +494,7 @@ export class StudioApp extends Component {
     y += 28;
     y += this.milestones(body, y, project, metrics, forecast) + 6;
     const cells: any[] = [
-      ['玩法', metrics.gameplay.toFixed(0), colors.green, metrics.gameplay, 'stat-gameplay'],
+      ['玩法 / 潜力', metrics.gameplay.toFixed(0) + ' / ' + (project.potential ?? '?'), colors.green, metrics.gameplay, 'stat-gameplay'],
       ['视觉', metrics.visual.toFixed(0), colors.amber, metrics.visual, 'stat-visual'],
       ['已知缺陷', project.test ? project.found + ' 项' : '未测试', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
@@ -487,16 +504,17 @@ export class StudioApp extends Component {
     cells.forEach(([title, value, color, bar, anchor], index) => {
       const node = this.box(body, title, index * cell, y, cell - 6, 46);
       this.text(node, title, 0, 0, cell - 6, 16, 10, colors.muted);
-      const label = this.text(node, value, 0, 16, cell - 6, 24, value === '未测试' ? 13 : 18, value === '未测试' ? colors.muted : color, true);
+      const label = this.text(node, value, 0, 16, cell - 6, 24, anchor === 'stat-gameplay' ? 14 : value === '未测试' ? 13 : 18, value === '未测试' ? colors.muted : color, true);
       if (anchor === 'stat-followers') { this.followersLabel = label; this.rollLabel('followers', label, (n: number) => content.number(n)); }
       if (bar >= 0) {
         this.box(node, 'Track', 0, 42, cell - 12, 3, colors.line);
         this.box(node, 'Value', 0, 42, (cell - 12) * bar / 100, 3, color);
+        if (anchor === 'stat-gameplay' && project.potential !== null) this.box(node, 'Potential', (cell - 12) * project.potential / 100 - 1, 40, 2, 7, colors.amber);
       }
       this.anchors.set(anchor, node);
     });
     y += 50;
-    const insight = state.insights[project.type] ? core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) : core.TYPES[project.type].audience + '的偏好：试玩后可知';
+    const insight = core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type);
     this.anchors.set('insight', this.text(body, insight + (project.test ? ' · 试玩 ' + project.test.score.toFixed(1) + ' 分' : ''), 0, y, inner, 18, 11, colors.muted).node);
     return y + 26;
   }
@@ -641,7 +659,7 @@ export class StudioApp extends Component {
     this.text(body, '类型', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
     for (const [key, type] of Object.entries(core.TYPES) as any) {
-      const detail = type.audience + (state.insights[key] ? '，最看重 ' + core.audienceFocus(key) : '') + ' · 工作量 ' + (type.work * core.SCALES[this.draft.scale].work).toFixed(0);
+      const detail = type.audience + ' · ' + core.audienceFocus(key) + '\n工作量 ' + (type.work * core.SCALES[this.draft.scale].work).toFixed(0) + ' · ' + content.price(type.price * core.SCALES[this.draft.scale].price);
       cursor += this.choice(body, cursor, type.name, detail, () => { this.draft.type = key; this.render(); }, { highlight: this.draft.type === key, tag: this.draft.type === key ? '已选' : '', tagColor: colors.green, disabled: !!this.draft.sequel && this.draft.type !== key }) + 8;
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, 0, inner, cursor - 8));
