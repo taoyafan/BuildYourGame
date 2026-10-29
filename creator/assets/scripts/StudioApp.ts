@@ -2,7 +2,7 @@ import {
   _decorator, Component, Node, Canvas, Camera, Color, Layers, UITransform, Label,
   view, screen, ResolutionPolicy, Graphics, Sprite, SpriteFrame, resources, ScrollView,
   Mask, EditBox, Button, HorizontalTextAlignment, VerticalTextAlignment, Texture2D,
-  game as engineGame, Game, tween, UIOpacity, Vec2, Vec3, BlockInputEvents
+  game as engineGame, Game, tween, UIOpacity, Vec2, Vec3, BlockInputEvents, AudioClip, AudioSource
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
@@ -29,7 +29,9 @@ export class StudioApp extends Component {
   private elapsed = 0;
   private resumeAfterMenu = false;
   private routes: any[] = [];
-  private draft = { name: '', type: '', scale: 0 };
+  private draft: any = { name: '', type: '', scale: 0 };
+  private audio: AudioSource;
+  private sounds = new Map<string, AudioClip>();
   private stage: Node;
   private effects: Node;
   private canvas: Node;
@@ -81,6 +83,10 @@ export class StudioApp extends Component {
     this.stage = this.box(this.canvas, 'Interface', 0, 0, 390, 844);
     this.effects = this.box(this.canvas, 'Effects', 0, 0, 390, 844);
     this.state = this.load();
+    this.audio = this.canvas.addComponent(AudioSource);
+    for (const name of ['click', 'income', 'launch', 'breakeven']) resources.load('sounds/' + name, AudioClip, (error, clip) => {
+      if (!error && this.isValid) this.sounds.set(name, clip);
+    });
     if (!this.state.company) this.routes = [{ menu: 'setup' }];
     else if (this.state.event) this.routes = [{ menu: 'event' }];
     this.resize();
@@ -147,6 +153,7 @@ export class StudioApp extends Component {
       if (changed && this.shown) this.shown.cash = this.state.cash;
       const report = this.state.report;
       if (changed && report && report.month !== settledMonth) {
+        if (report.income > 0) this.playSound('income');
         this.celebrations.push({ kind: 'settle', title: `第 ${report.month} 月结算`, text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
       }
       if (changed) { this.save(); this.render(); this.celebrate(); }
@@ -179,8 +186,15 @@ export class StudioApp extends Component {
   // Moves milestone announcements out of the save into the on-screen queue.
   private drain(next: any) {
     if (!next.feed.length) return next;
+    if (next.feed.some((item: any) => item.kind === 'breakeven')) this.playSound('breakeven');
+    else if (next.feed.some((item: any) => item.kind === 'release')) this.playSound('launch');
     this.celebrations.push(...next.feed.filter((item: any) => item.kind !== 'release'));
     return core.consumeFeed(next);
+  }
+
+  private playSound(name: string) {
+    const clip = this.sounds.get(name);
+    if (this.state?.sound && clip && this.audio) this.audio.playOneShot(clip, name === 'click' ? 0.3 : 0.55);
   }
 
   private box(parent: Node, name: string, x: number, y: number, width: number, height: number, fill?: string, radius = 0, alpha = 255) {
@@ -253,6 +267,7 @@ export class StudioApp extends Component {
     button.zoomScale = 0.97;
     node.on(Button.EventType.CLICK, () => {
       try {
+        this.playSound('click');
         // Acting on a menu while its explanation is open counts as having read it.
         if (this.menuAck && node.parent?.name !== 'Bubble') { this.state = core.markSeen(this.state, this.menuAck); this.menuAck = null; this.save(); }
         callback();
@@ -420,10 +435,10 @@ export class StudioApp extends Component {
     const index = goals.steps.findIndex(step => step.key === goals.current.key);
     const card = this.box(body, 'Goal', 0, y, inner, 34, '#fff8e6', 10);
     this.image(card, 'icons/' + (index < 0 ? 'Trophy' : 'Target'), 10, 7, 20, 20, colors.amber);
-    const title = (index < 0 ? '挑战' : `目标 ${index + 1}/3`) + ' · ' + goals.current.title;
-    this.text(card, title, 38, 0, inner - 96, 34, 13, colors.ink, true);
-    this.text(card, '奖励：' + goals.current.reward, 38, 0, inner - 96, 34, 11, colors.amber).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    goals.steps.forEach((step, dot) => this.box(card, 'Dot', inner - 50 + dot * 14, 12, 9, 9, step.done ? colors.amber : step.key === goals.current.key ? '#f0c56a' : colors.line, 5));
+    const title = (index < 0 ? '挑战' : `目标 ${index + 1}/${goals.steps.length}`) + ' · ' + goals.current.title;
+    this.text(card, title, 38, 1, inner - 124, 17, 12, colors.ink, true);
+    this.text(card, '奖励：' + goals.current.reward, 38, 17, inner - 124, 15, 10, colors.amber);
+    goals.steps.forEach((step, dot) => this.box(card, 'Dot', inner - 12 - (goals.steps.length - dot) * 10, 14, 6, 6, step.done ? colors.amber : step.key === goals.current.key ? '#f0c56a' : colors.line, 3));
     this.clickable(card, () => this.openMenu('goals'));
     this.anchors.set('goal', card);
     return 34;
@@ -622,11 +637,12 @@ export class StudioApp extends Component {
     const state = this.state;
     this.input(body, '作品名称', this.draft.name, 0, 48, value => { this.draft.name = value; });
     let cursor = 64;
+    if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作类型与部分关注，玩家期待更高。', cursor, true);
     this.text(body, '类型', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
     for (const [key, type] of Object.entries(core.TYPES) as any) {
       const detail = type.audience + (state.insights[key] ? '，最看重 ' + core.audienceFocus(key) : '') + ' · 工作量 ' + (type.work * core.SCALES[this.draft.scale].work).toFixed(0);
-      cursor += this.choice(body, cursor, type.name, detail, () => { this.draft.type = key; this.render(); }, { highlight: this.draft.type === key, tag: this.draft.type === key ? '已选' : '', tagColor: colors.green }) + 8;
+      cursor += this.choice(body, cursor, type.name, detail, () => { this.draft.type = key; this.render(); }, { highlight: this.draft.type === key, tag: this.draft.type === key ? '已选' : '', tagColor: colors.green, disabled: !!this.draft.sequel && this.draft.type !== key }) + 8;
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, 0, inner, cursor - 8));
     cursor += 4;
@@ -634,11 +650,13 @@ export class StudioApp extends Component {
     cursor += 30;
     core.SCALES.forEach((scale, index) => {
       const cell = (inner - 16) / 3;
-      this.button(body, scale.name, index * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index);
+      const open = core.scaleOpen(state, index);
+      this.button(body, scale.name, index * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index, !open, !open ? 'Lock' : undefined);
     });
     cursor += 54;
+    if (!core.scaleOpen(state, 1) || !core.scaleOpen(state, 2)) cursor += this.paragraph(body, '中型：首作发售后开放；大型：搬进正式办公室后开放。', cursor, true);
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
-    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !this.draft.type);
+    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !this.draft.type || !core.scaleOpen(state, this.draft.scale));
     return cursor + 66;
   }
 
@@ -653,6 +671,13 @@ export class StudioApp extends Component {
   private drawBlock(parent: Node, block: any, y: number): number {
     const width = this.width - 40;
     switch (block.type) {
+      case 'toggle': {
+        this.text(parent, block.text, 0, y, width - 72, 36, 14, colors.ink, true);
+        const toggle = this.box(parent, block.text + 'Switch', width - 56, y + 3, 56, 30, block.value ? colors.green : colors.line, 15);
+        this.box(toggle, 'Thumb', block.value ? 28 : 4, 4, 24, 22, colors.paper, 11);
+        this.clickable(toggle, () => this.dispatch(block.action, { enabled: !block.value }));
+        return y + 48;
+      }
       case 'text': return y + this.paragraph(parent, block.text, y, block.muted, 0, width, block.muted ? 13 : 14);
       case 'section':
         this.text(parent, block.title, 0, y + 8, width, 26, 16, colors.ink, true);
@@ -734,7 +759,7 @@ export class StudioApp extends Component {
       }
       case 'staff':
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
-        for (const person of this.state.staff) y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, `能力 ${person.skill} · 速度 ${person.pace} · 月薪 ${content.money(person.wage)}`, () => this.openMenu('person', person.id)) + 10;
+        for (const person of this.state.staff) y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, `能力 ${person.skill} · 速度 ${person.pace} · 月薪 ${content.money(person.wage)}\n压力 ${person.stress} / 100${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${person.pendingRaise ? ' · 期望涨薪' : ''}`, () => this.openMenu('person', person.id)) + 10;
         return y;
       case 'focus':
         for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch('focus', { focus: item.key }), { tag: item.active ? '进行中' : '', tagColor: colors.green, highlight: item.active, disabled: item.disabled, anchor: item.anchor }) + 8;
@@ -761,7 +786,7 @@ export class StudioApp extends Component {
       case 'catalog':
         this.state.catalog.forEach((book: any, index: number) => {
           const balance = book.received - book.invested;
-          y += this.choice(parent, y, '《' + book.name + '》', `${content.number(book.units)} 份 · 回款 ${content.money(book.received)} · 评价 ${book.reviewScore.toFixed(1)}`, () => this.openMenu('book', book.id), { tag: balance >= 0 ? '已回本' : '未回本', tagColor: balance >= 0 ? colors.green : colors.muted, anchor: 'book-' + index }) + 10;
+          y += this.choice(parent, y, '《' + book.name + '》', `${content.number(book.units)} 份 · 回款 ${content.money(book.received)} · 评价 ${book.reviewScore.toFixed(1)}\n${this.state.day - book.released < 7 ? '首周新品 · ' : ''}${book.rank ? '销量榜第 ' + book.rank + ' 名' : '未上榜'}`, () => this.openMenu('book', book.id), { tag: balance >= 0 ? '已回本' : '未回本', tagColor: balance >= 0 ? colors.green : colors.muted, anchor: 'book-' + index }) + 10;
         });
         return y;
       case 'cover': return y + this.cover(parent, y, block.book) + 14;
@@ -1163,6 +1188,22 @@ export class StudioApp extends Component {
           break;
         }
         case 'dismiss': this.apply(core.dismiss(this.state, data.id)); this.routes = [{ menu: 'team' }]; this.render(); break;
+        case 'retain': this.apply(core.retain(this.state, data.id), '已按期望薪资留任。'); break;
+        case 'leave': this.apply(core.takeLeave(this.state, data.id), '带薪休假已安排。'); break;
+        case 'outing': this.apply(core.teamOuting(this.state), '两天团队休整已安排，加班已结束。'); break;
+        case 'overtime': this.apply(core.setOvertime(this.state, data.enabled)); break;
+        case 'sound': this.apply(core.setSound(this.state, data.enabled)); break;
+        case 'deadline': this.apply(core.setDeadline(this.state, Number(data.days)), '发售日期已公布。'); break;
+        case 'exhibition': this.apply(core.enterExhibition(this.state), '展会已报名，继续完善会影响名次。'); break;
+        case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), data.kind === 'update' ? '更新已开始制作，新作暂缓。' : '七天促销已开始。'); break;
+        case 'sequel': {
+          const book = this.state.catalog.find((item: any) => item.id === data.id);
+          if (!book) throw new Error('原作不存在。');
+          this.openMenu('new-project');
+          this.draft = { name: (book.name + ' 2').slice(0, 24), type: book.type, scale: book.scale, sequel: book.id };
+          this.render();
+          break;
+        }
         case 'buy-tool': this.apply(core.buyTool(this.state, data.role), '工具已购置，产能已经提高。'); break;
         case 'assets': this.apply(core.buyAssets(this.state), '素材已就位，画面表现提高了。'); break;
         case 'plain': this.apply(core.keepPlain(this.state), '保持朴素画面，发售后看玩家反应。'); break;

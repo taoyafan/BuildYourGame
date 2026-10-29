@@ -17,7 +17,6 @@ export function guideOn(state: any) {
 export function menuLock(state: any, menu: string) {
   if (!core.tutorialActive(state)) return '';
   const checkpoints = state.project?.checkpoints || {};
-  if (menu === 'tools' && !checkpoints.prototype) return '可玩原型完成后开放';
   if ((menu === 'testing' || menu === 'market') && !checkpoints.demo) return 'Demo 完成后开放';
   return '';
 }
@@ -35,6 +34,8 @@ export function advice(state: any) {
     if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品。', menu: 'new-project' };
     return { title: '为下一款作品立项', text: core.channelOpen(state, 'web') && state.staff.every((person: any) => person.skill < 60) ? '招聘网站已开放，可换更有经验的同事。' : '参考上一作复盘，弥补短板。', menu: 'new-project' };
   }
+  if (state.operation) return { title: '制作发售后更新', text: '团队暂缓新作，更新剩余工作量 ' + state.operation.remaining.toFixed(1) + '。', menu: 'market' };
+  if (state.staff.some((person: any) => person.stress >= 60)) return { title: '团队开始疲惫', text: '效率下降，可结束加班或安排休整。', menu: 'team' };
   if (project.focus !== 'develop') return { title: (project.focus === 'special' ? core.TYPES[project.type].special.name : core.FOCUS[project.focus].name) + '中', text: '新内容暂停，完成后自动回到开发。', menu: 'project' };
   if (project.done >= project.total - 0.001) {
     const missing = core.launchChecklist(state).filter(item => !item.ok).length;
@@ -84,7 +85,7 @@ function candidateMenu(state: any, id: string) {
       { type: 'section', title: '录用后' },
       { type: 'lines', items: [
         ['月开支', money(core.monthlyCost(state)) + ' → ' + money(core.monthlyCost(projected))],
-        [person.role === 'code' ? '开发速度' : '画面制作速度', before[person.role].toFixed(2) + ' → ' + after[person.role].toFixed(2) + ' /天'],
+        [person.role === 'code' ? '开发速度' : person.role === 'design' ? '玩法设计速度' : '画面制作速度', before[person.role].toFixed(2) + ' → ' + after[person.role].toFixed(2) + ' /天'],
         ...(forecast && current && forecast.days !== null ? [['内容预计剩余', (current.days === null ? '—' : current.days + ' 天') + ' → ' + forecast.days + ' 天']] : [])
       ] },
       { type: 'buttons', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', data: { id: person.id }, disabled: !!person.hired, anchor: 'hire' }] }
@@ -97,8 +98,8 @@ function projectMenu(state: any) {
   const forecast = core.projectForecast(state);
   const complete = project.done >= project.total - 0.001;
   const known = state.insights[project.type];
-  const focus = Object.keys(core.FOCUS).map(key => {
-    const reason = key === 'develop' ? (complete ? '计划内容已经完成' : '') : core.focusBlock(state, key);
+  const focus = Object.keys(core.FOCUS).filter(key => key !== 'rethink').map(key => {
+    const reason = project.focus === 'rethink' ? '等待原型重新验证完成' : key === 'develop' ? (complete ? '计划内容已经完成' : '') : core.focusBlock(state, key);
     const name = key === 'special' ? core.TYPES[project.type].special.name : core.FOCUS[key].name;
     return { key, text: name + (key === 'bugs' && project.found ? '（' + project.found + ' 项）' : ''), detail: reason || core.FOCUS[key].text, active: project.focus === key, disabled: !!reason && project.focus !== key, anchor: 'focus-' + key };
   });
@@ -109,9 +110,15 @@ function projectMenu(state: any) {
         ['阶段', stage(project)],
         ['内容预计剩余', complete ? '已完成' : forecast.days === null ? '暂停中' : forecast.days + ' 天'],
         ['已投入', money(project.invested)],
+        ['原型潜力上限', project.potential === null ? '原型完成后判断' : String(project.potential)],
+        ['下届展会 / 报名截止', '第 ' + core.exhibitionOffer(state).day + ' / ' + core.exhibitionOffer(state).deadline + ' 天'],
+        ['公布的发售日', project.deadline ? '第 ' + project.deadline + ' 天（剩余 ' + Math.max(0, project.deadline - state.day) + ' 天）' : '未公布'],
         ['目标受众', core.TYPES[project.type].audience],
         ['受众最看重', known ? core.audienceFocus(project.type) : '试玩后可知']
       ] },
+      ...(state.catalog.length >= 1 ? [detailBlock(project), { type: 'text', text: '玩法偏好：' + core.detailFocus(project.type), muted: true }] : []),
+      ...(project.focus === 'rethink' ? [{ type: 'note', icon: 'Target', text: '正在重新验证原型，剩余 ' + project.rethink.toFixed(1) + ' 工作量；完成后再次决定是否继续。' }] : []),
+      ...(project.done >= project.total * 0.55 && !project.deadline ? [{ type: 'section', title: '公布发售日 · 新增 150 人关注' }, { type: 'text', text: '承诺后延期会损失 10% 关注，也可不承诺，准备好再发售。', muted: true }, { type: 'buttons', items: [14, 30, 60].map(days => ({ text: days + ' 天后发售', action: 'deadline', data: { days } })) }] : []),
       { type: 'section', title: '程序员工作重点' },
       { type: 'focus', items: focus },
       { type: 'section', title: '发售准备' },
@@ -135,8 +142,12 @@ function teamMenu(state: any) {
       { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（含房租）', money(core.monthlyCost(state))]] },
       { type: 'buttons', items: [
         { text: '招聘程序员', action: 'menu', data: { menu: 'recruit', id: 'code:' + channel }, anchor: 'recruit-code' },
-        { text: '招聘美术', action: 'menu', data: { menu: 'recruit', id: 'art:' + channel } }
+        { text: '招聘美术', action: 'menu', data: { menu: 'recruit', id: 'art:' + channel } },
+        { text: '招聘策划', action: 'menu', data: { menu: 'recruit', id: 'design:' + channel } }
       ] },
+      { type: 'toggle', text: '加班冲刺', value: state.overtime, action: 'overtime' },
+      { type: 'text', text: '加班产出 +45%，压力每日 +4；60 起效率下降，80 以上持续一周会提出离职。正常工作每天恢复 2 压力。', muted: true },
+      { type: 'buttons', items: [{ text: '团队休整两天 · ' + money(state.staff.length * 0.4), action: 'outing', disabled: !state.staff.length || state.cash < state.staff.length * 0.4 }] },
       { type: 'staff' }
     ]
   };
@@ -148,9 +159,10 @@ function personMenu(state: any, id: string) {
   return {
     title: person.name,
     blocks: [
-      { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['月薪', money(person.wage)], ['能力 / 速度', person.skill + ' / ' + person.pace], ['累计工作量', person.work.toFixed(1)]] },
+      { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['月薪', money(person.wage)], ['能力 / 速度', person.skill + ' / ' + person.pace], ['累计工作量', person.work.toFixed(1)], ['经验 / 成长次数', person.experience.toFixed(1) + ' / ' + person.level], ['压力', person.stress + ' / 100'], ['休假', person.leaveUntil > state.day ? '至第 ' + person.leaveUntil + ' 天，工资照付' : '正常在岗']] },
       { type: 'note', icon: 'Star', text: core.TRAITS[person.trait].name + '：' + core.TRAITS[person.trait].text },
-      { type: 'buttons', items: [{ text: '结束雇佣', action: 'menu', data: { menu: 'dismiss', id: person.id } }] },
+      ...(person.pendingRaise ? [{ type: 'note', icon: 'TrendingUp', text: '期望月薪 ' + money(person.pendingRaise) + '。参与作品已有成长，第 ' + person.raiseDue + ' 天前决定留任或换人。' }, { type: 'buttons', items: [{ text: '涨薪留任 · 月薪 ' + money(person.pendingRaise), action: 'retain', data: { id: person.id } }] }] : []),
+      { type: 'buttons', items: [{ text: '五天带薪休假', action: 'leave', data: { id: person.id }, disabled: person.leaveUntil > state.day }, { text: '结束雇佣', action: 'menu', data: { menu: 'dismiss', id: person.id } }] },
       { type: 'text', text: '离职后不再计薪，已产生的工资仍需支付。', muted: true }
     ]
   };
@@ -199,6 +211,7 @@ function testingMenu(state: any) {
   if (project.test) {
     blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 发现 ' + project.test.found + ' 项缺陷' });
     blocks.push({ type: 'note', icon: 'Target', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) });
+    if (state.catalog.length >= 1) blocks.push({ type: 'text', text: '玩法细项偏好：' + core.detailFocus(project.type), muted: true });
     blocks.push({ type: 'feedback', items: project.test.findings });
     blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   } else {
@@ -215,6 +228,11 @@ function testingMenu(state: any) {
 function marketMenu(state: any) {
   const project = state.project;
   const blocks: any[] = [];
+  const expo = core.exhibitionOffer(state);
+  blocks.push({ type: 'lines', items: [['下届日光游戏展', '第 ' + expo.day + ' 天'], ['Demo 报名截止', '第 ' + expo.deadline + ' 天（剩余 ' + (expo.deadline - state.day) + ' 天）'], ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
+  blocks.push({ type: 'buttons', items: [{ text: expo.entry ? '展会已报名' : 'Demo 报名展会 · 1.00 万', action: 'exhibition', disabled: !expo.available }, { text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '销量榜与年度评选', action: 'menu', data: { menu: 'rankings' } }] });
+  if (!expo.available) blocks.push({ type: 'text', text: expo.reason, muted: true });
+  if (state.operation) blocks.push({ type: 'note', icon: 'Wrench', text: '更新制作中：剩余 ' + state.operation.remaining.toFixed(1) + ' 工作量，新作研发暂缓。' });
   if (project) {
     const trend = core.market(project.type, Math.ceil(state.day / 30));
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)], ['当前市场', trend.label]] });
@@ -248,6 +266,15 @@ function bookMenu(state: any, id: string) {
         ['发售时市场', book.trend]
       ] },
       { type: 'lines', items: [['玩法 / 视觉 / 稳定性', book.metrics.gameplay.toFixed(0) + ' / ' + book.metrics.visual.toFixed(0) + ' / ' + book.metrics.stability.toFixed(0)]] },
+      { type: 'lines', items: [['发售首周', state.day - book.released < 7 ? '新品上榜中' : '已结束'], ['当前 / 最高排名', (book.rank || '未上榜') + ' / ' + (book.bestRank || '未上榜')], ['排名变化', rankChange(book)], ['系列期待', book.expectation + ' 分评价压力'], ['主要更新', book.updates + ' 次']] },
+      ...(state.catalog.length >= 2 ? [{ type: 'lines', items: core.PLAY_DETAILS.map((name, index) => [name, book.metrics.details[index].toFixed(0)]) }] : []),
+      { type: 'section', title: '作品运营' },
+      { type: 'buttons', items: [
+        { text: book.discountUntil > state.day ? '促销至第 ' + book.discountUntil + ' 天' : '七天七折促销', action: 'operate', data: { id, kind: 'discount' }, disabled: state.day - book.released > 540 || book.discountUntil > state.day || !!book.discountUsed && state.day - book.discountUsed < 30 },
+        { text: '制作更新 · ' + money(2 + book.scale), action: 'operate', data: { id, kind: 'update' }, disabled: !!state.operation || book.updates >= 3 || state.cash < 2 + book.scale || !core.rates(state).code || state.day - book.released > 540 },
+        { text: book.reviewScore >= 70 ? '开发续作' : '好评达到 70 分可开发续作', action: 'sequel', data: { id }, disabled: !!state.project || book.reviewScore < 70 }
+      ] },
+      { type: 'text', text: '促销提高销量但降低单份回款，至少间隔 30 天。更新花费金钱与研发时间，新作暂缓；每作最多三次。续作继承关注，评价期待更高。', muted: true },
       { type: 'text', text: '团队：' + (book.team.length ? book.team.map((person: any) => person.name + '（' + core.ROLES[person.role].name + '）').join('、') : '—'), muted: true }
     ]
   };
@@ -255,13 +282,13 @@ function bookMenu(state: any, id: string) {
 
 function goalsMenu(state: any) {
   const goals = core.goalsOf(state);
-  const canMove = state.goals.breakEven !== null && state.office === 0;
+  const canMove = state.goals.breakEven !== null && state.office === 0 || state.office === 1 && state.goals.topTen !== null && state.goals.award !== null;
   return {
     title: '公司目标',
     blocks: [
       { type: 'goals', items: goals.steps, current: goals.current.key },
       ...(goals.current.key === 'record' ? [{ type: 'note', icon: 'Trophy', text: goals.current.title + '：' + goals.current.text }] : []),
-      ...(canMove ? [{ type: 'buttons', items: [{ text: '搬进正式办公室 · ' + money(core.OFFICES[1].cost), action: 'move', disabled: state.cash < core.OFFICES[1].cost }] }] : [])
+      ...(canMove ? [{ type: 'buttons', items: [{ text: (state.office === 0 ? '搬进正式办公室' : '扩建独立工作室') + ' · ' + money(core.OFFICES[state.office + 1].cost), action: 'move', disabled: state.cash < core.OFFICES[state.office + 1].cost }] }] : [])
     ]
   };
 }
@@ -271,6 +298,8 @@ function financeMenu(state: any) {
     { type: 'lines', items: [['资金', money(state.cash)], ['本月收入', money(state.ledger.income)], ['本月已开支', money(monthSpent(state))], ['其中工资房租（月底扣除）', money(state.accrued)], ['预计月开支', money(core.monthlyCost(state))], ['办公室', core.OFFICES[state.office].name + ' · 房租 ' + money(core.OFFICES[state.office].rent) + '/月']] }
   ];
   if (state.office === 0) blocks.push({ type: 'buttons', items: [{ text: state.goals.breakEven === null ? '搬进正式办公室（第一次回本后开放）' : '搬进正式办公室 · ' + money(core.OFFICES[1].cost), action: 'move', disabled: state.goals.breakEven === null || state.cash < core.OFFICES[1].cost }] });
+  blocks.push({ type: 'buttons', items: [{ text: '成长目标与扩建', action: 'menu', data: { menu: 'goals' } }] });
+  blocks.push({ type: 'toggle', text: '音效', value: state.sound, action: 'sound' });
   if (state.report) {
     const report = state.report;
     blocks.push({ type: 'section', title: '第 ' + report.month + ' 月账单' });
@@ -313,6 +342,8 @@ export function menu(state: any, route: any) {
     case 'visual': return visualMenu(state);
     case 'testing': return testingMenu(state);
     case 'market': return marketMenu(state);
+    case 'exhibitions': return exhibitionsMenu(state);
+    case 'rankings': return rankingsMenu(state);
     case 'book': return bookMenu(state, route.id);
     case 'goals': return goalsMenu(state);
     case 'finance': return financeMenu(state);
@@ -325,12 +356,13 @@ export function menu(state: any, route: any) {
 export function planPreview(state: any, draft: any) {
   if (state.project) return '';
   if (!core.TYPES[draft.type]) return '选择类型后，查看工作量与预计时间。';
+  if (!core.scaleOpen(state, draft.scale)) return draft.scale === 1 ? '首作发售后开放中型作品。' : '搬进正式办公室后开放大型作品，复杂度更依赖强团队。';
   const type = core.TYPES[draft.type];
   const workload = type.work * core.SCALES[draft.scale].work;
-  const forecast = core.projectForecast(core.startProject(state, { name: '预估', type: draft.type, scale: draft.scale }));
+  const forecast = core.projectForecast(core.startProject(state, { name: '预估', type: draft.type, scale: draft.scale, sequel: draft.sequel }));
   const focus = state.insights[draft.type] ? type.audience + '最看重：' + core.audienceFocus(draft.type) + '。' : type.audience + '的偏好要试玩后才知道。';
   const time = forecast.days === null ? '还没有程序员，招聘后才能开发。' : '当前团队约 ' + forecast.days + ' 天完成，期间工资与房租约 ' + money(core.monthlyCost(state) * forecast.days / 30) + '。';
-  return '工作量 ' + workload.toFixed(0) + '，' + time + focus;
+  return '工作量 ' + workload.toFixed(0) + '，' + time + focus + (draft.sequel ? '续作继承部分关注，但玩家期待更高。' : '') + (draft.scale ? '复杂度增加，能力不足会拖慢实现并带来更多缺陷。' : '');
 }
 
 // Tutorial step for the current screen. `ack` explains an area and waits for "知道了"; `tap` introduces a
@@ -357,7 +389,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => project ? explain('track', 'track', '阶段进度：完成度 55% 可以试玩，100% 可以发售。线上方是到下一阶段的天数。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。' } : null,
       () => state.reports.length ? introduce('navFinance', 'nav-finance', '第一个月结算了：工资和房租已从资金扣除。点「公司」看看上个月的账单，目标、搬家和存档也在这里。') : null,
-      () => project?.checkpoints.prototype ? introduce('navTools', 'nav-tools', '「工具」已开放：一次性付费，让对应岗位的同事干活更快。点开看看。') : null,
+      () => project && (state.staff.length >= 2 || state.day - project.started >= 10) ? introduce('navTools', 'nav-tools', '「工具」一次性付费，让对应岗位的同事干活更快。资金够时可以考虑，点开比较一下。') : null,
       () => project?.checkpoints.prototype ? explain('stats', 'stats', '这四项是作品表现：玩法和视觉越高评价越好（玩法随开发和打磨提高，视觉需要美术或素材）；已知缺陷要试玩后才能发现；关注人数决定首发能卖多少。不同类型的玩家看重的不一样。') : null,
       () => project?.checkpoints.demo ? introduce('navTesting', 'nav-testing', '「试玩」已开放：招募玩家试玩 Demo，发现缺陷、了解玩家偏好。点开看看。') : null,
       () => project?.checkpoints.demo ? introduce('navMarket', 'nav-market', '「市场」已开放：推广 Demo 增加关注人数，也在这里查看已发售作品。点开看看。') : null,
@@ -394,4 +426,45 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
     case 'visual': return project && !project.assets && !project.plain && !hasArt ? { anchor: 'visual-options', text: '采购素材立刻见效、不增加月开支；招聘美术持续提升画面，但每月要发工资；也可以保持朴素。' } : null;
     default: return null;
   }
+}
+
+function detailBlock(project: any) {
+  const metrics = core.projectMetrics(project);
+  return { type: 'lines', title: '玩法细项', items: core.PLAY_DETAILS.map((name, index) => [name, metrics.details[index].toFixed(0)]) };
+}
+
+function rankChange(book: any) {
+  if (!book.rank) return '未上榜';
+  if (!book.previousRank) return '新上榜';
+  const change = book.previousRank - book.rank;
+  return change > 0 ? '上升 ' + change + ' 名' : change < 0 ? '下降 ' + Math.abs(change) + ' 名' : '持平';
+}
+
+function exhibitionsMenu(state: any) {
+  const blocks: any[] = [{ type: 'text', text: '每年第 90、270 天举办展会，提前七天截止报名。完成 Demo 才能报名，作品体验决定与虚构工作室的比较结果。', muted: true }];
+  for (const entry of [...state.exhibitions].reverse()) {
+    blocks.push({ type: 'section', title: '第 ' + entry.day + ' 天 · 《' + entry.name + '》' });
+    if (!entry.result) blocks.push({ type: 'text', text: '已报名，等待展会。期间继续完善会影响名次。' });
+    else {
+      blocks.push({ type: 'note', icon: 'Megaphone', text: entry.result.media + '：第 ' + entry.result.rank + ' 名，获得 ' + number(entry.result.followers) + ' 人关注。' });
+      blocks.push({ type: 'lines', items: entry.result.ranking.map((item: any, index: number) => [(index + 1) + '. ' + item.name, item.score.toFixed(1)]) });
+    }
+  }
+  if (!state.exhibitions.length) blocks.push({ type: 'text', text: '尚未参加展会。' });
+  return { title: '展会与媒体', blocks };
+}
+
+function rankingsMenu(state: any) {
+  const blocks: any[] = [{ type: 'text', text: '销量榜每周更新，发售首周标记为新品；竞争工作室均为虚构。年度评选在每年第 360 天举行。', muted: true }];
+  const newcomers = state.catalog.filter((book: any) => state.day - book.released < 7);
+  if (newcomers.length) blocks.push({ type: 'section', title: '首周新品' }, { type: 'lines', items: newcomers.map((book: any) => ['《' + book.name + '》', '第 ' + (book.rank || '—') + ' 名 · ' + rankChange(book)]) });
+  blocks.push({ type: 'section', title: '本周销量榜' });
+  if (state.rankings.length) blocks.push({ type: 'lines', items: state.rankings.slice(0, 20).map((entry: any) => [entry.rank + '. ' + entry.name, number(entry.units) + (entry.studio ? '' : ' · 本社')]) });
+  else blocks.push({ type: 'text', text: '第一周结束后公布。' });
+  for (const award of [...state.awards].reverse().slice(0, 9)) {
+    blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
+    blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
+    blocks.push({ type: 'lines', items: award.ranking.slice(0, 5).map((entry: any, index: number) => [(index + 1) + '. ' + entry.name, entry.score.toFixed(1)]) });
+  }
+  return { title: '榜单与年度评选', blocks };
 }

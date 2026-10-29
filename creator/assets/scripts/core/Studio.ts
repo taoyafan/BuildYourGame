@@ -13,7 +13,8 @@ export const SCALES = [
 export const DIMENSIONS = ['玩法', '视觉', '稳定性'];
 export const OFFICES = [
   { name: '起步小屋', seats: 4, rent: 1.5 },
-  { name: '正式办公室', seats: 10, rent: 3, cost: 8 }
+  { name: '正式办公室', seats: 10, rent: 3, cost: 8 },
+  { name: '独立工作室', seats: 16, rent: 5, cost: 30 }
 ];
 export const CHANNELS: any = {
   friends: { name: '熟人介绍', fee: 0.2, text: '朋友和同学推荐，花费少，能力参差，工资较低。', skill: [30, 58], pace: [60, 95], wage: [1, 0.02, 0.01, 0.4] },
@@ -21,10 +22,14 @@ export const CHANNELS: any = {
   headhunt: { name: '行业推荐', fee: 3, text: '同行推荐的成熟开发者，能力强、要价高，推荐费也贵。', skill: [72, 95], pace: [85, 120], wage: [2.5, 0.035, 0.02, 0.8], lock: '搬进正式办公室后开放' }
 };
 export const ROLES: any = {
+  design: { name: '策划', task: '负责玩法创意、深度与原型验证', traits: ['ideas', 'structure', 'methodical'] },
   code: { name: '程序员', task: '负责内容开发、玩法打磨与缺陷修复', traits: ['prototype', 'careful', 'systems'] },
   art: { name: '美术', task: '负责画面制作，让作品更好看', traits: ['efficient', 'detail', 'versatile'] }
 };
 export const TRAITS: any = {
+  ideas: { name: '灵感捕捉', text: '首次原型验证的玩法潜力上限提高 5。' },
+  structure: { name: '系统设计', text: '玩法设计产出提高 25%。' },
+  methodical: { name: '文档清晰', text: '在岗时项目新增缺陷减少 15%。' },
   prototype: { name: '原型能手', text: '原型阶段开发速度提高 35%。' },
   careful: { name: '测试习惯', text: '新增缺陷减少 45%，修复速度提高 35%。' },
   systems: { name: '系统经验', text: '玩法打磨与专项改进速度提高 35%。' },
@@ -33,6 +38,7 @@ export const TRAITS: any = {
   versatile: { name: '风格适配', text: '画面制作速度提高 10%，表现略有提升。' }
 };
 export const STUDIO_TOOLS: any = {
+  design: { name: '原型设计工具', cost: 5, multiplier: 1.25, text: '策划的玩法设计与原型验证速度提高 25%。' },
   code: { name: '开发工具链', cost: 6, multiplier: 1.3, text: '程序员的开发、打磨与修复速度提高 30%。' },
   art: { name: '美术制作工具', cost: 5, multiplier: 1.25, text: '美术制作速度提高 25%，不直接提高画面表现。' }
 };
@@ -45,6 +51,8 @@ export const UNIT_MARKS = [1000, 5000, 10000, 50000];
 export const POLISH_CAP = 14;
 const MARKET_SIZE = 5000;
 export const SPECIAL_CAP = 10;
+export const PLAY_DETAILS = ['创意', '流畅度', '玩法深度', '内容体量'];
+const DETAIL_WEIGHTS: any = { story: [0.4, 0.15, 0.25, 0.2], sim: [0.15, 0.15, 0.45, 0.25], action: [0.15, 0.5, 0.2, 0.15] };
 const START_CASH = 50;
 const BRIDGE = 20;
 const FAMILY_NAMES = ['林', '陈', '周', '许', '沈', '叶', '宋', '程', '顾', '苏', '陆', '江'];
@@ -73,12 +81,13 @@ export function market(type: string, month: number) {
 
 export function createStudio(seed = Date.now()) {
   return {
-    version: 3, seed: seed >>> 0, day: 1, company: '', cash: START_CASH,
+    version: 4, seed: seed >>> 0, day: 1, company: '', cash: START_CASH,
     staff: [], project: null, catalog: [], tools: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
-    office: 0, goals: { firstRelease: null, breakEven: null, moved: null }, fans: 0, insights: {}, feed: []
+    office: 0, goals: { firstRelease: null, breakEven: null, moved: null, topTen: null, award: null, expanded: null }, fans: 0, insights: {}, feed: [],
+    overtime: false, sound: true, exhibitions: [], awards: [], rankings: [], operation: null
   };
 }
 
@@ -136,7 +145,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     const trait = ROLES[role].traits[Math.floor(random(next) * ROLES[role].traits.length)];
     const name = FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)];
     const wage = round(source.wage[0] + skill * source.wage[1] + (pace - source.pace[0]) * source.wage[2] + random(next) * source.wage[3]);
-    return { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, skill, pace, trait, wage, hired: false, work: 0 };
+    return { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, skill, pace, trait, wage, hired: false, work: 0, experience: 0, level: 0, stress: 0, tiredDays: 0, leaveUntil: 0, pending: 0, pendingProject: null };
   });
   next.candidates[key] = { batch, people };
   studioLog(next, '发布招聘', `${source.name}送来 ${people.length} 份${ROLES[role].name}简历，名单保持到第 ${(batch + 1) * 14} 天。`);
@@ -160,13 +169,17 @@ export function dismiss(state: any, id: string) {
   const person = next.staff.find((item: any) => item.id === id);
   if (!person) throw new Error('员工不存在。');
   next.staff = next.staff.filter((item: any) => item.id !== id);
+  if (next.event?.person === id) next.event = null;
   studioLog(next, `${person.name} 离职`, '此前的工作与已产生的工资保留，之后不再计薪。');
   return next;
 }
 
 function personRate(state: any, person: any) {
+  if ((person.leaveUntil || 0) > state.day) return 0;
   let value = person.pace / 100;
   if (state.tools.includes(person.role)) value *= STUDIO_TOOLS[person.role].multiplier;
+  value *= person.stress >= 80 ? 0.55 : person.stress >= 60 ? 0.8 : 1;
+  if (state.overtime) value *= 1.45;
   return value;
 }
 
@@ -174,14 +187,59 @@ export function rates(state: any) {
   const project = state.project;
   let code = 0;
   let art = 0;
+  let design = 0;
   for (const person of state.staff) {
     let value = personRate(state, person);
     if (person.role === 'code' && person.trait === 'prototype' && project && project.done < project.total * 0.25) value *= 1.35;
     if (person.role === 'art') value *= person.trait === 'efficient' ? 1.25 : person.trait === 'detail' ? 0.9 : 1.1;
+    if (person.role === 'design' && person.trait === 'structure') value *= 1.25;
     if (person.role === 'code') code += value;
-    else art += value;
+    else if (person.role === 'art') art += value;
+    else design += value;
   }
-  return { code, art };
+  return { code, art, design };
+}
+
+export function scaleOpen(state: any, scale: number) {
+  return scale === 0 || scale === 1 && state.goals.firstRelease !== null || scale === 2 && state.office >= 1;
+}
+
+export function setOvertime(state: any, enabled: boolean) {
+  const next = studioAction(state);
+  if (typeof enabled !== 'boolean') throw new Error('加班安排无效。');
+  next.overtime = enabled;
+  studioLog(next, enabled ? '开始加班冲刺' : '结束加班', enabled ? '产出提高 45%，压力每天上升；疲惫会降低效率。' : '恢复正常作息，压力逐步下降。');
+  return next;
+}
+
+export function setSound(state: any, enabled: boolean) {
+  if (typeof enabled !== 'boolean') throw new Error('音效设置无效。');
+  return { ...state, sound: enabled };
+}
+
+export function takeLeave(state: any, id: string) {
+  const next = studioAction(state);
+  const person = next.staff.find((item: any) => item.id === id);
+  if (!person || person.leaveUntil > next.day) throw new Error('当前无法安排休假。');
+  person.leaveUntil = next.day + 5;
+  person.tiredDays = 0;
+  if (next.event?.person === id) next.event = null;
+  studioLog(next, `${person.name} 带薪休假`, '未来五天不参与研发，工资照付，休假时压力快速恢复。');
+  return next;
+}
+
+export function teamOuting(state: any) {
+  const next = studioAction(state);
+  if (!next.staff.length) throw new Error('还没有员工。');
+  spend(next, round(next.staff.length * 0.4), '团队休整');
+  next.overtime = false;
+  for (const person of next.staff) {
+    person.stress = Math.max(0, person.stress - 30);
+    person.tiredDays = 0;
+    person.leaveUntil = Math.max(person.leaveUntil, next.day + 2);
+  }
+  if (next.event?.id === 'resign') next.event = null;
+  return next;
 }
 
 export function startProject(state: any, plan: any) {
@@ -189,6 +247,9 @@ export function startProject(state: any, plan: any) {
   if (!next.company) throw new Error('请先命名公司。');
   if (next.project) throw new Error('请先完成当前项目。');
   if (!plan || !has(TYPES, plan.type) || !tier(plan.scale)) throw new Error('请选择作品类型与体量。');
+  if (!scaleOpen(next, plan.scale)) throw new Error(plan.scale === 1 ? '首作发售后开放中型作品。' : '搬进正式办公室后开放大型作品。');
+  const original = plan.sequel ? next.catalog.find((book: any) => book.id === plan.sequel) : null;
+  if (plan.sequel && (!original || original.reviewScore < 70)) throw new Error('好评达到 70 分的作品才能开发续作。');
   const name = String(plan.name || '').trim().slice(0, 24);
   if (!name) throw new Error('请为作品取个名字。');
   const total = TYPES[plan.type].work * SCALES[plan.scale].work;
@@ -197,8 +258,11 @@ export function startProject(state: any, plan: any) {
     total, done: 0, artTotal: total * 0.7, artDone: 0, codeValue: 0, artValue: 0,
     defects: 0, defectDebt: 0, found: 0, fixWork: 0, polish: 0, special: 0, focus: 'develop', invested: 0,
     followers: Math.round(80 * market(plan.type, Math.ceil(next.day / 30)).multiplier + next.fans * 0.5), promoted: 0,
-    checkpoints: {}, test: null, tests: 0, testCount: 0, assets: false, plain: false, started: next.day
+    checkpoints: {}, test: null, tests: 0, testCount: 0, assets: false, plain: false, started: next.day,
+    potential: null, direction: 0, rethink: 0, designDone: 0, designValue: 0, contributions: {},
+    sequel: original?.id || null, expectation: original ? original.expectation + 4 : 0, deadline: null
   };
+  if (original) next.project.followers += Math.round(original.followers * 0.3 + original.units * 0.1);
   studioLog(next, '新作立项', `《${name}》面向${TYPES[plan.type].audience}，${SCALES[plan.scale].name}作品。`);
   return next;
 }
@@ -207,11 +271,18 @@ export function projectMetrics(project: any) {
   const progress = project.done / project.total;
   const ability = project.done > 0 ? project.codeValue / project.done : 0;
   const artAbility = project.artDone > 0 ? project.artValue / project.artDone : 0;
-  const craft = ability * 0.4 + project.polish + project.special;
+  const designAbility = project.designDone > 0 ? project.designValue / project.designDone : ability;
+  const designProgress = project.designDone > 0 ? Math.min(1, project.designDone / (project.total * 0.35)) : progress * 0.55;
+  const creativity = clamp(12 + designAbility * 0.65 + designProgress * 12 + project.direction + project.polish * 0.3, 0, project.potential ?? 98);
+  const fluidity = clamp(12 + ability * 0.72 + project.polish * 0.7 - project.defects * 1.2, 0, 98);
+  const depth = clamp(progress * 25 + designAbility * 0.45 + designProgress * 12 + project.special * 1.1 + project.direction, 0, 98);
+  const volume = clamp(progress * [70, 85, 98][project.scale], 0, 98);
+  const details = [creativity, fluidity, depth, volume].map(round);
+  const craft = (creativity + fluidity + depth) / 3;
   return {
     progress: round(progress * 100),
-    gameplay: round(clamp(progress * 45 + craft, 0, 98)),
-    craft: round(clamp(craft / 0.53, 0, 100)),
+    gameplay: round(clamp(details.reduce((sum: number, value: number, index: number) => sum + value * DETAIL_WEIGHTS[project.type][index], 0), 0, project.potential ?? 98)),
+    craft: round(craft), details, potential: project.potential,
     visual: round(clamp(Math.max(15, project.artDone / project.artTotal * (18 + artAbility * 0.75)), 0, 98)),
     stability: round(clamp(98 - project.defects * 4, 18, 98)),
     defects: project.defects
@@ -233,6 +304,10 @@ export function projectForecast(state: any) {
     days = 0;
     while (probe.project.done < probe.project.total - 0.001 && days < 10000) {
       produceDay(probe);
+      for (const person of probe.staff) {
+        person.stress = clamp(person.stress + (person.leaveUntil > probe.day ? -12 : probe.overtime ? 4 : -2), 0, 100);
+      }
+      probe.day += 1;
       days += 1;
       if (protoDays === null && probe.project.done >= protoTarget - 0.001) protoDays = days;
       if (demoDays === null && probe.project.done >= demoTarget - 0.001) demoDays = days;
@@ -275,6 +350,7 @@ export function keepPlain(state: any) {
 
 export const FOCUS: any = {
   develop: { name: '内容开发', text: '继续实现计划内容。' },
+  rethink: { name: '调整原型方向', text: '暂停内容，用工作量重新验证玩法潜力，结果可能变好或变差。' },
   polish: { name: '玩法打磨', text: '暂停新内容，提升已有玩法的手感。' },
   special: { name: '专项改进', text: '暂停新内容，针对试玩反馈做类型专属改进。' },
   bugs: { name: '修复缺陷', text: '暂停新内容，修复试玩发现的缺陷。' }
@@ -283,6 +359,7 @@ export const FOCUS: any = {
 export function focusBlock(state: any, focus: string) {
   const project = state.project;
   if (!project) return '当前没有项目。';
+  if (focus === 'rethink') return '只能在原型验证时决定调整方向。';
   if (focus === 'polish' && project.polish >= POLISH_CAP) return '玩法已打磨到当前上限。';
   if (focus === 'special' && !project.test) return '先做一次试玩，才知道该改进什么。';
   if (focus === 'special' && project.special >= SPECIAL_CAP) return '专项改进已经完成。';
@@ -292,6 +369,7 @@ export function focusBlock(state: any, focus: string) {
 
 export function setFocus(state: any, focus: string) {
   if (!has(FOCUS, focus)) throw new Error('工作安排无效。');
+  if (state.project?.focus === 'rethink') throw new Error('请等待原型重新验证完成后再调整工作。');
   const reason = focusBlock(state, focus);
   if (reason) throw new Error(reason);
   const next = studioAction(state);
@@ -308,6 +386,10 @@ function audienceScore(metrics: any, type: string) {
 export function audienceFocus(type: string) {
   const weights = TYPES[type].weights;
   return [0, 1, 2].sort((left, right) => weights[right] - weights[left]).map(index => DIMENSIONS[index]).join(' > ');
+}
+
+export function detailFocus(type: string) {
+  return [0, 1, 2, 3].sort((left, right) => DETAIL_WEIGHTS[type][right] - DETAIL_WEIGHTS[type][left]).map(index => PLAY_DETAILS[index]).join(' > ');
 }
 
 function hasArt(state: any) {
@@ -331,7 +413,9 @@ function findings(state: any, metrics: any, newlyFound: number) {
     { key: 'stability', title: '稳定性', value: metrics.stability, text: stability }
   ];
   const gap = (item: any) => (100 - (item.key === 'gameplay' && incomplete ? metrics.craft : item.value)) * weights[['gameplay', 'visual', 'stability'].indexOf(item.key)];
-  return items.sort((left, right) => gap(right) - gap(left));
+  const sorted = items.sort((left, right) => gap(right) - gap(left));
+  if (state.catalog.length >= 1) sorted.push(...PLAY_DETAILS.map((title, index) => ({ key: `detail-${index}`, title, value: metrics.details[index], text: `${title} ${metrics.details[index].toFixed(0)}。${index === 0 || index === 2 ? '策划与专项改进能改善玩法设计。' : index === 1 ? '程序能力、打磨与修复影响流畅度。' : '继续开发完成内容；更大体量提供更丰富的内容。'}` })));
+  return sorted;
 }
 
 export function playtestOffer(state: any) {
@@ -446,7 +530,7 @@ export function launchProject(state: any) {
   if (!project || project.done < project.total - 0.001) throw new Error('计划内容尚未完成。');
   const metrics = projectMetrics(project);
   const trend = market(project.type, Math.ceil(next.day / 30));
-  const score = round(clamp(audienceScore(metrics, project.type) + (random(next) - 0.5) * 3, 0, 100));
+  const score = round(clamp(audienceScore(metrics, project.type) - project.expectation + (random(next) - 0.5) * 3, 0, 100));
   const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : clamp(score / 100 * 0.85, 0.15, 0.95);
   const ceiling = MARKET_SIZE * SCALES[project.scale].reach;
   const units = Math.max(1, Math.round(Math.min(ceiling * 0.6, project.followers * (0.2 + fit * 0.5) * trend.multiplier)));
@@ -464,15 +548,33 @@ export function launchProject(state: any) {
     weekly: [receipt], paidBack: receipt >= project.invested, marks: 0, record: next.catalog.length > 0 && receipt > best,
     tutorial: next.catalog.length === 0, review: reviewOf(next, project, metrics, project.followers)
   };
+  Object.assign(book, { sequel: project.sequel, expectation: project.expectation, rank: null, previousRank: null, bestRank: null, discountUntil: 0, discountUsed: 0, updates: 0 });
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
   next.lastRelease = book.id;
   next.project = null;
+  for (const person of next.staff) {
+    const contribution = project.contributions[person.id] || 0;
+    if (contribution <= 0) continue;
+    person.experience = round(person.experience + contribution);
+    const growth = Math.min(3, Math.floor(person.experience / 15));
+    if (growth) {
+      person.experience = round(person.experience - growth * 15);
+      person.skill = Math.min(100, person.skill + growth);
+      person.pace = Math.min(140, person.pace + growth);
+      person.level += growth;
+      person.pendingRaise = round(person.wage * (1 + growth * 0.04));
+      person.raiseDue = next.day + 14;
+      studioLog(next, `${person.name} 积累经验`, `能力与速度各提高 ${growth}，期望月薪 ${person.pendingRaise.toFixed(2)} 万；在团队菜单决定是否留任。`);
+    }
+    person.pending = 0;
+  }
   if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首发售出 ${units} 份`, amount: receipt, book: book.id });
   if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${best.toFixed(2)} 万`, amount: receipt });
   checkMarks(next, book);
+  updateRankings(next);
   const lesson = book.tutorial ? '首作是练习，小亏很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。${lesson}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
@@ -494,12 +596,14 @@ function checkMarks(state: any, book: any) {
 
 export function moveOffice(state: any) {
   const next = studioAction(state);
-  if (next.office >= 1) throw new Error('已经在正式办公室了。');
+  if (next.office >= 2) throw new Error('已经完成工作室扩建。');
   if (next.goals.breakEven === null) throw new Error('第一次回本后才能搬进正式办公室。');
-  spend(next, OFFICES[1].cost, '搬进正式办公室');
-  next.office = 1;
-  next.goals.moved = next.day;
-  announce(next, { kind: 'office', title: '搬进正式办公室', text: `${OFFICES[1].seats} 个工位，行业推荐渠道已开放`, amount: 0 });
+  if (next.office === 1 && (next.goals.topTen === null || next.goals.award === null)) throw new Error('进入榜单前十并获得年度奖项后才能再次扩建。');
+  const office = OFFICES[next.office + 1];
+  spend(next, office.cost, next.office ? '扩建独立工作室' : '搬进正式办公室');
+  next.office += 1;
+  next.goals[next.office === 1 ? 'moved' : 'expanded'] = next.day;
+  announce(next, { kind: 'office', title: next.office === 1 ? '搬进正式办公室' : '扩建独立工作室', text: `${office.seats} 个工位，月租 ${office.rent} 万`, amount: 0 });
   return next;
 }
 
@@ -510,6 +614,11 @@ export function goalsOf(state: any) {
     { key: 'breakEven', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '可以搬进正式办公室', done: goals.breakEven !== null },
     { key: 'moved', title: '搬进正式办公室', text: `在公司菜单搬家，一次性 ${OFFICES[1].cost} 万。`, reward: `${OFFICES[1].seats} 个工位，开放行业推荐`, done: goals.moved !== null }
   ];
+  steps.push(
+    { key: 'topTen', title: '进入销量榜前十', text: '用作品销量与虚构工作室竞争。', reward: '获得 200 位粉丝，向扩建迈进一步', done: goals.topTen !== null },
+    { key: 'award', title: '获得年度奖项', text: '每年年底评选作品、创意与视觉奖。', reward: '获奖增加粉丝，开放工作室扩建资格', done: goals.award !== null },
+    { key: 'expanded', title: '再次扩建工作室', text: `完成前十与获奖目标后，花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位，可组建成熟团队`, done: goals.expanded !== null }
+  );
   const current = steps.find(step => !step.done);
   const best = Math.max(0, ...state.catalog.map((book: any) => book.received));
   return { steps, current: current || { key: 'record', title: '打破纪录', text: `让一款作品的累计回款超过 ${best.toFixed(2)} 万。`, reward: '证明工作室越做越好', done: false } };
@@ -528,7 +637,27 @@ export function resolveStudioEvent(state: any, choice: string) {
     next.ledger.income = round(next.ledger.income + BRIDGE);
   }
   if (choice === 'move') return moveOffice(next);
+  if (event.id === 'resign') return choice === 'leave' ? takeLeave(next, event.person) : dismiss(next, event.person);
+  if (event.id === 'salary') return choice === 'retain' ? retain(next, event.person) : dismiss(next, event.person);
   if (!next.project) return next;
+  if (event.id === 'prototype') {
+    if (choice === 'abandon') {
+      studioLog(next, '原型止损', `放弃《${next.project.name}》，已支出 ${next.project.invested.toFixed(2)} 万不返还。`);
+      next.project = null;
+    } else if (choice === 'rethink') {
+      next.project.focus = 'rethink';
+      next.project.rethink = 4 + next.project.scale * 3;
+    }
+    return next;
+  }
+  if (event.id === 'scope' && choice === 'expand') {
+    const extra = next.project.total * 0.15;
+    next.project.total += extra;
+    next.project.artTotal += extra * 0.7;
+    next.project.direction += 6;
+    next.project.potential = Math.min(98, next.project.potential + 6);
+  }
+  if (event.id === 'deadline' && choice === 'delay') next.project.deadline = next.day + 14;
   if (choice === 'assets') return buyAssets(next);
   if (choice === 'plain') return keepPlain(next);
   if (choice === 'launch') return launchProject(next);
@@ -552,10 +681,25 @@ function visualHint(state: any, tested: boolean) {
 
 function produceDay(state: any) {
   const project = state.project;
+  if (state.operation) {
+    const capacity = rates(state);
+    const book = state.catalog.find((item: any) => item.id === state.operation.book);
+    if (book) book.invested += monthlyCost(state) / 30;
+    state.operation.remaining = Math.max(0, state.operation.remaining - capacity.code - capacity.design * 0.5);
+    if (state.operation.remaining <= 0) finishUpdate(state);
+    return;
+  }
   if (!project) return;
   project.invested += monthlyCost(state) / 30;
+  if (project.focus === 'rethink') {
+    const capacity = rates(state);
+    project.rethink = Math.max(0, project.rethink - capacity.code - (capacity.design || 0));
+    return;
+  }
   for (const person of state.staff) {
     let amount = personRate(state, person);
+    if (!amount) continue;
+    project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
     if (person.role === 'code') {
       if (project.focus === 'bugs') {
         project.fixWork += amount * (person.trait === 'careful' ? 1.35 : 1);
@@ -565,18 +709,32 @@ function produceDay(state: any) {
       } else if (project.focus === 'special') {
         project.special = Math.min(SPECIAL_CAP, project.special + amount * (person.trait === 'systems' ? 1.08 : 0.8));
       } else {
+        if (project.done >= project.total - 0.001) continue;
         if (person.trait === 'prototype' && project.done < project.total * 0.25) amount *= 1.35;
+        const required = [35, 65, 80][project.scale];
+        amount *= clamp(person.skill / required, 0.4, 1);
+        if (person.pendingProject !== project.id) { person.pending = 0; person.pendingProject = project.id; }
+        person.pending += Math.min(amount, project.total - project.done);
+        amount = Math.min(Math.floor(person.pending), project.total - project.done);
+        if (person.pending >= project.total - project.done) amount = project.total - project.done;
+        person.pending -= amount;
         amount = Math.min(amount, project.total - project.done);
         project.done += amount;
         project.codeValue += amount * person.skill;
-        project.defectDebt += amount * (100 - person.skill) / 100 * 0.35 * (person.trait === 'careful' ? 0.55 : 1);
+        const documented = state.staff.some((colleague: any) => colleague.trait === 'methodical' && personRate(state, colleague) > 0);
+        project.defectDebt += amount * (100 - person.skill) / 100 * 0.35 * (1 + project.scale * 0.35) * (person.trait === 'careful' ? 0.55 : 1) * (documented ? 0.85 : 1);
         while (project.defectDebt >= 1) { project.defects += 1; project.defectDebt -= 1; }
       }
-    } else {
+    } else if (person.role === 'art') {
       amount *= person.trait === 'efficient' ? 1.25 : person.trait === 'detail' ? 0.9 : 1.1;
       amount = Math.min(amount, project.artTotal - project.artDone);
       project.artDone += amount;
       project.artValue += amount * Math.min(100, person.skill + (person.trait === 'detail' ? 16 : person.trait === 'versatile' ? 7 : 0));
+    } else {
+      if (person.trait === 'structure') amount *= 1.25;
+      amount = Math.min(amount, Math.max(0, project.total * 0.35 - project.designDone));
+      project.designDone += amount;
+      project.designValue += amount * person.skill;
     }
     person.work = round(person.work + amount);
   }
@@ -587,6 +745,13 @@ function produceDay(state: any) {
 function finishFocus(state: any) {
   const project = state.project;
   if (!project || project.focus === 'develop') return;
+  if (project.focus === 'rethink') {
+    if (project.rethink > 0) return;
+    project.focus = 'develop';
+    project.potential = clamp(project.potential + Math.round(random(state) * 24) - 10, 40, 98);
+    state.event = prototypeEvent(state);
+    return;
+  }
   const done = project.focus === 'polish' ? project.polish >= POLISH_CAP : project.focus === 'special' ? project.special >= SPECIAL_CAP : project.found === 0;
   if (!done) return;
   const name = FOCUS[project.focus].name;
@@ -601,18 +766,20 @@ function finishFocus(state: any) {
 function salesDay(state: any) {
   for (const book of state.catalog) {
     const age = state.day - book.released;
-    if (age <= 0 || age > 360) continue;
+    if (age <= 0 || age > 540) { book.lastDayUnits = 0; continue; }
     const growth = clamp(0.955 + (book.reviewScore - 55) * 0.0025, 0.9, 1.03);
-    const saturation = Math.max(0.05, 1 - book.units / (MARKET_SIZE * SCALES[book.scale].reach));
+    const reputationReach = 1 + Math.max(0, book.reviewScore - 70) / 25 * 4;
+    const saturation = Math.max(0.05, 1 - book.units / (MARKET_SIZE * SCALES[book.scale].reach * reputationReach));
     book.dailyUnits = Math.max(0, book.dailyUnits * growth * (0.97 + saturation * 0.03) * Math.min(1, saturation * 4));
-    const units = Math.max(0, Math.round(book.dailyUnits));
-    const income = round(units * book.price);
+    const discounted = book.discountUntil > state.day;
+    const units = Math.max(0, Math.round(book.dailyUnits * (discounted ? 1.8 : 1)));
+    const income = round(units * book.price * (discounted ? 0.7 : 1));
     book.lastDayUnits = units;
     book.lastGrowth = round((growth - 1) * 100);
     book.units += units;
     const reviews = Math.round(units * 0.12);
     if (reviews) {
-      const score = clamp(audienceScore(book.metrics, book.type) + (random(state) - 0.5) * 6 / Math.sqrt(reviews), 0, 100);
+      const score = clamp(audienceScore(book.metrics, book.type) - book.expectation + (random(state) - 0.5) * 6 / Math.sqrt(reviews), 0, 100);
       book.reviewScore = round((book.reviewScore * book.reviewCount + score * reviews) / (book.reviewCount + reviews));
       book.reviewCount += reviews;
     }
@@ -645,8 +812,17 @@ function studioCheckpoint(state: any) {
     const ratio = project.done / project.total;
     if (ratio >= 0.25 && !project.checkpoints.prototype) {
       project.checkpoints.prototype = true;
-      studioLog(state, '可玩原型完成', '核心玩法已经能跑起来了。');
-      if (tutorial) return { id: 'prototype', title: '第一个可玩原型', text: '核心玩法已经能跑起来了！工具菜单已开放：开发工具能让程序员更快，但要一次性付费。', choices: [{ id: 'continue', title: '继续开发', detail: '不额外花钱，按现在的安排推进。', recommended: true }, { id: 'tools', title: '看看开发工具', detail: '比较费用与提速效果，不会自动购买。' }] };
+      const designers = state.staff.filter((person: any) => person.role === 'design');
+      const creators = designers.length ? designers : state.staff.filter((person: any) => person.role === 'code');
+      const skill = creators.length ? creators.reduce((sum: number, person: any) => sum + person.skill, 0) / creators.length : 30;
+      const ideas = designers.some((person: any) => person.trait === 'ideas' && personRate(state, person) > 0) ? 5 : 0;
+      project.potential = clamp(Math.round(42 + skill * 0.5 + random(state) * 12 + project.direction + ideas), 40, 98);
+      studioLog(state, '可玩原型完成', `玩法潜力上限 ${project.potential}。`);
+      return prototypeEvent(state);
+    }
+    if (ratio >= 0.4 && !project.checkpoints.scope) {
+      project.checkpoints.scope = true;
+      return { id: 'scope', title: '要不要加入新系统？', text: '内容制作中，团队提出一个能丰富玩法的新系统。加入会提高潜力，但 Demo 和发售都要更晚。', choices: [{ id: 'expand', title: '加入新系统', detail: '内容与画面工作量增加 15%，玩法潜力上限提高 6。' }, { id: 'continue', title: '守住范围', detail: '保持当前上限与排期，不额外增加工作量。' }] };
     }
     if (ratio >= 0.55 && !project.checkpoints.demo) {
       project.checkpoints.demo = true;
@@ -680,6 +856,8 @@ export function stepDay(state: any) {
   produceDay(next);
   finishFocus(next);
   salesDay(next);
+  teamDay(next);
+  calendarDay(next);
   if (next.day % 30 === 0) {
     const payroll = round(next.accrued);
     next.cash = round(next.cash - payroll);
@@ -694,8 +872,181 @@ export function stepDay(state: any) {
     studioLog(next, `第 ${report.month} 月账单`, `收入 ${report.income.toFixed(2)} 万，支出 ${report.expense.toFixed(2)} 万，净变化 ${report.net.toFixed(2)} 万。`);
   }
   next.day += 1;
-  if (!next.over) next.event = studioCheckpoint(next);
+  if (!next.over && !next.event) next.event = studioCheckpoint(next);
   return next;
+}
+
+function prototypeEvent(state: any) {
+  const project = state.project;
+  return { id: 'prototype', title: '原型验证', text: `《${project.name}》的可玩性上限约为 ${project.potential}。这是上限，不是当前得分；内容、实现和打磨仍然重要。`, choices: [{ id: 'continue', title: '继续开发', detail: '接受当前潜力，按计划制作内容。', recommended: tutorialActive(state) }, { id: 'rethink', title: '调整方向再验证', detail: `额外投入 ${4 + project.scale * 3} 工作量，潜力可能提高或下降，可重复尝试。` }, { id: 'abandon', title: '止损放弃', detail: `停止当前项目，已投入 ${project.invested.toFixed(2)} 万不返还，可重新立项。` }] };
+}
+
+function teamDay(state: any) {
+  for (const person of state.staff) {
+    const resting = person.leaveUntil > state.day;
+    person.stress = clamp(person.stress + (resting ? -12 : state.overtime && state.project ? 4 : -2), 0, 100);
+    person.tiredDays = person.stress >= 80 ? person.tiredDays + 1 : 0;
+    if (person.stress >= 60 && !state.notices[`tired-${person.id}`]) {
+      state.notices[`tired-${person.id}`] = true;
+      announce(state, { kind: 'notice', title: `${person.name} 最近很疲惫`, text: '效率已下降，可结束加班、安排休假或团队休整。', amount: 0 });
+      studioLog(state, '团队疲惫', `${person.name} 压力 ${person.stress}，持续忽视可能离职。`);
+    }
+    if (person.stress < 40) delete state.notices[`tired-${person.id}`];
+    if (person.tiredDays >= 7 && !resting && !state.event) {
+      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: '连续高压已经难以坚持。可以立即安排带薪休假，或接受离职。已完成成果保留，只有本人手上未交付的零散工作丢失。', choices: [{ id: 'leave', title: '安排五天带薪休假', detail: '暂停该员工的工作，工资照付，逐日恢复压力。' }, { id: 'dismiss', title: '接受离职', detail: '保留已完成成果与应付工资，之后不再计薪。' }] };
+    }
+    if (person.pendingRaise && state.day >= person.raiseDue && !state.event) {
+      state.event = { id: 'salary', person: person.id, title: `${person.name} 希望调整薪资`, text: `参与作品后能力与速度已有成长，期望月薪从 ${person.wage.toFixed(2)} 万提高到 ${person.pendingRaise.toFixed(2)} 万。`, choices: [{ id: 'retain', title: '按期望薪资留任', detail: '从今天起按新月薪累计，已产生工资不变。' }, { id: 'dismiss', title: '结束雇佣，寻找新人', detail: '保留此前成果和应付工资，之后不再计薪。' }] };
+    }
+  }
+}
+
+export function retain(state: any, id: string) {
+  const next = studioAction(state);
+  const person = next.staff.find((item: any) => item.id === id);
+  if (!person?.pendingRaise) throw new Error('这位员工没有待处理的涨薪请求。');
+  person.wage = person.pendingRaise;
+  person.pendingRaise = null;
+  person.raiseDue = null;
+  if (next.event?.person === id) next.event = null;
+  studioLog(next, `${person.name} 留任`, `月薪调整为 ${person.wage.toFixed(2)} 万，已产生的工资不变。`);
+  return next;
+}
+
+export function exhibitionOffer(state: any) {
+  let day = 90 + Math.max(0, Math.ceil((state.day - 83) / 180)) * 180;
+  if (day - 7 < state.day) day += 180;
+  const entry = state.exhibitions.find((item: any) => item.day === day);
+  const project = state.project;
+  const reason = entry ? '已报名本届展会' : !project || project.done < project.total * 0.55 ? '报名截止前须完成 Demo' : state.cash < 1 ? '报名需要 1 万' : '';
+  return { day, deadline: day - 7, entry, reason, available: !reason };
+}
+
+export function enterExhibition(state: any) {
+  const offer = exhibitionOffer(state);
+  if (!offer.available) throw new Error(offer.reason);
+  const next = studioAction(state);
+  spend(next, 1, '展会报名');
+  next.project.invested = round(next.project.invested + 1);
+  next.exhibitions.push({ day: offer.day, project: next.project.id, name: next.project.name, metrics: projectMetrics(next.project), result: null });
+  next.exhibitions = next.exhibitions.slice(-30);
+  studioLog(next, '展会报名成功', `《${next.project.name}》参加第 ${offer.day} 天展会。`);
+  return next;
+}
+
+export function setDeadline(state: any, days: number) {
+  if (![14, 30, 60].includes(days)) throw new Error('发售排期无效。');
+  const next = studioAction(state);
+  if (!next.project || next.project.deadline) throw new Error('当前无法公布发售日。');
+  if (next.project.done < next.project.total * 0.55) throw new Error('Demo 完成后再公布发售日。');
+  next.project.deadline = next.day + days;
+  next.project.followers += 150;
+  studioLog(next, '公布发售日', `计划第 ${next.project.deadline} 天发售，新增 150 人关注；延期会损失关注。`);
+  return next;
+}
+
+export function operateBook(state: any, id: string, kind: string) {
+  const next = studioAction(state);
+  const book = next.catalog.find((item: any) => item.id === id);
+  if (!book || next.day - book.released > 540) throw new Error('该作品已结束销售。');
+  if (kind === 'discount') {
+    if (book.discountUntil > next.day || book.discountUsed && next.day - book.discountUsed < 30) throw new Error('两次促销至少间隔 30 天。');
+    book.discountUsed = next.day;
+    book.discountUntil = next.day + 7;
+    studioLog(next, `《${book.name}》限时促销`, '七天七折，提高销量但降低每份回款。');
+  } else if (kind === 'update') {
+    if (next.operation) throw new Error('已有运营更新在制作。');
+    if (!rates(next).code) throw new Error('需要程序员制作更新。');
+    if (book.updates >= 3) throw new Error('这部作品已完成三次主要更新。');
+    const cost = 2 + book.scale;
+    spend(next, cost, `《${book.name}》更新投入`);
+    book.invested = round(book.invested + cost);
+    next.operation = { book: id, remaining: 5 + book.scale * 3 };
+    studioLog(next, '制作发售后更新', '团队暂停新作研发，完成更新后自动恢复。运营期间工资计入旧作投入。');
+  } else throw new Error('运营安排无效。');
+  return next;
+}
+
+function finishUpdate(state: any) {
+  const book = state.catalog.find((item: any) => item.id === state.operation.book);
+  if (book) {
+    book.updates += 1;
+    book.metrics.stability = Math.min(98, book.metrics.stability + 8);
+    book.metrics.gameplay = Math.min(book.metrics.potential ?? 98, book.metrics.gameplay + 3);
+    book.dailyUnits = Math.max(book.dailyUnits * 1.5, 15 + book.scale * 10);
+    announce(state, { kind: 'notice', title: `《${book.name}》更新上线`, text: '体验改善，销售重新获得关注；新作研发已恢复。', amount: 0 });
+    studioLog(state, '更新上线', `《${book.name}》完成第 ${book.updates} 次更新。`);
+  }
+  state.operation = null;
+}
+
+const RIVAL_NAMES = ['纸鹤工坊', '雨燕游戏', '星屿制作', '风铃社', '月台互动', '白桦工作室', '远帆游戏', '像素溪流'];
+
+function updateRankings(state: any) {
+  const week = Math.floor((state.day - 1) / 7);
+  const rivals = Array.from({ length: 20 }, (_, index) => ({ id: `rival-${index}`, name: `${RIVAL_NAMES[index % RIVAL_NAMES.length]} · ${Math.floor(index / 8) + 1}`, studio: true, units: Math.round(1200 / Math.pow(index + 1, 1.3) * (0.85 + ((week + index * 3) % 7) * 0.05)) }));
+  const entries = state.catalog.filter((book: any) => state.day - book.released <= 540).map((book: any) => ({ id: book.id, name: book.name, studio: false, units: state.day === book.released ? Math.round(book.openingUnits / 7) : book.lastDayUnits }));
+  const ranked = [...rivals, ...entries].sort((left, right) => right.units - left.units);
+  state.rankings = ranked.slice(0, 30).map((entry, index) => ({ ...entry, rank: index + 1 }));
+  for (const book of state.catalog) {
+    const index = ranked.findIndex(entry => entry.id === book.id);
+    if (index < 0) { book.previousRank = book.rank; book.rank = null; continue; }
+    const rank = index + 1;
+    book.previousRank = book.rank;
+    book.rank = rank;
+    book.bestRank = Math.min(book.bestRank ?? rank, rank);
+    if (rank <= 10 && state.goals.topTen === null) {
+      state.goals.topTen = state.day;
+      state.fans += 200;
+      announce(state, { kind: 'record', title: '首次进入销量榜前十', text: `《${book.name}》第 ${rank} 名，新增 200 位粉丝`, amount: 0 });
+    }
+  }
+}
+
+function calendarDay(state: any) {
+  if (state.day % 7 === 0) updateRankings(state);
+  for (const entry of state.exhibitions) {
+    if (entry.day > state.day || entry.result) continue;
+    const project = state.project?.id === entry.project ? state.project : null;
+    const book = state.catalog.find((item: any) => item.id === entry.project);
+    const metrics = project ? projectMetrics(project) : book?.metrics || entry.metrics;
+    const score = round(metrics.gameplay * 0.65 + metrics.visual * 0.35);
+    const rivals = RIVAL_NAMES.map((name, index) => ({ name, score: 48 + ((entry.day + index * 17) % 43), own: false }));
+    const ranking = [...rivals, { name: entry.name, score, own: true }].sort((left, right) => right.score - left.score);
+    const rank = ranking.findIndex(item => item.own) + 1;
+    const followers = rank <= 3 ? 1400 - rank * 200 : 250;
+    const media = rank <= 3 ? '《独立游戏观察》专题报道' : '《新作周报》展会速递';
+    entry.result = { rank, score, followers, media, ranking };
+    if (project) project.followers += followers;
+    if (book) { book.followers += followers; book.dailyUnits += followers / 40; }
+    state.fans += Math.round(followers * 0.1);
+    announce(state, { kind: 'record', title: `展会第 ${rank} 名`, text: `《${entry.name}》获得 ${followers} 人关注与媒体报道`, amount: 0 });
+    studioLog(state, '展会报道', `${media}：《${entry.name}》第 ${rank} 名。`);
+  }
+  if (state.project?.deadline && state.day >= state.project.deadline && !state.event) {
+    state.project.followers = Math.round(state.project.followers * 0.9);
+    state.project.deadline = null;
+    state.event = { id: 'deadline', title: '公布的发售日到了', text: '未能按时发售，关注人数减少 10%。要再次承诺日期，还是取消排期专心完善？', choices: [...(state.project.done >= state.project.total - 0.001 ? [{ id: 'launch', title: '现在发售', detail: '内容已完成，带着当前表现发售。' }] : []), { id: 'delay', title: '延期十四天', detail: '新的期限仍会触发延期检查。' }, { id: 'continue', title: '取消日期，继续完善', detail: '不再承诺时间，准备好后手动发售。' }] };
+  }
+  if (state.day % 360 !== 0) return;
+  const year = state.day / 360;
+  if (state.awards.some((item: any) => item.year === year)) return;
+  const eligible = state.catalog.filter((book: any) => book.released > (year - 1) * 360 && book.released <= year * 360);
+  const categories = ['年度作品', '创意玩法奖', '视觉表现奖'];
+  categories.forEach((category, categoryIndex) => {
+    const scoreOf = (book: any) => categoryIndex === 0 ? book.reviewScore : categoryIndex === 1 ? book.metrics.gameplay : book.metrics.visual;
+    const rivals = RIVAL_NAMES.slice(0, 5).map((name, index) => ({ name, score: 65 + ((year * 7 + index * 11 + categoryIndex * 3) % 26), own: false }));
+    const ranking = [...rivals, ...eligible.map((book: any) => ({ name: book.name, id: book.id, score: scoreOf(book), own: true }))].sort((left, right) => right.score - left.score);
+    const winner: any = ranking[0];
+    state.awards.push({ year, category, winner: winner.name, own: winner.own, ranking: ranking.slice(0, 8) });
+    if (winner.own) {
+      state.fans += categoryIndex === 0 ? 800 : 400;
+      if (state.goals.award === null) state.goals.award = state.day;
+      announce(state, { kind: 'record', title: `获得${category}`, text: `第 ${year} 年 · 《${winner.name}》 · 新增粉丝`, amount: 0 });
+    }
+    studioLog(state, `第 ${year} 年${category}`, `获奖作品：${winner.name}。`);
+  });
+  state.awards = state.awards.slice(-60);
 }
 
 export function consumeFeed(state: any) {
@@ -721,7 +1072,7 @@ function validStudio(state: any) {
   const metrics = (value: any) => value && ['progress', 'gameplay', 'visual', 'stability', 'defects'].every(key => nonnegative(value[key]));
   const feedback = (value: any) => value && Number.isInteger(value.day) && nonnegative(value.count) && number(value.score) && value.score >= 0 && value.score <= 100 && Array.isArray(value.findings) && value.findings.every((item: any) => item && text(item.key) && text(item.title) && number(item.value) && text(item.text));
   const choice = (value: any) => value && identifier(value.id) && text(value.title) && text(value.detail);
-  if (!state || state.version !== 3 || !Number.isInteger(state.day) || state.day < 1 || !Number.isInteger(state.seed) || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || typeof state.bridgeUsed !== 'boolean') return false;
+  if (!state || ![3, 4].includes(state.version) || !Number.isInteger(state.day) || state.day < 1 || !Number.isInteger(state.seed) || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || typeof state.bridgeUsed !== 'boolean') return false;
   if (!Number.isInteger(state.office) || !OFFICES[state.office] || !object(state.goals) || !['firstRelease', 'breakEven', 'moved'].every(key => day(state.goals[key])) || !nonnegative(state.fans) || !object(state.insights) || !Array.isArray(state.feed) || state.feed.length > 10) return false;
   if (!Array.isArray(state.staff) || state.staff.length > 16 || !state.staff.every(person) || new Set(state.staff.map((item: any) => item.id)).size !== state.staff.length) return false;
   if (!Array.isArray(state.tools) || !state.tools.every((key: any) => has(STUDIO_TOOLS, key)) || new Set(state.tools).size !== state.tools.length) return false;
@@ -738,7 +1089,20 @@ function validStudio(state: any) {
   }
   const review = (value: any) => object(value) && Array.isArray(value.reasons) && value.reasons.every((item: any) => item && text(item.title) && text(item.text)) && Array.isArray(value.quotes) && value.quotes.every((item: any) => item && text(item.text));
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && identifier(book.id) && text(book.name) && has(TYPES, book.type) && tier(book.scale) && metrics(book.metrics) && ['released', 'invested', 'received', 'price', 'units', 'openingUnits', 'openingReceipt', 'openingFollowers', 'followers', 'dailyUnits', 'reviewScore', 'reviewCount', 'testCount', 'lastDayUnits', 'marks'].every(key => nonnegative(book[key])) && book.price > 0 && number(book.lastGrowth) && (book.testScore === null || number(book.testScore)) && typeof book.tested === 'boolean' && text(book.trend) && Array.isArray(book.team) && book.team.every((item: any) => item && text(item.name) && has(ROLES, item.role) && has(TRAITS, item.trait)) && Array.isArray(book.weekly) && book.weekly.length <= 52 && book.weekly.every(nonnegative) && review(book.review))) return false;
-  return state.lastRelease === null || typeof state.lastRelease === 'string';
+  if (state.lastRelease !== null && typeof state.lastRelease !== 'string') return false;
+  if (state.version === 3) return true;
+  const nullableDay = (value: any) => value === null || Number.isInteger(value) && value >= 1;
+  const extendedPerson = (value: any) => ['experience', 'level', 'stress', 'tiredDays', 'leaveUntil', 'pending'].every(key => nonnegative(value[key])) && value.stress <= 100 && (value.pendingProject === null || identifier(value.pendingProject)) && (value.pendingRaise === undefined || value.pendingRaise === null || nonnegative(value.pendingRaise)) && (value.raiseDue === undefined || nullableDay(value.raiseDue));
+  const extendedMetrics = (value: any) => Array.isArray(value.details) && value.details.length === 4 && value.details.every((detail: any) => number(detail) && detail >= 0 && detail <= 100) && (value.potential === null || number(value.potential) && value.potential >= 0 && value.potential <= 100);
+  if (typeof state.sound !== 'boolean' || typeof state.overtime !== 'boolean' || !['topTen', 'award', 'expanded'].every(key => nullableDay(state.goals[key])) || !state.staff.every(extendedPerson) || !Object.values(state.candidates).every((pool: any) => pool.people.every(extendedPerson))) return false;
+  if (state.project && (!['designDone', 'designValue', 'direction', 'rethink', 'expectation'].every(key => nonnegative(state.project[key])) || !(state.project.potential === null || number(state.project.potential) && state.project.potential >= 0 && state.project.potential <= 100) || !object(state.project.contributions) || !Object.values(state.project.contributions).every(nonnegative) || !nullableDay(state.project.deadline) || !(state.project.sequel === null || identifier(state.project.sequel)))) return false;
+  if (!state.catalog.every((book: any) => extendedMetrics(book.metrics) && ['expectation', 'discountUntil', 'discountUsed', 'updates'].every(key => nonnegative(book[key])) && ['rank', 'previousRank', 'bestRank'].every(key => book[key] === null || Number.isInteger(book[key]) && book[key] >= 1) && (book.sequel === null || identifier(book.sequel)))) return false;
+  const ranking = (value: any) => Array.isArray(value) && value.length <= 1000 && value.every((item: any) => item && text(item.name) && (nonnegative(item.score) || nonnegative(item.units)));
+  if (!Array.isArray(state.rankings) || !ranking(state.rankings) || !Array.isArray(state.exhibitions) || state.exhibitions.length > 30 || !state.exhibitions.every((entry: any) => entry && Number.isInteger(entry.day) && identifier(entry.project) && text(entry.name) && metrics(entry.metrics) && extendedMetrics(entry.metrics) && (entry.result === null || entry.result && nonnegative(entry.result.rank) && nonnegative(entry.result.score) && nonnegative(entry.result.followers) && text(entry.result.media) && ranking(entry.result.ranking)))) return false;
+  if (!Array.isArray(state.awards) || state.awards.length > 60 || !state.awards.every((entry: any) => entry && Number.isInteger(entry.year) && text(entry.category) && text(entry.winner) && typeof entry.own === 'boolean' && ranking(entry.ranking))) return false;
+  if (state.operation && (!identifier(state.operation.book) || !state.catalog.some((book: any) => book.id === state.operation.book) || !nonnegative(state.operation.remaining))) return false;
+  if (state.event?.person && !state.staff.some((item: any) => item.id === state.event.person)) return false;
+  return true;
 }
 
 function migrateV2(saved: any) {
@@ -777,7 +1141,28 @@ function migrateV2(saved: any) {
 }
 
 export function restoreStudio(saved: any) {
-  const next = saved && saved.version === 2 ? migrateV2(saved) : clone(saved);
+  let next = saved && saved.version === 2 ? migrateV2(saved) : clone(saved);
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
+  if (next.version === 3) next = migrateV3(next);
+  if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
+  return next;
+}
+
+function migrateV3(saved: any) {
+  const next = clone(saved);
+  next.version = 4;
+  Object.assign(next, { overtime: false, sound: true, exhibitions: [], awards: [], rankings: [], operation: null });
+  Object.assign(next.goals, { topTen: null, award: null, expanded: null });
+  const extendPerson = (person: any) => Object.assign(person, { experience: 0, level: 0, stress: 0, tiredDays: 0, leaveUntil: 0, pending: 0, pendingProject: null });
+  next.staff.forEach(extendPerson);
+  Object.values(next.candidates).forEach((pool: any) => pool.people.forEach(extendPerson));
+  if (next.project) {
+    Object.assign(next.project, { potential: next.project.checkpoints.prototype ? 98 : null, direction: 0, rethink: 0, designDone: 0, designValue: 0, contributions: {}, sequel: null, expectation: 0, deadline: null });
+    if (next.event?.id === 'prototype') next.event = prototypeEvent(next);
+  }
+  for (const book of next.catalog) {
+    Object.assign(book.metrics, { details: [book.metrics.gameplay, book.metrics.gameplay, book.metrics.gameplay, [70, 85, 98][book.scale]], potential: 98 });
+    Object.assign(book, { sequel: null, expectation: 0, rank: null, previousRank: null, bestRank: null, discountUntil: 0, discountUsed: 0, updates: 0 });
+  }
   return next;
 }

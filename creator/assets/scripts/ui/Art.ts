@@ -49,7 +49,7 @@ export class Pen {
 }
 
 export const palette = {
-  code: '#2f7d63', art: '#c58a32', skin: '#f1cfb0', hair: '#3b3330',
+  code: '#2f7d63', art: '#c58a32', design: '#497899', skin: '#f1cfb0', hair: '#3b3330',
   desk: '#a7774c', deskTop: '#c4925f', screenOn: '#cfeee0', screenArt: '#f6e2b8', screenOff: '#5c6a66'
 };
 
@@ -61,8 +61,8 @@ export function seatLayout(seats: number, w: number, h: number) {
   for (let index = 0; index < seats; index++) {
     const row = Math.floor(index / perRow);
     const column = index % perRow;
-    const scale = rows === 2 ? (row === 0 ? 0.78 : 0.95) : 1;
     const gap = w / (perRow + 0.4);
+    const scale = Math.min(rows === 2 ? (row === 0 ? 0.78 : 0.95) : 1, gap / 62);
     result.push({ x: gap * (column + 0.7), y: rows === 2 ? (row === 0 ? h * 0.5 : h * 0.79) : h * 0.72, scale });
   }
   return result;
@@ -102,7 +102,7 @@ export function drawRoom(pen: Pen, w: number, h: number, office: number) {
 export function drawDesk(pen: Pen, x: number, y: number, scale: number, occupied: boolean, role: string, working: boolean) {
   const s = scale;
   if (occupied) {
-    pen.rect(x - 11 * s, y - 34 * s, 22 * s, 20 * s, role === 'art' ? palette.art : palette.code, 7 * s);
+    pen.rect(x - 11 * s, y - 34 * s, 22 * s, 20 * s, role === 'art' ? palette.art : role === 'design' ? palette.design : palette.code, 7 * s);
   } else {
     pen.rect(x - 11 * s, y - 24 * s, 22 * s, 12 * s, '#b9a993', 4 * s, 120);
   }
