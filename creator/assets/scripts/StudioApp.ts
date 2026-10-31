@@ -30,6 +30,8 @@ export class StudioApp extends Component {
   private resumeAfterMenu = false;
   private routes: any[] = [];
   private draft: any = { name: '', type: '', scale: 0 };
+  // Which open project the main screen currently speaks for when several run at once.
+  private watching: string | null = null;
   private audio: AudioSource;
   private sounds = new Map<string, AudioClip>();
   private stage: Node;
@@ -63,7 +65,9 @@ export class StudioApp extends Component {
   private menuAck: string | null = null;
   private activeTouches = new Set<number>();
   private renderPending = false;
-  private clearNotice = () => { this.notice = ''; this.render(); };
+  // timeUp clears both: a storage warning shares the toast with normal notices, so if it were left
+  // behind, every later render would bring the old warning back and it could never be dismissed.
+  private clearNotice = () => { this.notice = ''; this.storageIssue = ''; this.render(); };
 
   start() {
     view.setDesignResolutionSize(390, 844, ResolutionPolicy.FIXED_WIDTH);
@@ -98,7 +102,9 @@ export class StudioApp extends Component {
     screen.on('window-resize', this.resize, this);
     engineGame.on(Game.EVENT_HIDE, this.background, this);
     platform.onHide(() => { if (this.isValid) this.background(); });
-    if (this.storageIssue) this.notify(this.storageIssue);
+    // The storage warning stays until dismissed (no timer), so it is not lost while the player is still
+    // reading the opening screen; normal notices still expire on their own.
+    if (this.storageIssue) this.render();
   }
 
   onDestroy() {
@@ -163,7 +169,8 @@ export class StudioApp extends Component {
         }
       }
       if (this.state.over) this.playing = false;
-      if (changed) this.holdForGuide();
+      // Explanations no longer stop the clock here: a pending tip must never look like the game
+      // pausing itself the moment the player presses play. The tip stays on screen while time runs.
       // Daily sales and payroll are summarised at month end instead of floating every day.
       if (changed && this.shown) this.shown.cash = this.state.cash;
       const report = this.state.report;
@@ -184,11 +191,13 @@ export class StudioApp extends Component {
       const raw = platform.read();
       if (raw) return core.restoreStudio(JSON.parse(raw));
     } catch {
+      // Keep the unreadable copy aside, then start fresh. The warning is shown once and can be dismissed;
+      // it must not come back on every render, or the player can never get rid of it.
       try {
         const raw = platform.read();
         if (raw) platform.write(raw, 'sunlight-studio-v2-recovery');
       } catch { this.storageIssue = '本地存档不可用，请及时导出进度。'; }
-      this.storageIssue ||= '存档无法读取，原数据已保存为恢复副本。';
+      this.storageIssue ||= '旧存档无法读取，已另存为恢复副本，新开了一局。';
     }
     return core.createStudio();
   }
@@ -367,14 +376,23 @@ export class StudioApp extends Component {
     this.renderPending = false;
     this.clear();
     this.box(this.stage, 'Paper', 0, 0, this.width, this.height, colors.bg);
-    if (this.inputRequest) this.renderInput();
-    else if (this.routes.length) this.renderMenu();
-    else this.renderStudio();
+    // A screen that throws half-way used to leave a blank page with no way back. Draw the reason on
+    // the page instead, and keep the bottom navigation alive so the player can still move around.
+    try {
+      if (this.inputRequest) this.renderInput();
+      else if (this.routes.length) this.renderMenu();
+      else this.renderStudio();
+    } catch (error: any) {
+      console.error('Render failed:', error);
+      this.text(this.stage, '这一页没能画出来：' + (error?.message || error), 20, this.top + 70, this.width - 40, 60, 13, colors.danger);
+      this.button(this.stage, '返回工作室', 20, this.top + 130, this.width - 40, 44, () => { this.routes = []; this.inputRequest = null; this.playing = false; this.render(); }, true);
+    }
     if (!this.inputRequest) this.renderGuide();
     if (this.notice || this.storageIssue) {
       const message = this.notice || this.storageIssue;
       const toast = this.box(this.stage, 'Toast', 20, this.height - this.bottom - 130, this.width - 40, 52, colors.night, 12, 235);
       this.text(toast, message, 16, 0, this.width - 72, 52, 13, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
+      // Dismissing drops the sticky storage warning too, so it cannot come straight back on the next render.
       this.clickable(toast, () => { this.notice = ''; this.storageIssue = ''; this.render(); });
       const opacity = toast.addComponent(UIOpacity);
       opacity.opacity = 0;
@@ -387,12 +405,15 @@ export class StudioApp extends Component {
     const width = this.width;
     const inner = width - 40;
     const month = Math.floor((state.day - 1) / 30) + 1;
-    const top = this.top;
-    const status = state.over ? '经营结束' : state.event ? '等待你的决定' : this.playing ? '时间流动中' : '时间已暂停';
-    this.text(this.stage, state.company || '日光工作室', 20, top, width - 210, 24, 17, colors.ink, true);
-    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日 · ${status}`, 20, top + 24, width - 210, 18, 11, this.playing ? colors.green : colors.muted);
-    this.button(this.stage, '', width - 186, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
-    [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', width - 140 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
+    const header = platform.header();
+    const top = header.top;
+    const headerRight = width - Math.max(20, header.capsule);
+    const controlsRight = headerRight - 8;
+    const controlsLeft = controlsRight - 4 * 40;
+    this.text(this.stage, state.company || '日光工作室', 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
+    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
+    this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
+    [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
     const financesY = top + 52;
     const finance = this.box(this.stage, 'Finance', 20, financesY, inner, 42, colors.paper, 10);
     this.anchors.set('finance', finance);
@@ -407,30 +428,54 @@ export class StudioApp extends Component {
       const cellWidth = width / 6;
       const lock = content.menuLock(state, menu);
       const node = this.box(this.stage, title, index * cellWidth, navY, cellWidth, 54);
-      this.clickable(node, () => lock ? this.notify(title + '：' + lock + '。') : this.openMenu(menu === 'project' && !state.project ? 'new-project' : menu));
+      this.clickable(node, () => {
+        if (lock) { this.notify(title + '：' + lock + '。'); return; }
+        const target = menu === 'project' && !core.projectOpen(state).length ? 'new-project' : menu;
+        const id = ['project', 'testing', 'market'].includes(menu) ? this.watching : undefined;
+        this.openMenu(target, id);
+      });
       this.image(node, 'icons/' + (lock ? 'Lock' : icon), (cellWidth - 22) / 2, 5, 22, 22, lock ? colors.line : colors.green);
       this.text(node, title, 0, 32, cellWidth, 18, 11, lock ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
       this.anchors.set('nav-' + menu, node);
     });
     const contentY = financesY + 50;
     const viewHeight = navY - contentY - 10;
-    const project = state.project;
+    const open = core.projectOpen(state);
+    // Several projects at once: a tab strip picks which one the main screen speaks for.
+    const shown = open.find((item: any) => item.id === this.watching) || open[0];
+    if (shown) this.watching = shown.id;
+    let contentTop = contentY;
+    if (open.length > 1) {
+      const strip = this.box(this.stage, 'Projects', 20, contentY, inner, 38);
+      const cell = (inner - (open.length - 1) * 6) / open.length;
+      open.forEach((item: any, index: number) => {
+        const active = item.id === shown.id;
+        const node = this.box(strip, 'Project-' + item.id, index * (cell + 6), 0, cell, 34, active ? colors.green : colors.soft, 8);
+        this.text(node, item.name, 6, 0, cell - 12, 22, 11, active ? colors.paper : colors.green, active).horizontalAlign = HorizontalTextAlignment.CENTER;
+        this.text(node, Math.round(item.progress) + '%', 6, 18, cell - 12, 14, 10, active ? '#d7e2d9' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+        this.clickable(node, () => { this.watching = item.id; this.render(); });
+        this.anchors.set('project-tab-' + index, node);
+      });
+      contentTop = contentY + 44;
+    }
+    const project = shown;
     // Fixed rows below and above the scene; the scene absorbs any shortage on short screens.
-    const shrink = Math.max(0, Math.min(80, (project ? 504 : 372) - viewHeight));
-    const { body, finish } = this.scroller(contentY, viewHeight);
+    const shrink = Math.max(0, Math.min(80, (project ? 504 : 372) - (navY - contentTop - 10)));
+    const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
     let y = this.goalCard(body, 0) + 8;
     const sceneTop = y;
     y += this.office(body, y, 116 - Math.round(shrink / 2)) + 6;
     const metrics = project ? core.projectMetrics(project) : null;
     const workHeight = 96 - Math.round(shrink / 2);
     const { node: work, pen } = this.canvasNode(body, 'Work', 0, y, inner, workHeight);
-    if (project) drawWork(pen, inner, workHeight, project.type, project.done / project.total, metrics.visual, project.started);
-    else if (state.catalog.length) drawWork(pen, inner, workHeight, state.catalog[0].type, 1, state.catalog[0].metrics.visual, state.catalog[0].released);
+    if (project) drawWork(pen, inner, workHeight, project.type, metrics.progress / 100, metrics.dimensions.picture, project.started);
+    else if (state.catalog.length) drawWork(pen, inner, workHeight, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
     else { pen.rect(0, 0, inner, workHeight, colors.pale, 6); this.text(work, '立项后，作品会在这里一点点成形', 0, 0, inner, workHeight, 13, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER; }
     if (!project && state.catalog.length) {
       const caption = '上一作《' + state.catalog[0].name + '》';
-      const chip = this.box(work, 'Caption', 8, workHeight - 28, Math.min(inner - 16, caption.length * 12 + 20), 22, colors.night, 11, 190);
-      this.text(chip, caption, 10, 0, caption.length * 12 + 4, 22, 11, '#ffffff');
+      const chipWidth = Math.min(inner - 16, caption.length * 12 + 20);
+      const chip = this.box(work, 'Caption', 8, workHeight - 28, chipWidth, 22, colors.night, 11, 190);
+      this.text(chip, caption, 10, 0, chipWidth - 20, 22, 11, '#ffffff');
     }
     this.anchors.set('work', work);
     this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, sceneTop, inner, y + workHeight - sceneTop));
@@ -466,7 +511,7 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const { node, pen } = this.canvasNode(body, 'Office', 0, y, inner, height);
     drawRoom(pen, inner, height, state.office);
-    const working = this.playing && !!state.project;
+    const working = this.playing && core.projectOpen(state).length > 0;
     const layout = seatLayout(core.seats(state), inner, height);
     const desks = new Pen(this.box(node, 'Desks', 0, 0, inner, height).addComponent(Graphics));
     layout.forEach((seat, index) => {
@@ -486,17 +531,22 @@ export class StudioApp extends Component {
 
   private projectPanel(body: Node, y: number, metrics: any) {
     const state = this.state;
-    const project = state.project;
+    // Must follow the tab the player picked, not whichever project happens to be first.
+    const open = core.projectOpen(state);
+    const project = open.find((item: any) => item.id === this.watching) || open[0];
+    if (!project) return y;
     const inner = this.width - 40;
-    const forecast = core.projectForecast(state);
+    const forecast = core.projectForecast(state, project);
     this.text(body, '《' + project.name + '》', 0, y, inner - 150, 24, 16, colors.ink, true);
     this.text(body, core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, y, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     y += 28;
     y += this.milestones(body, y, project, metrics, forecast) + 6;
+    y += this.radar(body, y, metrics, project.type, project) + 8;
+    const bottleneck = forecast.bottleneck ? core.DIMENSIONS.find(dimension => dimension.key === forecast.bottleneck.key)?.name : '—';
     const cells: any[] = [
-      ['玩法 / 潜力', metrics.gameplay.toFixed(0) + ' / ' + (project.potential ?? '?'), colors.green, metrics.gameplay, 'stat-gameplay'],
-      ['视觉', metrics.visual.toFixed(0), colors.amber, metrics.visual, 'stat-visual'],
-      ['已知缺陷', project.test ? project.found + ' 项' : '未测试', colors.blue, -1, 'stat-defects'],
+      ['综合评分', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
+      ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
+      ['已知缺陷', project.tests ? metrics.known + ' 项' : '未测试', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
     ];
     const cell = inner / 4;
@@ -504,12 +554,11 @@ export class StudioApp extends Component {
     cells.forEach(([title, value, color, bar, anchor], index) => {
       const node = this.box(body, title, index * cell, y, cell - 6, 46);
       this.text(node, title, 0, 0, cell - 6, 16, 10, colors.muted);
-      const label = this.text(node, value, 0, 16, cell - 6, 24, anchor === 'stat-gameplay' ? 14 : value === '未测试' ? 13 : 18, value === '未测试' ? colors.muted : color, true);
+      const label = this.text(node, value, 0, 16, cell - 6, 24, anchor === 'stat-overall' ? 14 : value === '未测试' ? 13 : 18, value === '未测试' || value === '—' ? colors.muted : color, true);
       if (anchor === 'stat-followers') { this.followersLabel = label; this.rollLabel('followers', label, (n: number) => content.number(n)); }
       if (bar >= 0) {
         this.box(node, 'Track', 0, 42, cell - 12, 3, colors.line);
         this.box(node, 'Value', 0, 42, (cell - 12) * bar / 100, 3, color);
-        if (anchor === 'stat-gameplay' && project.potential !== null) this.box(node, 'Potential', (cell - 12) * project.potential / 100 - 1, 40, 2, 7, colors.amber);
       }
       this.anchors.set(anchor, node);
     });
@@ -517,6 +566,78 @@ export class StudioApp extends Component {
     const insight = core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type);
     this.anchors.set('insight', this.text(body, insight + (project.test ? ' · 试玩 ' + project.test.score.toFixed(1) + ' 分' : ''), 0, y, inner, 18, 11, colors.muted).node);
     return y + 26;
+  }
+
+  // Six-axis radar: the solid layer is the current score, the dashed one is where today's team would
+  // land if it finished the work. The gap between them is what time can still buy.
+  private radar(body: Node, y: number, metrics: any, type: string, project?: any) {
+    const inner = this.width - 40;
+    const height = 184;
+    const { node, pen } = this.canvasNode(body, 'Radar', 0, y, inner, height);
+    const weights = core.TYPES[type].weights;
+    const center = { x: inner / 2, y: 82 };
+    const radius = 52;
+    const count = core.DIM_KEYS.length;
+    // Layout coordinates (origin top-left, y downward). The Pen flips y internally for the Graphics
+    // API, so these values are already in the downward-positive space the Pen expects.
+    const point = (index: number, value: number) => {
+      const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
+      return { x: center.x + Math.cos(angle) * radius * value / 100, y: center.y + Math.sin(angle) * radius * value / 100 };
+    };
+    for (const ring of [0.25, 0.5, 0.75, 1]) {
+      const points = core.DIM_KEYS.map((_key: string, index: number) => point(index, ring * 100));
+      for (let index = 0; index < count; index += 1) {
+        const next = points[(index + 1) % count];
+        pen.line(points[index].x, points[index].y, next.x, next.y, ring === 1 ? colors.line : colors.pale, 1);
+      }
+    }
+    core.DIM_KEYS.forEach((_key: string, index: number) => {
+      const far = point(index, 100);
+      pen.line(center.x, center.y, far.x, far.y, colors.pale, 1);
+    });
+    // The dashed layer shows where today's team would land if it finished all planned work.
+    const expected = project ? core.expectedDimensions(this.state, project) : null;
+    if (expected) {
+      const dash = core.DIM_KEYS.map((key: string, index: number) => point(index, expected[key] || 0));
+      for (let index = 0; index < count; index += 1) {
+        const a = dash[index];
+        const b = dash[(index + 1) % count];
+        this.dashedLine(pen, a.x, a.y, b.x, b.y, colors.amber);
+      }
+    }
+    const solid = core.DIM_KEYS.map((key: string, index: number) => point(index, metrics.dimensions[key] || 0));
+    for (let index = 0; index < count; index += 1) {
+      const next = solid[(index + 1) % count];
+      pen.line(solid[index].x, solid[index].y, next.x, next.y, colors.green, 2);
+    }
+    core.DIM_KEYS.forEach((key: string, index: number) => {
+      const weight = weights[key];
+      const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
+      const score = Math.round(metrics.dimensions[key] || 0);
+      const label = this.text(node, name + '\n' + score + ' 分', 0, 0, 56, 32, 11, weight >= 0.3 ? colors.ink : colors.muted, weight >= 0.3);
+      label.horizontalAlign = HorizontalTextAlignment.CENTER;
+      // setPosition uses engine coords (y up). Center the 32px label on the radial point.
+      const spot = point(index, 120);
+      label.node.setPosition(spot.x - 28, -spot.y + 16);
+      if (project && !project.released) this.clickable(label.node, () => this.openMenu('dimension', project.id, false, key));
+    });
+    this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
+    return height;
+  }
+
+  // Dashed segment for the radar's "expected" layer (the Pen only draws solid lines).
+  private dashedLine(pen: Pen, x1: number, y1: number, x2: number, y2: number, hex: string) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) return;
+    const step = 4;
+    const count = Math.max(1, Math.floor(length / step));
+    for (let index = 0; index < count; index += 2) {
+      const t0 = index / count;
+      const t1 = Math.min(1, (index + 1) / count);
+      pen.line(x1 + dx * t0, y1 + dy * t0, x1 + dx * t1, y1 + dy * t1, hex, 1);
+    }
   }
 
   // Phase track: days to the next milestone sit above the current segment, total days under "完成".
@@ -533,10 +654,9 @@ export class StudioApp extends Component {
     const fill = (phase + (phaseEnd > phaseStart ? (metrics.progress - phaseStart) / (phaseEnd - phaseStart) : 0)) / 4;
     this.box(track, 'Rail', 12, railY + 5, inner - 24, 3, colors.line);
     this.box(track, 'Fill', 12, railY + 5, (inner - 24) * fill, 3, colors.green);
-    const focusName = project.focus === 'special' ? core.TYPES[project.type].special.name : core.FOCUS[project.focus].name;
-    const estimate = phase === 0 ? forecast.protoDays : phase === 1 ? forecast.demoDays : forecast.days;
-    const note = project.focus !== 'develop' ? focusName + '中 · 开发暂停' : phase === 3 ? '可以发售' : estimate == null ? '没有程序员' : '约 ' + estimate + ' 天';
-    const warn = project.focus !== 'develop' || (phase < 3 && estimate == null);
+    const estimate = phase === 0 ? Math.round((forecast.days || 0) * 0.5) : forecast.days;
+    const note = phase === 3 ? '可以发售' : estimate == null ? '缺人手' : '约 ' + estimate + ' 天';
+    const warn = phase < 3 && (estimate == null || !!forecast.bottleneck);
     const noteX = 12 + gap * (phase + 0.5);
     this.text(track, note, Math.max(0, Math.min(inner - 130, noteX - 65)), 0, 130, 18, 11, warn ? colors.amber : colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
     phases.forEach(([title, threshold], index) => {
@@ -544,13 +664,14 @@ export class StudioApp extends Component {
       const label = this.text(track, title, Math.min(inner - 48, Math.max(0, index * gap - 11)), railY + 16, 48, 16, 10, colors.muted);
       label.horizontalAlign = index === 0 ? HorizontalTextAlignment.LEFT : index === phases.length - 1 ? HorizontalTextAlignment.RIGHT : HorizontalTextAlignment.CENTER;
     });
-    if (phase < 3 && forecast.days != null && project.focus === 'develop') this.text(track, '全部约 ' + forecast.days + ' 天', 3 * gap - 22, railY + 31, 70, 14, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+    if (phase < 3 && forecast.days != null) this.text(track, '全部约 ' + forecast.days + ' 天', 3 * gap - 22, railY + 31, 70, 14, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
     return 58;
   }
 
   // Floating "+N" hints for followers, cash and found defects; only for changes worth noticing.
   private showDeltas(cashLabel: Label) {
-    const project = this.state.project;
+    const open = core.projectOpen(this.state);
+    const project = open.find((item: any) => item.id === this.watching) || open[0];
     const current = { id: project?.id || '', followers: project ? Math.round(project.followers) : 0, cash: this.state.cash, found: project ? project.found : 0, company: this.state.company, day: this.state.day };
     const last = this.shown;
     this.shown = current;
@@ -642,8 +763,20 @@ export class StudioApp extends Component {
     cursor += this.paragraph(body, '先给工作室起个名字。', cursor, true);
     this.input(body, '例如：日光工作室', this.draft.name, cursor, 48, value => { this.draft.name = value; });
     cursor += 62;
+    this.text(body, '你的出身（决定首作哪一维最拿手）', 0, cursor, inner, 24, 15, colors.ink, true);
+    cursor += 30;
+    const founder = this.draft.founder || 'code';
+    const founderRoles = Object.keys(core.ROLES);
+    founderRoles.forEach((role: string, index: number) => {
+      const cell = (inner - 16) / 3;
+      const col = index % 3;
+      const row = Math.floor(index / 3);
+      this.button(body, core.ROLES[role].name, col * (cell + 8), cursor + row * 50, cell, 42, () => { this.draft.founder = role; this.render(); }, founder === role, false);
+    });
+    cursor += Math.ceil(founderRoles.length / 3) * 50;
+    cursor += this.paragraph(body, '你一个人也能独立做完第一款游戏；后面招到同事，再补齐其余各项。', cursor, true, 0, inner, 13);
     this.button(body, '成立工作室', 0, cursor, inner, 48, () => {
-      this.apply(core.nameCompany(this.state, this.draft.name));
+      this.apply(core.nameCompany(this.state, this.draft.name, this.draft.founder || 'code'));
       this.resumeAfterMenu = false;
       this.closeMenu();
     }, true);
@@ -693,7 +826,8 @@ export class StudioApp extends Component {
         this.text(parent, block.text, 0, y, width - 72, 36, 14, colors.ink, true);
         const toggle = this.box(parent, block.text + 'Switch', width - 56, y + 3, 56, 30, block.value ? colors.green : colors.line, 15);
         this.box(toggle, 'Thumb', block.value ? 28 : 4, 4, 24, 22, colors.paper, 11);
-        this.clickable(toggle, () => this.dispatch(block.action, { enabled: !block.value }));
+        // Keep the block's own payload (which employee, which setting) instead of dropping it.
+        this.clickable(toggle, () => this.dispatch(block.action, { ...(block.data || {}), enabled: !block.value, value: !block.value }));
         return y + 48;
       }
       case 'text': return y + this.paragraph(parent, block.text, y, block.muted, 0, width, block.muted ? 13 : 14);
@@ -740,9 +874,17 @@ export class StudioApp extends Component {
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }
+      case 'segments': {
+        this.text(parent, block.title, 0, y, width, 24, 13, colors.ink, true);
+        y += 28;
+        const cell = (width - (block.items.length - 1) * 8) / block.items.length;
+        block.items.forEach((item: any, index: number) => this.button(parent, item.text, index * (cell + 8), y, cell, 42, () => this.dispatch(item.action, item.data), !!item.active, false, undefined, item.anchor));
+        return y + 54;
+      }
       case 'choices': {
         const start = y;
-        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data), { tag: item.recommended ? '推荐' : '', highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
+        // Event choices carry their id only; hand it to the dispatcher so the decision has something to resolve.
+        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data || { choice: item.id }), { tag: item.recommended ? '推荐' : '', highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }
@@ -769,15 +911,27 @@ export class StudioApp extends Component {
       case 'candidates': {
         const start = y;
         block.people.forEach((person: any, index: number) => {
-          const detail = `能力 ${person.skill} · 速度 ${person.pace} · 月薪 ${content.money(person.wage)}\n${core.TRAITS[person.trait].name}：${core.TRAITS[person.trait].text}`;
-          y += this.choice(parent, y, person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : '', tagColor: colors.green, disabled: person.hired, anchor: 'candidate-' + index }) + 10;
+          const tags = [person.fame ? '行业名人' : '', ...person.tags.map((tag: any) => core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name)].filter(Boolean);
+          const home = (core.ROLES[person.role].home || []).filter((key: string) => core.WORK_KEYS.includes(key));
+          const homeAbilities = [...new Set(home.map((key: string) => core.WORKS.find(work => work.key === key)?.ability).filter(Boolean))];
+          const bestAbility = core.ABILITY_KEYS.reduce((best: any, key: string) => person.abilities[key] > person.abilities[best] ? key : best, core.ABILITY_KEYS[0]);
+          const homeText = homeAbilities.map((key: string) => core.ABILITIES.find(ability => ability.key === key)?.name + ' ' + person.abilities[key]).join(' / ');
+          const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + person.abilities[bestAbility];
+          const detail = `速度 ${person.speed} · 月薪 ${content.money(person.wage)}\n本行：${homeText}\n最高：${bestText}\n${tags.join(' · ')}`;
+          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index }) + 10;
         });
         this.anchors.set('candidates', this.box(parent, 'CandidatesAnchor', 0, start, width, y - start - 10));
         return y;
       }
       case 'staff':
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
-        for (const person of this.state.staff) y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, `能力 ${person.skill} · 速度 ${person.pace} · 月薪 ${content.money(person.wage)}\n压力 ${person.stress} / 100${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${person.pendingRaise ? ' · 期望涨薪' : ''}`, () => this.openMenu('person', person.id)) + 10;
+        for (const person of this.state.staff) {
+          // Tags stay on the card: they are how the player ties a later slowdown to overtime.
+          const tags = [...person.stressTags.map((key: string) => core.STRESS_TAGS[key].name), ...person.tags.map((tag: any) => core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name)];
+          const detail = `速度 ${person.speed} · 月薪 ${content.money(person.wage)}${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${tags.length ? '\n' + tags.join(' · ') : ''}`;
+          const stress = person.stressTags.length > 0;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { tag: person.stressTags.includes('leaving') ? '想走' : stress ? '疲惫' : '', tagColor: colors.amber }) + 10;
+        }
         return y;
       case 'focus':
         for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch('focus', { focus: item.key }), { tag: item.active ? '进行中' : '', tagColor: colors.green, highlight: item.active, disabled: item.disabled, anchor: item.anchor }) + 8;
@@ -836,6 +990,97 @@ export class StudioApp extends Component {
         }
         return y + 4;
       case 'payout': return y + this.payout(parent, y, block) + 10;
+      case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId)) + 12;
+      case 'dimensions': {
+        // Each dimension shows its remaining person-days and estimated finish; the slowest staffed one
+        // is the bottleneck, and dimensions nobody works on are called out instead of pencilled in.
+        for (const item of block.items) {
+          const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
+          const idle = item.remaining > 0.0001 && item.days === null;
+          const slow = item.key === block.bottleneck;
+          const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
+          this.text(row, dimension?.name || item.key, 12, 4, width - 150, 18, 13, colors.ink, true);
+          this.text(row, item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : '预计 ' + item.days + ' 天';
+          this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
+          if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          // Tap a row to open its detail page (score, who's on it, and a shortcut to assign).
+          this.clickable(row, () => this.openMenu('dimension', block.projectId, false, item.key));
+          y += 50;
+        }
+        return y + 4;
+      }
+      case 'person-assign': {
+        const flags = [...(block.stress || []), ...(block.fame ? ['磨合期'] : [])];
+        const columns = Math.min(3, Math.max(1, block.works.length));
+        const rows = Math.ceil(block.works.length / columns);
+        const header = flags.length ? 66 : 48;
+        // Extra row at the bottom: the two shortcuts. Without them a player who wants a plain
+        // "do everything" or "back to your own trade" has to tap seven boxes one at a time.
+        const shortcut = 44;
+        const height = header + rows * 50 + shortcut;
+        const card = this.box(parent, 'Assign', 0, y, width, height, colors.paper, 10);
+        // Tapping the name row opens that person's own page; the work boxes below are the toggles.
+        const titleRow = this.box(card, 'AssignTitle', 0, 0, width, 26);
+        this.text(card, block.title, 12, 8, width - 128, 20, 13, colors.ink, true);
+        if (block.status) this.text(card, block.status, width - 116, 8, 104, 20, 10, colors.amber).horizontalAlign = HorizontalTextAlignment.RIGHT;
+        this.clickable(titleRow, () => this.openMenu('person', block.personId));
+        this.text(card, block.detail, 12, 28, width - 24, 18, 11, colors.muted);
+        if (flags.length) this.text(card, '产出下降：' + flags.join(' · '), 12, 46, width - 24, 16, 10, colors.danger);
+        const cell = (width - 24 - (columns - 1) * 8) / columns;
+        block.works.forEach((work: any, index: number) => {
+          const on = work.on;
+          const column = index % columns;
+          const line = Math.floor(index / columns);
+          const node = this.box(card, 'Work-' + work.key, 12 + column * (cell + 8), header + line * 50, cell, 42, on ? colors.green : colors.soft, 8);
+          const shortName = work.key === 'discover' ? '找缺陷' : work.key === 'repair' ? '修缺陷' : work.name;
+          this.text(node, shortName, 2, 2, cell - 4, 22, 12, on ? colors.paper : colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+          this.text(node, '能力 ' + (work.ability ?? '—'), 2, 23, cell - 4, 16, 10, on ? '#e8f3ed' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+          this.clickable(node, () => {
+            // Always resolve against the live save, never the snapshot this card was drawn from:
+            // two fast taps otherwise write the same stale list and the first one looks ignored.
+            const route = this.routes[this.routes.length - 1] || {};
+            const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
+            const person = this.state.staff.find((item: any) => item.id === block.personId);
+            if (!project || !person) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
+            const current: string[] = core.personWorks(this.state, project, person);
+            const next = current.includes(work.key) ? current.filter((key: string) => key !== work.key) : [...current, work.key];
+            const name = core.WORKS.find(entry => entry.key === work.key)?.name || work.key;
+            if (!next.length) {
+              // Turning off the last box must still do something visible: fall back to the trade's
+              // own work instead of refusing and leaving the player staring at an unchanged card.
+              const home = (core.ROLES[person.role].home || []).find((key: string) => core.WORK_KEYS.includes(key)) || 'discover';
+              this.apply(core.assign(this.state, project.id, person.id, [home]));
+              this.notify(person.name + '：每人至少做一项，已回到本行「' + (core.WORKS.find(entry => entry.key === home)?.name || home) + '」。');
+              return;
+            }
+            this.apply(core.assign(this.state, project.id, person.id, next));
+            this.notify(person.name + (next.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
+          });
+          if (index === 0) this.anchors.set('person-assign-' + block.index, node);
+        });
+        const person = this.state.staff.find((item: any) => item.id === block.personId);
+        const homeKey = person ? ((core.ROLES[person.role].home || []).find((key: string) => core.WORK_KEYS.includes(key)) || 'discover') : '';
+        const half = (width - 32) / 2;
+        this.button(card, '只做本行', 12, header + rows * 50 + 2, half, 36, () => {
+          const route = this.routes[this.routes.length - 1] || {};
+          const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
+          const target = this.state.staff.find((item: any) => item.id === block.personId);
+          if (!project || !target || !homeKey) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
+          this.apply(core.assign(this.state, project.id, target.id, [homeKey]));
+          this.notify(target.name + '：只做本行。');
+        }, false);
+        this.button(card, '全部都做', 12 + half + 8, header + rows * 50 + 2, half, 36, () => {
+          const route = this.routes[this.routes.length - 1] || {};
+          const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
+          const target = this.state.staff.find((item: any) => item.id === block.personId);
+          if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
+          this.apply(core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]));
+          this.notify(target.name + '：所有工作都接手。');
+        }, false);
+        return y + height + 12;
+      }
       default: return y;
     }
   }
@@ -843,7 +1088,7 @@ export class StudioApp extends Component {
   private cover(parent: Node, y: number, book: any) {
     const width = this.width - 40;
     const { node, pen } = this.canvasNode(parent, 'Cover', 0, y, width, 150);
-    drawWork(pen, width, 150, book.type, 1, book.metrics.visual, book.released);
+    drawWork(pen, width, 150, book.type, 1, book.metrics.dimensions.picture, book.released);
     pen.rect(0, 100, width, 50, colors.night, 0, 170);
     this.text(node, '《' + book.name + '》', 14, 104, width - 28, 26, 19, '#ffffff', true);
     this.text(node, core.TYPES[book.type].name + ' · ' + core.SCALES[book.scale].name + ' · ' + this.state.company, 14, 128, width - 28, 18, 11, '#d7e2d9');
@@ -857,29 +1102,26 @@ export class StudioApp extends Component {
     y += 24;
     const { node, pen } = this.canvasNode(parent, 'Chart', 0, y, width, height);
     pen.rect(0, 0, width, height, colors.paper, 8);
-    const cumulative: number[] = [];
-    book.weekly.forEach((value: number, index: number) => cumulative.push((cumulative[index - 1] || 0) + value));
-    const slots = Math.max(8, cumulative.length);
-    const peak = Math.max(book.invested * 1.15, ...cumulative, 1);
+    const weekly: number[] = book.weekly;
+    const flags: number[] = Array.isArray(book.saleFlags) ? book.saleFlags : [];
+    const slots = Math.max(8, weekly.length);
+    const peak = Math.max(...weekly, 0.01);
     const chartTop = 16;
-    const chartHeight = height - 40;
+    const chartHeight = height - 44;
     const slot = (width - 24) / slots;
     const scale = (value: number) => chartHeight * value / peak;
-    const paid = cumulative.findIndex(value => value >= book.invested);
-    cumulative.forEach((value, index) => {
+    weekly.forEach((value: number, index: number) => {
       const barHeight = Math.max(2, scale(value));
-      pen.rect(12 + index * slot + slot * 0.15, chartTop + chartHeight - barHeight, slot * 0.7, barHeight, paid >= 0 && index >= paid ? colors.green : '#b9cfc4', 2);
+      // A sale week is drawn in amber so its take can be compared against full-price weeks directly.
+      pen.rect(12 + index * slot + slot * 0.15, chartTop + chartHeight - barHeight, slot * 0.7, barHeight, flags[index] ? colors.amber : '#b9cfc4', 2);
     });
-    const lineY = chartTop + chartHeight - scale(book.invested);
-    for (let x = 12; x < width - 12; x += 10) pen.rect(x, lineY - 1, 6, 2, colors.danger);
-    this.text(node, '投入 ' + content.money(book.invested), width - 130, Math.max(0, lineY - 20), 118, 18, 11, colors.danger).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    if (paid >= 0) {
-      const x = 12 + paid * slot + slot / 2;
-      pen.circle(x, lineY, 5, colors.gold);
-      this.text(node, '第 ' + (paid + 1) + ' 周回本', Math.min(width - 90, Math.max(4, x - 40)), Math.min(chartHeight, lineY + 6), 86, 18, 11, colors.amber, true);
-    }
-    this.text(node, '发售', 8, height - 22, 60, 18, 10, colors.muted);
-    this.text(node, '第 ' + slots + ' 周', width - 70, height - 22, 60, 18, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    const saleWeeks = flags.filter(flag => flag).length;
+    const fullWeeks = weekly.length - saleWeeks;
+    const saleTotal = weekly.reduce((total: number, value: number, index: number) => total + (flags[index] ? value : 0), 0);
+    const fullTotal = weekly.reduce((total: number, value: number, index: number) => total + (flags[index] ? 0 : value), 0);
+    this.text(node, '促销周平均 ' + (saleWeeks ? content.money(saleTotal / saleWeeks) : '—'), 12, height - 30, width - 24, 14, 10, colors.amber);
+    this.text(node, '原价周平均 ' + (fullWeeks ? content.money(fullTotal / fullWeeks) : '—'), 12, height - 16, width - 24, 14, 10, colors.muted);
+    this.text(node, '第 ' + slots + ' 周', width - 70, height - 16, 60, 14, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     return height + 24;
   }
 
@@ -955,7 +1197,7 @@ export class StudioApp extends Component {
     const next = content.guide(this.state, null, false);
     if (next?.ack || next?.tap) return;
     this.guidePaused = false;
-    if (!this.routes.length && !this.state.event && !this.state.over && this.state.project) {
+    if (!this.routes.length && !this.state.event && !this.state.over && core.projectOpen(this.state).length) {
       this.playing = true;
       this.elapsed = 0;
     }
@@ -980,7 +1222,12 @@ export class StudioApp extends Component {
       const local = this.stage.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(bounds.x, bounds.y, 0));
       rect = { x: local.x - 5, y: -(local.y + bounds.height) - 5, w: bounds.width + 10, h: bounds.height + 10 };
     }
-    const dim = (x: number, y: number, w: number, h: number) => { if (w > 0 && h > 0) this.box(this.stage, 'Dim', x, y, w, h, colors.night, 0, 120); };
+    // The dimmer belongs to the main screen's spotlight. Inside a menu it used to darken the very
+    // boxes the tip asks the player to tap, which made a changed colour look like no change at all.
+    const dim = (x: number, y: number, w: number, h: number) => {
+      if (this.routes.length) return;
+      if (w > 0 && h > 0) this.box(this.stage, 'Dim', x, y, w, h, colors.night, 0, 120);
+    };
     const acknowledge = () => { this.apply(core.markSeen(this.state, step.ack)); this.resumeFromGuide(); };
     const targetEnabled = !target || !target.getComponent(Button) || target.getComponent(Button).interactable;
     // Main screen: everything outside the highlight is swallowed (explanations close only via "知道了").
@@ -1102,13 +1349,13 @@ export class StudioApp extends Component {
     this.button(container, '返回', 0, height + 81, this.width - 40, 44, () => { this.inputRequest = null; this.render(); });
   }
 
-  private openMenu(menu: string, id?: string, critical = false) {
+  private openMenu(menu: string, id?: string, critical = false, dim?: string) {
     if (!this.routes.length) { this.resumeAfterMenu = this.playing; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
     if (menu === 'new-project') this.draft = { name: '', type: '', scale: 0 };
     if (menu === 'book') this.markReview(id);
-    this.routes.push({ menu, id });
+    this.routes.push({ menu, id, dim });
     this.render();
   }
 
@@ -1125,18 +1372,8 @@ export class StudioApp extends Component {
     this.playing = this.resumeAfterMenu && !this.state.over;
     this.resumeAfterMenu = false;
     this.elapsed = 0;
-    this.holdForGuide();
     this.render();
     this.celebrate();
-  }
-
-  // Keep time stopped while an explanation is on screen; "知道了" resumes it.
-  private holdForGuide() {
-    const step = this.playing ? content.guide(this.state, null, true) : null;
-    if (step?.ack || step?.tap) {
-      this.playing = false;
-      this.guidePaused = true;
-    }
   }
 
   private apply(next: any, message?: string) {
@@ -1158,20 +1395,12 @@ export class StudioApp extends Component {
 
   private decide(choice: string) {
     const event = this.state.event;
-    const routes: any = { tools: { menu: 'tools' }, recruit: { menu: 'recruit', id: 'art:' + content.bestChannel(this.state) }, test: { menu: 'testing' }, visual: { menu: 'visual' }, prepare: { menu: 'project' } };
     this.apply(core.resolveStudioEvent(this.state, choice));
     if (this.state.event) return;
-    if (routes[choice] && this.state.project) {
-      this.routes = [routes[choice]];
-      this.resumeAfterMenu = true;
-      this.render();
-      return;
-    }
     this.routes = [];
     this.resumeAfterMenu = false;
-    this.playing = !!this.state.project && event.id !== 'cash' && !this.state.over;
+    this.playing = core.projectOpen(this.state).length > 0 && event.id !== 'cash' && !this.state.over;
     this.elapsed = 0;
-    this.holdForGuide();
     this.render();
     if (this.playing) this.notify('继续经营中，随时可以暂停。');
     this.celebrate();
@@ -1185,6 +1414,8 @@ export class StudioApp extends Component {
           if (this.state.event) return this.openMenu('event', undefined, true);
           if (!this.state.over && !this.routes.length) {
             this.playing = !this.playing;
+            // A pending explanation is what paused time; pressing play again must not be undone by it.
+            this.guidePaused = false;
             this.elapsed = 0;
             if (this.playing && !this.state.tutorial.seen.clock) this.state = core.markSeen(this.state, 'clock');
             this.render();
@@ -1202,18 +1433,18 @@ export class StudioApp extends Component {
         case 'hire': {
           const person: any = Object.values(this.state.candidates).flatMap((pool: any) => pool.people).find((item: any) => item.id === data.id);
           this.apply(core.hire(this.state, data.id), person.name + ' 加入了工作室！');
-          if (this.state.staff.length === 1 && !this.state.project) { this.routes = []; this.render(); }
+          if (this.state.staff.length === 1) { this.routes = []; this.render(); }
           break;
         }
         case 'dismiss': this.apply(core.dismiss(this.state, data.id)); this.routes = [{ menu: 'team' }]; this.render(); break;
-        case 'retain': this.apply(core.retain(this.state, data.id), '已按期望薪资留任。'); break;
         case 'leave': this.apply(core.takeLeave(this.state, data.id), '带薪休假已安排。'); break;
-        case 'outing': this.apply(core.teamOuting(this.state), '两天团队休整已安排，加班已结束。'); break;
-        case 'overtime': this.apply(core.setOvertime(this.state, data.enabled)); break;
-        case 'sound': this.apply(core.setSound(this.state, data.enabled)); break;
-        case 'deadline': this.apply(core.setDeadline(this.state, Number(data.days)), '发售日期已公布。'); break;
-        case 'exhibition': this.apply(core.enterExhibition(this.state), '展会已报名，继续完善会影响名次。'); break;
-        case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), data.kind === 'update' ? '更新已开始制作，新作暂缓。' : '七天促销已开始。'); break;
+        case 'outing': this.apply(core.teamOuting(this.state, Number(data.days) || 2), '团建已安排，占用工作日。'); break;
+        case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
+        case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
+        case 'deadline': this.apply(core.setDeadline(this.state, data.id, Number(data.days)), '发售日期已公布。'); break;
+        case 'exhibition': this.apply(core.enterExhibition(this.state, data.id), '展会已报名，继续完善会影响名次。'); break;
+        case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), '更新已开始制作。'); break;
+        case 'sale': this.apply(core.setSale(this.state, data.id, !!data.enabled, data.floor), data.enabled ? '已开启促销，系统会按余量决定打折时机。' : '已关闭促销，恢复原价销售。'); break;
         case 'sequel': {
           const book = this.state.catalog.find((item: any) => item.id === data.id);
           if (!book) throw new Error('原作不存在。');
@@ -1222,25 +1453,30 @@ export class StudioApp extends Component {
           this.render();
           break;
         }
-        case 'buy-tool': this.apply(core.buyTool(this.state, data.role), '工具已购置，产能已经提高。'); break;
-        case 'assets': this.apply(core.buyAssets(this.state), '素材已就位，画面表现提高了。'); break;
-        case 'plain': this.apply(core.keepPlain(this.state), '保持朴素画面，发售后看玩家反应。'); break;
-        case 'focus': this.apply(core.setFocus(this.state, data.focus)); break;
-        case 'test': this.apply(core.testDemo(this.state, Number(data.count))); break;
+        case 'buy-tool': this.apply(core.buyTool(this.state, data.key), '工具已购置，对应工作更快了。'); break;
+        case 'outsource': this.apply(core.outsourceSound(this.state, data.id, Number(data.tier)), '声音已外包，相关评分项立即推进。'); break;
+        case 'dlc': this.apply(core.makeDLC(this.state, data.id), '资料片已立项，把同事分过去完成它。'); break;
+        case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
+        case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
+        case 'test': this.apply(core.testDemo(this.state, data.id, Number(data.count))); break;
         case 'promote': {
-          const before = this.state.project.followers;
-          this.apply(core.promote(this.state, Number(data.tier)));
-          this.floatAt(this.anchors.get('promote-' + data.tier), '+' + content.number(this.state.project.followers - before) + ' 人关注', colors.green);
+          const project = core.activeProject(this.state, data.id);
+          const before = project ? project.followers : 0;
+          const cost = Number(data.cost);
+          this.apply(core.promote(this.state, data.id, cost));
+          const after = core.activeProject(this.state, data.id);
+          const index = core.PROMOTE_TIERS.indexOf(cost);
+          this.floatAt(this.anchors.get('promote-' + index), '+' + content.number((after ? after.followers : 0) - before) + ' 人关注', colors.green);
           break;
         }
-        case 'launch': this.apply(core.launchProject(this.state)); break;
+        case 'launch': this.apply(core.launchProject(this.state, data.id)); break;
         case 'decision': this.decide(data.choice); break;
         case 'review':
           this.apply(core.resolveStudioEvent(this.state, 'continue'));
           this.routes = [];
           this.openMenu('book', data.id);
           break;
-        case 'move': this.apply(core.moveOffice(this.state)); this.routes = []; this.render(); this.celebrate(); break;
+        case 'move': this.apply(core.moveOffice(this.state)); this.closeMenu(); this.celebrate(); break;
         case 'export': {
           const raw = JSON.stringify(this.state);
           this.inputRequest = { title: '导出存档', value: raw, multiline: true, readonly: true, accept: () => platform.copy(raw).then(() => this.notify('存档已复制。')) };
@@ -1261,7 +1497,7 @@ export class StudioApp extends Component {
           } };
           this.render();
           break;
-        case 'restart':
+        case 'restart-confirm':
           this.playing = false;
           this.resumeAfterMenu = false;
           this.celebrations = [];

@@ -44,6 +44,27 @@ export const platform = {
       return { top: 96, bottom: 24 };
     }
   },
+  // Studio header shares the capsule row, so it starts at the status bar instead of below the capsule.
+  // Returns the header top plus the width the capsule occupies on the right.
+  header() {
+    const visible = view.getVisibleSize();
+    if (!api) {
+      const safe = webSafeArea();
+      const scale = host.innerWidth ? visible.width / host.innerWidth : 1;
+      return { top: Math.max(14, safe.top * scale), capsule: 0 };
+    }
+    try {
+      const info = api.getWindowInfo ? api.getWindowInfo() : api.getSystemInfoSync();
+      const scale = visible.width / info.windowWidth;
+      const capsule = api.getMenuButtonBoundingClientRect?.();
+      const status = info.statusBarHeight || 24;
+      const top = Math.max(status, info.safeArea?.top || 0, (capsule?.top || status) - 4);
+      const reserved = capsule ? (info.windowWidth - capsule.left) * scale + 12 : 0;
+      return { top: top * scale, capsule: reserved };
+    } catch {
+      return { top: 48, capsule: 96 };
+    }
+  },
   onHide(callback: () => void) {
     api?.onHide?.(callback);
   },
