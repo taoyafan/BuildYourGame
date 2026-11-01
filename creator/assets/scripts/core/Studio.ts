@@ -160,7 +160,7 @@ export const MARKET_SIZE = 5000;
 const START_CASH = 50;
 const BRIDGE = 20;
 const PROTO = 0.25;
-const DEMO = 0.55;
+const TRIAL = 0.55;
 // Months of wage a layoff costs per year of service, plus one (N+1).
 const OVERTIME_BOOST = 1.45;
 const OVERTIME_DEFECT = 1.45;
@@ -654,8 +654,10 @@ export function setSound(state: any, enabled: boolean) {
 export function takeLeave(state: any, id: string) {
   const next = studioAction(state);
   const person = next.staff.find((item: any) => item.id === id);
-  if (!person || person.leaveUntil > next.day) throw new Error('当前无法安排休假。');
-  person.leaveUntil = next.day + 5;
+  if (!person) throw new Error('员工不存在。');
+  // Leave either starts now or extends a leave already running: a resignation talk must never fail
+  // just because the person happens to be resting this week.
+  person.leaveUntil = Math.max(person.leaveUntil || 0, next.day + 5);
   person.overtimeDays = 0;
   delete next.overtime[id];
   if (next.event?.person === id) next.event = null;
@@ -746,6 +748,26 @@ export function assign(state: any, projectId: string, personId: string, works: s
   project.assignments[personId] = list;
   studioLog(next, '调整分工', `${person.name} 参与《${project.name}》：${list.length ? list.map(key => WORKS.find(work => work.key === key)?.name).join('、') : '仅做本行'}。`);
   return next;
+}
+
+// 分工开关只有一个入口：按当前存档里的分工取反，永不留空（空了就回到本行）。
+// 界面只传“谁、哪个项目、点了哪项”，不要再自己拼一份名单——拼错就会写成空表，
+// 表现就是点了不亮、本职也不亮、后面怎么点都不亮。
+export const ASSIGN_REVISION = 'assign-v2';
+
+export function toggleAssign(state: any, projectId: string, personId: string, workKey: string) {
+  if (!WORK_KEYS.includes(workKey)) throw new Error('工作类型无效。');
+  const project = state.projects.find((item: any) => item.id === projectId);
+  const person = state.staff.find((item: any) => item.id === personId);
+  if (!project) throw new Error('项目不存在，请返回重进。');
+  if (!person) throw new Error('员工不存在，请返回重进。');
+  const current: string[] = assignedWorks(project, person);
+  const next = current.includes(workKey) ? current.filter((key: string) => key !== workKey) : [...current, workKey];
+  if (!next.length) {
+    const home = homeWork(person);
+    return assign(state, projectId, personId, [home]);
+  }
+  return assign(state, projectId, personId, next);
 }
 
 export function setPriority(state: any, projectId: string, priority: number) {
@@ -855,9 +877,9 @@ function produceProject(state: any, project: any) {
   if (!project.released) {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
     if (project.progress >= PROTO * 100) project.checkpoints.prototype = true;
-    if (project.progress >= DEMO * 100) project.checkpoints.demo = true;
+    if (project.progress >= TRIAL * 100) project.checkpoints.demo = true;
     if (project.progress >= 100) project.checkpoints.ready = true;
-    if (project.progress >= PROTO * 100) project.followers += (project.progress >= DEMO * 100 ? 8 : 3) * market(project.type, Math.ceil(state.day / 30)).multiplier;
+    if (project.progress >= PROTO * 100) project.followers += (project.progress >= TRIAL * 100 ? 8 : 3) * market(project.type, Math.ceil(state.day / 30)).multiplier;
   }
   // An update in the making is fed by the same hands: the work they deliver on this title is the
   // update, so no one's day is spent twice.
@@ -938,7 +960,7 @@ export function promote(state: any, projectId: string, cost: number) {
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
-  if (project.progress < DEMO * 100) throw new Error('Demo 完成后才能推广。');
+  if (project.progress < TRIAL * 100) throw new Error('体验版完成后才能推广。');
   const budget = round(clamp(value, 0, PROMOTE_CAP));
   const range = promoteRange(next, project, budget);
   spend(next, budget, '推广预算');
@@ -951,7 +973,7 @@ export function promote(state: any, projectId: string, cost: number) {
 }
 
 export function playtestOffer(state: any, project: any) {
-  const reason = !project ? '先立项开发' : project.progress < DEMO * 100 ? '完成度达到 55% 后 Demo 才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : '';
+  const reason = !project ? '先立项开发' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : '';
   return { available: !reason && !state.over && !state.event, reason };
 }
 
@@ -986,7 +1008,7 @@ export function testDemo(state: any, projectId: string, count = 30) {
   }).sort((left, right) => (100 - left.value) * left.weight < (100 - right.value) * right.weight ? 1 : -1);
   target.test = { day: next.day, count, score, findings, found: newlyFound, source: '试玩玩家' };
   next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位${TYPES[target.type].audience}给出 ${score.toFixed(1)} 分，发现 ${newlyFound} 项缺陷。他们最看重：${audienceFocus(target.type)}。`, choices: [{ id: 'continue', title: '收下反馈，继续调整分工', detail: '短板维度可以在项目里调整人手。' }] };
-  studioLog(next, 'Demo 试玩', `${count} 人参与，评分 ${score.toFixed(1)}，发现 ${newlyFound} 项缺陷。`);
+  studioLog(next, '体验版试玩', `${count} 人参与，评分 ${score.toFixed(1)}，发现 ${newlyFound} 项缺陷。`);
   return next;
 }
 
@@ -1118,8 +1140,8 @@ export function launchProject(state: any, projectId: string) {
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
   const metrics = projectMetrics(project);
-  // Releasing early means shipping with unfinished dimensions — but it still takes a Demo.
-  if (metrics.progress < DEMO * 100) throw new Error('Demo 完成后才能发售；提前发售指带着未完成的维度上市。');
+  // Releasing early means shipping with unfinished dimensions — but it still requires the trial build.
+  if (metrics.progress < TRIAL * 100) throw new Error('体验版完成后才能发售；提前发售指带着未完成的维度上市。');
   const trend = market(project.type, Math.ceil(next.day / 30));
   const score = round(clamp(projectScore(project) + (random(next) - 0.5) * 3, 0, 100));
   // Creativity breaks out through a tail jump, not a linear bonus: a high-creativity title has a better
@@ -1139,7 +1161,7 @@ export function launchProject(state: any, projectId: string) {
     followers: Math.round(project.followers), dailyUnits: units / 15, reviewScore: score,
     reviewCount: Math.max(1, Math.round(units * 0.12)), tested: project.tests > 0,
     testScore: project.test ? project.test.score : null, testCount: project.testCount, trend: trend.label,
-    lastGrowth: 0, lastDayUnits: units, team: next.staff.map((person: any) => ({ id: person.id, name: person.name, role: person.role })),
+    lastGrowth: 0, lastDayUnits: units, team: next.staff.filter((person: any) => (project.contributions[person.id] || 0) > 0).map((person: any) => ({ id: person.id, name: person.name, role: person.role })),
     quotes: review.quotes,
     weekly: [receipt], paidBack: receipt >= project.invested, marks: 0, record: next.catalog.length > 0 && receipt > best,
     tutorial: next.catalog.length === 0, review,
@@ -1476,7 +1498,8 @@ export function setSale(state: any, id: string, enabled: boolean, floor?: number
     studioLog(next, `《${book.name}》停止促销`, '恢复原价销售。');
     return next;
   }
-  const index = DISCOUNTS.indexOf(Number(floor));
+  // 只点开关不带折扣时沿用上次（或默认最低档）的底线，否则界面上的开关永远报错。
+  const index = floor === undefined || floor === null ? clamp(book.saleFloor ?? 0, 0, DISCOUNTS.length - 1) : DISCOUNTS.indexOf(Number(floor));
   if (index < 0) throw new Error('促销折扣无效。');
   book.sale = true;
   book.saleFloor = index;
@@ -1490,7 +1513,7 @@ export function setDeadline(state: any, projectId: string, days: number) {
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project || project.deadline) throw new Error('当前无法公布发售日。');
-  if (project.progress < DEMO * 100) throw new Error('Demo 完成后再公布发售日。');
+  if (project.progress < TRIAL * 100) throw new Error('体验版完成后再公布发售日。');
   project.deadline = next.day + days;
   project.followers += 150;
   studioLog(next, '公布发售日', `计划第 ${project.deadline} 天发售《${project.name}》，新增 150 人关注；延期会损失关注。`);
@@ -1501,8 +1524,8 @@ export function exhibitionOffer(state: any) {
   let day = 90 + Math.max(0, Math.ceil((state.day - 83) / 180)) * 180;
   if (day - 7 < state.day) day += 180;
   const entry = state.exhibitions.find((item: any) => item.day === day);
-  const ready = state.projects.find((project: any) => !project.released && project.progress >= DEMO * 100);
-  const reason = entry ? '已报名本届展会' : !ready ? '报名截止前须完成 Demo' : state.cash < 1 ? '报名需要 1 万' : '';
+  const ready = state.projects.find((project: any) => !project.released && project.progress >= TRIAL * 100);
+  const reason = entry ? '已报名本届展会' : !ready ? '报名截止前须完成体验版' : state.cash < 1 ? '报名需要 1 万' : '';
   return { day, deadline: day - 7, entry, reason, available: !reason, project: ready };
 }
 
@@ -1512,7 +1535,7 @@ export function enterExhibition(state: any, projectId?: string) {
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === (projectId || offer.project?.id) && !item.released);
   if (!project) throw new Error('没有可以报名的项目。');
-  if (project.progress < DEMO * 100) throw new Error('当前项目完成 Demo 后才能报名展会。');
+  if (project.progress < TRIAL * 100) throw new Error('当前项目完成体验版 后才能报名展会。');
   spend(next, 1, '展会报名');
   project.invested = round(project.invested + 1);
   next.exhibitions.push({ day: offer.day, project: project.id, name: project.name, metrics: projectMetrics(project), result: null });

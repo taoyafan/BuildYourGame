@@ -645,7 +645,7 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const track = this.box(body, 'Track', 0, y, inner, 58);
     this.anchors.set('track', track);
-    const phases = [['立项', 0], ['原型', 25], ['Demo', 55], ['完成', 100], ['发售', 101]];
+    const phases = [['立项', 0], ['原型', 25], ['体验版', 55], ['完成', 100], ['发售', 101]];
     const gap = (inner - 24) / 4;
     const railY = 22;
     const phase = metrics.progress < 25 ? 0 : metrics.progress < 55 ? 1 : metrics.progress < 100 ? 2 : 3;
@@ -1038,25 +1038,20 @@ export class StudioApp extends Component {
           this.text(node, shortName, 2, 2, cell - 4, 22, 12, on ? colors.paper : colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
           this.text(node, '能力 ' + (work.ability ?? '—'), 2, 23, cell - 4, 16, 10, on ? '#e8f3ed' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
           this.clickable(node, () => {
-            // Always resolve against the live save, never the snapshot this card was drawn from:
-            // two fast taps otherwise write the same stale list and the first one looks ignored.
+            // 界面只报“谁、哪个项目、点了哪项”，由 core 按存档取反并保证不为空。
+            // 旧版在这里自己拼名单：拼出空表时三块工作会一起灭掉，之后再点也写不进正确的项目。
             const route = this.routes[this.routes.length - 1] || {};
-            const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
+            const fallback = core.projectOpen(this.state)[0];
+            const projectId = block.projectId || route.id || (fallback ? fallback.id : '');
             const person = this.state.staff.find((item: any) => item.id === block.personId);
-            if (!project || !person) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
-            const current: string[] = core.personWorks(this.state, project, person);
-            const next = current.includes(work.key) ? current.filter((key: string) => key !== work.key) : [...current, work.key];
+            if (!projectId || !person) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
             const name = core.WORKS.find(entry => entry.key === work.key)?.name || work.key;
-            if (!next.length) {
-              // Turning off the last box must still do something visible: fall back to the trade's
-              // own work instead of refusing and leaving the player staring at an unchanged card.
-              const home = (core.ROLES[person.role].home || []).find((key: string) => core.WORK_KEYS.includes(key)) || 'discover';
-              this.apply(core.assign(this.state, project.id, person.id, [home]));
-              this.notify(person.name + '：每人至少做一项，已回到本行「' + (core.WORKS.find(entry => entry.key === home)?.name || home) + '」。');
-              return;
-            }
-            this.apply(core.assign(this.state, project.id, person.id, next));
-            this.notify(person.name + (next.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
+            const before = core.personWorks(this.state, core.activeProject(this.state, projectId) || { id: projectId }, person);
+            const next = core.toggleAssign(this.state, projectId, person.id, work.key);
+            const after = core.personWorks(next, core.activeProject(next, projectId) || { id: projectId }, person);
+            this.apply(next);
+            if (before.includes(work.key) && !after.includes(work.key)) this.notify(person.name + '：每人至少做一项，已回到本行。');
+            else this.notify(person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
           });
           if (index === 0) this.anchors.set('person-assign-' + block.index, node);
         });

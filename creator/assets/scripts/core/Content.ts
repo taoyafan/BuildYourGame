@@ -8,7 +8,7 @@ export const monthSpent = (state: any) => state.ledger.expense + state.accrued;
 
 export function stage(project: any) {
   const progress = project.progress || 0;
-  return progress >= 100 ? '准备发售' : progress >= 55 ? 'Demo 与完善' : progress >= 25 ? '内容制作' : '原型开发';
+  return progress >= 100 ? '准备发售' : progress >= 55 ? '体验版与完善' : progress >= 25 ? '内容制作' : '原型开发';
 }
 
 export function guideOn(state: any) {
@@ -18,7 +18,7 @@ export function guideOn(state: any) {
 export function menuLock(state: any, menu: string) {
   if (!core.tutorialActive(state)) return '';
   const project = core.projectOpen(state).find((item: any) => item.checkpoints.demo);
-  if ((menu === 'testing' || menu === 'market') && !project) return '任一项目 Demo 完成后开放';
+  if ((menu === 'testing' || menu === 'market') && !project) return '任一项目 体验版完成后开放';
   return '';
 }
 
@@ -43,14 +43,18 @@ export function advice(state: any) {
   const idle = pipeline.rows.filter((row: any) => row.days === null && row.remaining > 0);
   if (idle.length) return { title: '有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '压力标签正在拉低产出，可以安排休假或团建。', menu: 'team' };
-  if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩 Demo', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing' };
-  if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广 Demo', text: '关注 ' + number(project.followers) + ' 人，推广能扩大首发。', menu: 'market' };
+  if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing' };
+  if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广体验版', text: '关注 ' + number(project.followers) + ' 人，推广能扩大首发。', menu: 'market' };
   if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.DIMENSIONS.find(d => d.key === pipeline.bottleneck.key)?.name}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
   return { title: '推进项目', text: '查看各评分项的剩余人日与预计完成日，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
 
 function recruitMenu(state: any, id: string) {
-  const [role, channel] = id.split(':');
+  // 没有指定岗位或渠道时不报错：退回第一个已开放的组合，界面上仍有可点的入口。
+  const openRole = Object.keys(core.ROLES).find((key: string) => core.roleOpen(state, key)) || 'code';
+  const openChannel = bestChannel(state) || 'friends';
+  const [role, channel] = String(id || openRole + ':' + openChannel).split(':');
+  if (!core.ROLES[role] || !core.CHANNELS[channel]) return recruitMenu(state, openRole + ':' + openChannel);
   const pool = state.candidates[id];
   const fee = core.recruitFee(state, channel);
   const blocks: any[] = [
@@ -137,7 +141,10 @@ function projectMenu(state: any, id?: string) {
   const forecast = core.projectForecast(state, project);
   const open = core.projectOpen(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
-  const etaText = forecast.eta === null ? '还没有人能推进' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）';
+  // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
+  const finished = forecast.rows.every((row: any) => row.remaining <= 0.0001);
+  const idleRows = forecast.rows.filter((row: any) => row.remaining > 0.0001 && row.days === null);
+  const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）';
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(open.length > 1 ? [{ type: 'tabs', items: open.map((item: any) => ({ text: item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
@@ -154,7 +161,7 @@ function projectMenu(state: any, id?: string) {
       { text: '调整分工', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '招募试玩', action: 'menu', data: { menu: 'testing', id: project.id } },
       { text: '市场与推广', action: 'menu', data: { menu: 'market', id: project.id } },
-      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '带着未完成的评分项发售' : '正式发售') : 'Demo 完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
+      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '带着未完成的评分项发售' : '正式发售') : '体验版完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
       ...(open.length < 4 ? [{ text: '再开一个项目', action: 'menu', data: { menu: 'new-project' } }] : [])
     ] },
     ...(project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null ? [
@@ -192,7 +199,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
       return {
         type: 'person-assign', title: person.name + ' · ' + core.ROLES[person.role].name,
         detail: doing.length ? '正在做：' + doing.map(k => core.WORKS.find(w => w.key === k)?.name).join('、') : elsewhere ? '目前在其他项目，点这里的工作即可调过来' : '尚未负责这一项',
-        personId: person.id, index, assigned,
+        personId: person.id, projectId, index, assigned,
         status: elsewhere ? '在《' + elsewhere.name + '》' : '',
         stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
         fame: !!person.fame && state.day - (person.joined || 0) < 30,
@@ -221,6 +228,7 @@ function assignMenu(state: any, projectId: string) {
       title: person.name + ' · ' + core.ROLES[person.role].name,
       detail: elsewhere ? '目前在其他项目，点任意工作即可调过来' : automatic ? '默认做本行：' + assigned.map(k => core.WORKS.find(w => w.key === k)?.name).join('、') : '已安排：' + assigned.map(k => core.WORKS.find(w => w.key === k)?.name).join('、'),
       personId: person.id,
+      projectId: project.id,
       index,
       assigned,
       status: elsewhere ? '在《' + elsewhere.name + '》' : '',
@@ -235,7 +243,7 @@ function assignMenu(state: any, projectId: string) {
 
 function testingMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
-  if (!project) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把 Demo 做出来。' }] };
+  if (!project) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把体验版做出来。' }] };
   const offer = core.playtestOffer(state, project);
   const blocks: any[] = [];
   if (project.test) {
@@ -263,15 +271,15 @@ function marketMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   const blocks: any[] = [];
   const expo = core.exhibitionOffer(state);
-  blocks.push({ type: 'lines', items: [['下届日光游戏展', '第 ' + expo.day + ' 天'], ['Demo 报名截止', '第 ' + expo.deadline + ' 天（剩余 ' + (expo.deadline - state.day) + ' 天）'], ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
+  blocks.push({ type: 'lines', items: [['下届日光游戏展', '第 ' + expo.day + ' 天'], ['体验版报名截止', '第 ' + expo.deadline + ' 天（剩余 ' + (expo.deadline - state.day) + ' 天）'], ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
   const currentNotReady = !!project && project.progress < 55;
-  blocks.push({ type: 'buttons', items: [{ text: expo.entry ? '展会已报名' : 'Demo 报名展会 · 1.00 万', action: 'exhibition', data: { id: project?.id }, disabled: !expo.available || currentNotReady }, { text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '销量榜与年度评选', action: 'menu', data: { menu: 'rankings' } }] });
-  if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成 Demo 后才能报名展会。', muted: true });
+  blocks.push({ type: 'buttons', items: [{ text: expo.entry ? '展会已报名' : '体验版报名展会 · 1.00 万', action: 'exhibition', data: { id: project?.id }, disabled: !expo.available || currentNotReady }, { text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '销量榜与年度评选', action: 'menu', data: { menu: 'rankings' } }] });
+  if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版 后才能报名展会。', muted: true });
   else if (!expo.available) blocks.push({ type: 'text', text: expo.reason, muted: true });
   if (state.operation) blocks.push({ type: 'note', icon: 'Wrench', text: '更新制作中：剩余 ' + state.operation.remaining.toFixed(1) + ' 工作量。' });
   if (project) {
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)]] });
-    blocks.push({ type: 'text', text: '首发销量主要来自关注者。Demo 完成后会自然积累关注，推广能扩大首发，但钱花出去就收不回。市场行情不预告，只能从新闻、榜单与既有作品的回款曲线里自己判断。', muted: true });
+    blocks.push({ type: 'text', text: '首发销量主要来自关注者。体验版完成后会自然积累关注，推广能扩大首发，但钱花出去就收不回。市场行情不预告，只能从新闻、榜单与既有作品的回款曲线里自己判断。', muted: true });
     blocks.push({ type: 'lines', items: [['同类型小型作品通常关注', '800～1,500 人'], ['已投放推广', money(project.promoted)]] });
     core.PROMOTE_TIERS.forEach((budget, index) => {
       const range = core.promoteRange(state, project, budget);
@@ -476,7 +484,7 @@ function rankChange(book: any) {
 }
 
 function exhibitionsMenu(state: any) {
-  const blocks: any[] = [{ type: 'text', text: '每年第 90、270 天举办展会，提前七天截止报名。完成 Demo 才能报名，作品体验决定与虚构工作室的比较结果。', muted: true }];
+  const blocks: any[] = [{ type: 'text', text: '每年第 90、270 天举办展会，提前七天截止报名。完成体验版才能报名，作品体验决定与虚构工作室的比较结果。', muted: true }];
   for (const entry of [...state.exhibitions].reverse()) {
     blocks.push({ type: 'section', title: '第 ' + entry.day + ' 天 · 《' + entry.name + '》' });
     if (!entry.result) blocks.push({ type: 'text', text: '已报名，等待展会。期间继续完善会影响名次。' });

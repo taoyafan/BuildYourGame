@@ -13,3 +13,5 @@ creator/assets/resources/icons.meta
 creator/assets/resources/sounds/
 creator/assets/resources/sounds.meta
 dist/
+web/node_modules/
+web/logic.js
