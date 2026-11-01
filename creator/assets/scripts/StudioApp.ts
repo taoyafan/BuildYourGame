@@ -291,6 +291,10 @@ export class StudioApp extends Component {
     button.zoomScale = 0.97;
     node.on(Button.EventType.CLICK, () => {
       try {
+        // CLICK means this press has finished. Clear the touch guard before running the action:
+        // otherwise apply()/notify() can both skip rendering, leaving grey buttons and stale text
+        // even though core.toggleAssign()/assign() already changed the project correctly.
+        this.activeTouches.clear();
         this.playSound('click');
         // Acting on a menu while its explanation is open counts as having read it.
         if (this.menuAck && node.parent?.name !== 'Bubble') { this.state = core.markSeen(this.state, this.menuAck); this.menuAck = null; this.save(); }
@@ -411,7 +415,7 @@ export class StudioApp extends Component {
     const controlsRight = headerRight - 8;
     const controlsLeft = controlsRight - 4 * 40;
     this.text(this.stage, state.company || '日光工作室', 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
-    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
+    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日 · v${core.VERSION}`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
     [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
     const financesY = top + 52;
@@ -913,7 +917,7 @@ export class StudioApp extends Component {
         block.people.forEach((person: any, index: number) => {
           const tags = [person.fame ? '行业名人' : '', ...person.tags.map((tag: any) => core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name)].filter(Boolean);
           const home = (core.ROLES[person.role].home || []).filter((key: string) => core.WORK_KEYS.includes(key));
-          const homeAbilities = [...new Set(home.map((key: string) => core.WORKS.find(work => work.key === key)?.ability).filter(Boolean))];
+          const homeAbilities = Array.from(new Set(home.map((key: string) => core.WORKS.find(work => work.key === key)?.ability).filter(Boolean)));
           const bestAbility = core.ABILITY_KEYS.reduce((best: any, key: string) => person.abilities[key] > person.abilities[best] ? key : best, core.ABILITY_KEYS[0]);
           const homeText = homeAbilities.map((key: string) => core.ABILITIES.find(ability => ability.key === key)?.name + ' ' + person.abilities[key]).join(' / ');
           const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + person.abilities[bestAbility];
@@ -1046,11 +1050,16 @@ export class StudioApp extends Component {
             const person = this.state.staff.find((item: any) => item.id === block.personId);
             if (!projectId || !person) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
             const name = core.WORKS.find(entry => entry.key === work.key)?.name || work.key;
-            const before = core.personWorks(this.state, core.activeProject(this.state, projectId) || { id: projectId }, person);
+            // 用 assignedWorks 而不是 personWorks 算 before/after：personWorks 受 belongsTo 门控，
+            // 而真正写状态的 toggleAssign 用的是 assignedWorks。两者不一致时，会把“调入本项目”误报成“已退出”，
+            // 且跨项目看人时按钮全灰。统一来源后提示才正确，点击也能把人真正调过来。
+            const project = core.activeProject(this.state, projectId) || { id: projectId };
+            const before = core.assignedWorks(project, person);
             const next = core.toggleAssign(this.state, projectId, person.id, work.key);
-            const after = core.personWorks(next, core.activeProject(next, projectId) || { id: projectId }, person);
+            const after = core.assignedWorks(core.activeProject(next, projectId) || { id: projectId }, person);
             this.apply(next);
-            if (before.includes(work.key) && !after.includes(work.key)) this.notify(person.name + '：每人至少做一项，已回到本行。');
+            const returnedHome = before.length === 1 && before.includes(work.key) && !after.includes(work.key);
+            if (returnedHome) this.notify(person.name + '：每人至少做一项，已回到本行。');
             else this.notify(person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
           });
           if (index === 0) this.anchors.set('person-assign-' + block.index, node);

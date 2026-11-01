@@ -36,7 +36,7 @@ export function advice(state: any) {
     if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品。', menu: 'new-project' };
     return { title: '为下一款作品立项', text: '参考上一作复盘，先补最被在意的短板。', menu: 'new-project' };
   }
-  if (!state.staff.some((person: any) => (project.assignments?.[person.id] || []).length) && !state.staff.some((person: any) => person.role === 'code' || person.role === 'design' || person.role === 'art')) {
+  if (!state.staff.some((person: any) => core.chosenWorks(project, person).length) && !state.staff.some((person: any) => person.role === 'code' || person.role === 'design' || person.role === 'art')) {
     return { title: '还没有人做这份工作', text: '在「项目」里给同事分配要做的工作。', menu: 'project', id: project.id };
   }
   const pipeline = core.dimensionPipeline(state, project);
@@ -185,7 +185,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   // The works whose dimension maps to this one (stability is fed by discover + repair).
   const works = core.WORKS.filter(work => work.dimension === dimKey);
   const workKeys = works.map(work => work.key);
-  const assignedPeople = state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
+  const assignedPeople = state.staff.filter((person: any) => core.assignedWorks(project, person).some((key: string) => workKeys.includes(key)));
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
   const blocks: any[] = [
@@ -193,8 +193,8 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
     { type: 'text', text: dimension.desc + (weight >= 0.3 ? ' ' + core.TYPES[project.type].audience + '玩家很看重这一项。' : ' 这类玩家相对不挑剔这一项。'), muted: true },
     { type: 'section', title: assignedPeople.length ? '负责这一项的人（点工作块直接调整）' : '还没有人做，点工作块安排人手' },
     ...state.staff.map((person: any, index: number) => {
-      const assigned = core.personWorks(state, project, person);
-      const elsewhere = state.projects.find((item: any) => item.id !== projectId && !item.released && (item.assignments?.[person.id] || []).length);
+      const assigned = core.assignedWorks(project, person);
+      const elsewhere = state.projects.find((item: any) => item.id !== projectId && !item.released && core.chosenWorks(item, person).length);
       const doing = assigned.filter((key: string) => workKeys.includes(key));
       return {
         type: 'person-assign', title: person.name + ' · ' + core.ROLES[person.role].name,
@@ -220,9 +220,13 @@ function assignMenu(state: any, projectId: string) {
     { type: 'text', text: '点工作块即可分工：绿色是在做，灰色是没做。每人至少保留一项工作；可以同时做多项，做完会自动空出手。', muted: false }
   ];
   state.staff.forEach((person: any, index: number) => {
-    const assigned: string[] = core.personWorks(state, project, person);
-    const elsewhere = state.projects.find((item: any) => item.id !== projectId && !item.released && (item.assignments?.[person.id] || []).length);
-    const automatic = !elsewhere && !(project.assignments?.[person.id] || []).length;
+    // Show what the person actually does in this project (explicit assignment, else their default
+    // home work) rather than the belongsTo-gated personWorks. personWorks hides every box when a
+    // founder/employee is "locked out" by an old assignment on a shipped title, which made the whole
+    // assign page read as unassigned and every click report "已退出".
+    const assigned: string[] = core.assignedWorks(project, person);
+    const elsewhere = state.projects.find((item: any) => item.id !== projectId && !item.released && core.chosenWorks(item, person).length);
+    const automatic = !elsewhere && !core.chosenWorks(project, person).length;
     blocks.push({
       type: 'person-assign',
       title: person.name + ' · ' + core.ROLES[person.role].name,

@@ -2,6 +2,10 @@
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
 
+// Build version: bumped on every code change so the running preview can be matched against source.
+// Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
+export const VERSION = '0.1.4';
+
 // Six quality dimensions. Only creativity, depth and stability carry their own mechanics; fluidity,
 // picture and sound only weigh in through the audience's preferences.
 export const DIMENSIONS: any[] = [
@@ -26,6 +30,11 @@ export const WORKS: any[] = [
   { key: 'repair', name: '修复缺陷', ability: 'discover', dimension: 'stability' }
 ];
 export const WORK_KEYS = WORKS.map(work => work.key);
+// A safe dimension read: a malformed or legacy project that is somehow missing a dimension must never
+// crash the home screen. Missing dimensions behave as untouched (total 0) rather than throwing.
+function workOf(project: any, key: string) {
+  return (project.work && project.work[key]) || { total: 0, done: 0, value: 0 };
+}
 // The five abilities a person has, plus one speed. Repair has no ability of its own.
 export const ABILITIES: any[] = [
   { key: 'creativity', name: '创意' },
@@ -462,8 +471,12 @@ function speedOf(state: any, person: any, workKey: string) {
 function belongsTo(state: any, project: any, person: any) {
   const known = state.projects.some((item: any) => item.id === project.id);
   if (!known) return true;
+  // A shipped title only keeps people the player explicitly sends there. Skipping released projects
+  // here stops an old assignment on a finished game from locking someone out of the new live one —
+  // that was the single-project trap where the founder looked unassigned and every work read "已退出".
   for (const other of state.projects) {
-    if ((other.assignments?.[person.id] || []).length) return other.id === project.id;
+    if (other.released) continue;
+    if (chosenWorks(other, person).length) return other.id === project.id;
   }
   if (project.released) return false;
   const live = state.projects.filter((item: any) => !item.released);
@@ -477,9 +490,19 @@ function belongsTo(state: any, project: any, person: any) {
 // roughly together. Nobody assigned and no trade left means no progress.
 // The assignment shown by the UI is the same one used for production. With no explicit choice a
 // person does their home work; an explicit list replaces that default instead of adding to it.
+// Assignment lists live in saves, so tolerate values written by older builds. In particular, Cocos
+// used to transpile `[...new Set(list)]` into `[].concat(new Set(list))`, which stored a Set object
+// instead of strings; after JSON serialisation it became `{}`. Ignore anything that is not a work key
+// and never let a malformed list hide the person's default home work.
+export function chosenWorks(project: any, person: any) {
+  const explicit = project?.assignments?.[person.id];
+  if (!Array.isArray(explicit)) return [];
+  return Array.from(new Set(explicit.filter((key: string) => WORK_KEYS.includes(key))));
+}
+
 export function assignedWorks(project: any, person: any) {
-  const explicit = project.assignments?.[person.id] || [];
-  return explicit.length ? [...new Set(explicit.filter((key: string) => WORK_KEYS.includes(key)))] : [homeWork(person)];
+  const explicit = chosenWorks(project, person);
+  return explicit.length ? explicit : [homeWork(person)];
 }
 
 export function personWorks(state: any, project: any, person: any) {
@@ -512,7 +535,7 @@ function remainingOf(project: any, workKey: string) {
     return Math.max(0, stability.total - stability.done);
   }
   if (workKey === 'repair') return project.defects.filter((defect: any) => defect.found && !defect.fixed).length * 2;
-  const work = project.work[workKey];
+  const work = workOf(project, workKey);
   return Math.max(0, work.total - work.done);
 }
 
@@ -526,7 +549,7 @@ function dimensionScore(work: any) {
 export function projectMetrics(project: any) {
   const dimensions: any = {};
   for (const key of DIM_KEYS) {
-    const work = project.work[key];
+    const work = workOf(project, key);
     dimensions[key] = round(clamp(dimensionScore(work), 0, 100));
   }
   // Stability is judged by the defects the work left, not by a workload: a finished part with no defects
@@ -535,14 +558,14 @@ export function projectMetrics(project: any) {
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
   const built = clamp(dimensionScore(project.work.stability), 0, 100);
   dimensions.stability = round(clamp(built - open * 1.5, 0, 100));
-  const progress = clamp(DIM_KEYS.reduce((total, key) => total + project.work[key].done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + project.work[key].total, 0)), 0, 1);
+  const progress = clamp(DIM_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)), 0, 1);
   const weights = TYPES[project.type].weights;
   const overall = round(DIM_KEYS.reduce((total, key) => total + dimensions[key] * weights[key], 0));
   return {
     progress: round(progress * 100),
     dimensions, overall,
     defects: open, known, found: project.found,
-    unfinished: DIM_KEYS.filter(key => project.work[key].done < project.work[key].total - 0.001)
+    unfinished: DIM_KEYS.filter(key => workOf(project, key).done < workOf(project, key).total - 0.001)
   };
 }
 
@@ -552,8 +575,8 @@ export function projectMetrics(project: any) {
 export function expectedDimensions(state: any, project: any) {
   const out: any = {};
   for (const key of DIM_KEYS) {
-    const work = project.work[key];
-    if (!work || work.total <= 0) { out[key] = 0; continue; }
+    const work = workOf(project, key);
+    if (work.total <= 0) { out[key] = 0; continue; }
     const remaining = Math.max(0, work.total - work.done);
     let weighted = 0;
     let hands = 0;
@@ -601,7 +624,7 @@ export function dimensionPipeline(state: any, project: any) {
     }
   }
   const rows = DIM_KEYS.map(key => {
-    const remaining = Math.max(0, project.work[key].total - project.work[key].done);
+    const remaining = Math.max(0, workOf(project, key).total - workOf(project, key).done);
     // Discovery is the work that builds stability; repair only fixes defects already found.
     const daily = key === 'stability' ? discover : rate[key];
     // A finished dimension is done whether or not anyone is still on it; only unfinished ones can block.
@@ -622,12 +645,12 @@ export function projectForecast(state: any, project: any) {
   if (!project) return null;
   const pipeline = dimensionPipeline(state, project);
   const metrics = projectMetrics(project);
-  const totalRemaining = DIM_KEYS.reduce((total, key) => total + Math.max(0, project.work[key].total - project.work[key].done), 0);
+  const totalRemaining = DIM_KEYS.reduce((total, key) => total + Math.max(0, workOf(project, key).total - workOf(project, key).done), 0);
   const aggregate = sum(DIM_KEYS.map(key => pipeline.rows.find((row: any) => row.key === key)?.rate || 0));
   const pending = pipeline.rows.filter((row: any) => row.remaining > 0.0001);
   const scheduled = pending.filter((row: any) => row.days !== null);
   const days = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : null;
-  const done = DIM_KEYS.reduce((total, key) => total + project.work[key].done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + project.work[key].total, 0));
+  const done = DIM_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + workOf(project, key).total, 0));
   return { ...pipeline, days, aggregate: round(aggregate), remaining: round(totalRemaining), progress: round(done * 100), metrics, eta: days === null ? null : state.day + days };
 }
 
@@ -739,7 +762,9 @@ export function assign(state: any, projectId: string, personId: string, works: s
   if (!project) throw new Error('项目不存在。');
   const person = next.staff.find((item: any) => item.id === personId);
   if (!person) throw new Error('员工不存在。');
-  const list = [...new Set((works || []).filter((key: string) => WORK_KEYS.includes(key)))];
+  // Array.from, not [...new Set(...)]: Cocos' build transpiler turns the latter into
+  // `[].concat(new Set(...))`, which saves an opaque Set object and breaks every later assignment.
+  const list = Array.from(new Set((works || []).filter((key: string) => WORK_KEYS.includes(key))));
   for (const other of next.projects) {
     if (!other.assignments) other.assignments = {};
     if (other.id !== projectId) delete other.assignments[personId];
@@ -792,8 +817,8 @@ export function buyTool(state: any, key: string) {
 
 function recordWork(project: any, person: any, key: string, amount: number, quality: number) {
   if (amount <= 0) return;
-  const work = project.work[key];
-  if (!work) return;
+  const work = workOf(project, key);
+  if (work.total <= 0) return;
   const space = work.total - work.done;
   const used = Math.min(amount, Math.max(0, space));
   if (used > 0) {
@@ -807,8 +832,8 @@ function recordWork(project: any, person: any, key: string, amount: number, qual
 // Rework: once a dimension is full, further work replaces the weakest finished part, so the score
 // creeps toward whoever is redoing it.
 function rework(project: any, key: string, amount: number, quality: number) {
-  const work = project.work[key];
-  if (!work || work.done <= 0) return;
+  const work = workOf(project, key);
+  if (work.done <= 0) return;
   const average = work.value / work.done;
   if (quality <= average) return;
   const used = Math.min(amount, work.done);
@@ -863,7 +888,7 @@ function produceProject(state: any, project: any) {
         repair(state, project, amount, person);
       } else {
         const quality = able(person, work.ability);
-        const remaining = project.work[work.dimension].total - project.work[work.dimension].done;
+        const remaining = workOf(project, work.dimension).total - workOf(project, work.dimension).done;
         if (remaining > 0) {
           recordWork(project, person, work.dimension, amount, quality);
           addDefect(project, person, work.dimension, (100 - quality) / 100 * 0.05, state);
@@ -873,7 +898,7 @@ function produceProject(state: any, project: any) {
       }
     }
   }
-  project.progress = round(DIM_KEYS.reduce((total, key) => total + project.work[key].done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + project.work[key].total, 0)) * 100);
+  project.progress = round(DIM_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)) * 100);
   if (!project.released) {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
     if (project.progress >= PROTO * 100) project.checkpoints.prototype = true;
@@ -1432,7 +1457,7 @@ export function operateBook(state: any, id: string, kind: string) {
   if (next.operation) throw new Error('已有运营更新在制作。');
   // The update is fed by the people assigned to this title, so it takes real hands to move.
   const project = next.projects.find((item: any) => item.id === id);
-  const crew = project ? next.staff.filter((person: any) => (project.assignments?.[person.id] || []).length) : [];
+  const crew = project ? next.staff.filter((person: any) => chosenWorks(project, person).length) : [];
   if (!crew.length) throw new Error('先把人分配到这部作品上：更新由他们的工时推进。');
   if (book.updates >= 3) throw new Error('这部作品已完成三次主要更新。');
   const cost = 2 + book.scale;
