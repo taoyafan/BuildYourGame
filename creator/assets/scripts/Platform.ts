@@ -18,6 +18,9 @@ function webSafeArea() {
 }
 
 export const platform = {
+  // True on the mini program (wx/tt), where the native capsule sits on top of the canvas and the
+  // layout has to leave room for it. Web builds are only constrained by the notch safe area.
+  get mini(): boolean { return !!api; },
   read(name = key): string | null {
     const value = api ? api.getStorageSync(name) : sys.localStorage.getItem(name);
     return value === '' || value == null ? null : String(value);

@@ -47,6 +47,8 @@ export class StudioApp extends Component {
   private frameLoads = new Map<string, Array<(frame: SpriteFrame) => void>>();
   private inputRequest: any = null;
   private notice = '';
+  private noticeFresh = false;
+  private scrollKey = '';
   private storageIssue = '';
   private anchors = new Map<string, Node>();
   private scrollView: ScrollView | null = null;
@@ -284,6 +286,11 @@ export class StudioApp extends Component {
     return node;
   }
 
+  // Every icon is the same white line art tinted at runtime; keep one code path so they stay consistent.
+  private navIcon(parent: Node, name: string, x: number, y: number, size: number, tint: string) {
+    return this.image(parent, 'icons/' + name, x, y, size, size, tint);
+  }
+
   private clickable(node: Node, callback: () => void, enabled = true) {
     const button = node.addComponent(Button);
     button.interactable = enabled;
@@ -308,11 +315,13 @@ export class StudioApp extends Component {
   private button(parent: Node, title: string, x: number, y: number, width: number, height: number, callback: () => void, primary = false, disabled = false, icon?: string, anchor?: string) {
     const node = this.box(parent, title, x, y, width, height, disabled ? colors.pale : primary ? colors.green : colors.soft, 8);
     this.clickable(node, callback, !disabled);
-    if (icon) this.image(node, 'icons/' + icon, title ? 12 : (width - 20) / 2, (height - 20) / 2, 20, 20, disabled ? colors.muted : primary ? '#ffffff' : colors.green);
+    // Icons are reserved for icon-only buttons (clock, speed). A titled button is words alone and
+    // centred: mixing a small glyph into a row of plain buttons was never worth the asymmetry.
+    if (icon && !title) this.navIcon(node, icon, (width - 20) / 2, (height - 20) / 2, 20, disabled ? colors.muted : primary ? '#ffffff' : colors.green);
     if (title) {
-      const label = this.text(node, title, icon ? 38 : 4, 0, width - (icon ? 48 : 8), height, 14, disabled ? colors.muted : primary ? colors.paper : colors.green, primary);
+      const label = this.text(node, title, 0, 0, width, height, 14, disabled ? colors.muted : primary ? colors.paper : colors.green, primary);
       label.enableWrapText = false;
-      label.horizontalAlign = icon ? HorizontalTextAlignment.LEFT : HorizontalTextAlignment.CENTER;
+      label.horizontalAlign = HorizontalTextAlignment.CENTER;
     }
     if (anchor) this.anchors.set(anchor, node);
     return node;
@@ -378,6 +387,10 @@ export class StudioApp extends Component {
     if (!this.stage || !this.state) return;
     if (this.activeTouches.size) { this.renderPending = true; return; }
     this.renderPending = false;
+    // A day tick re-renders the whole page. Without carrying the offset over, scrolling down while the
+    // clock ran snapped back to the top every tick. A different screen starts at the top again.
+    const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>') + (this.inputRequest ? '#' : '');
+    const keep = key === this.scrollKey && this.scrollView ? this.scrollView.getScrollOffset().y : 0;
     this.clear();
     this.box(this.stage, 'Paper', 0, 0, this.width, this.height, colors.bg);
     // A screen that throws half-way used to leave a blank page with no way back. Draw the reason on
@@ -392,6 +405,8 @@ export class StudioApp extends Component {
       this.button(this.stage, '返回工作室', 20, this.top + 130, this.width - 40, 44, () => { this.routes = []; this.inputRequest = null; this.playing = false; this.render(); }, true);
     }
     if (!this.inputRequest) this.renderGuide();
+    if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
+    this.scrollKey = key;
     if (this.notice || this.storageIssue) {
       const message = this.notice || this.storageIssue;
       const toast = this.box(this.stage, 'Toast', 20, this.height - this.bottom - 130, this.width - 40, 52, colors.night, 12, 235);
@@ -399,8 +414,10 @@ export class StudioApp extends Component {
       // Dismissing drops the sticky storage warning too, so it cannot come straight back on the next render.
       this.clickable(toast, () => { this.notice = ''; this.storageIssue = ''; this.render(); });
       const opacity = toast.addComponent(UIOpacity);
-      opacity.opacity = 0;
-      tween(opacity).to(0.15, { opacity: 255 }).start();
+      // Fade only when the message is new. Re-animating on every re-render made one notice flash several
+      // times while the clock was running, which read as the same tip popping up four times.
+      if (this.noticeFresh) { opacity.opacity = 0; tween(opacity).to(0.15, { opacity: 255 }).start(); this.noticeFresh = false; }
+      else opacity.opacity = 255;
     }
   }
 
@@ -412,17 +429,20 @@ export class StudioApp extends Component {
     const header = platform.header();
     const top = header.top;
     const headerRight = width - Math.max(20, header.capsule);
-    const controlsRight = headerRight - 8;
+    // On the mini program the header shares a row with the native capsule; the reserved width is a
+    // best-effort guess, so keep the play/speed buttons a little further in rather than let the
+    // last speed chip touch the capsule on devices whose capsule is wider than reported.
+    const controlsRight = headerRight - (platform.mini ? 22 : 8);
     const controlsLeft = controlsRight - 4 * 40;
     this.text(this.stage, state.company || '日光工作室', 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
-    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日 · v${core.VERSION}`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
+    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
     [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
     const financesY = top + 52;
     const finance = this.box(this.stage, 'Finance', 20, financesY, inner, 42, colors.paper, 10);
     this.anchors.set('finance', finance);
     const column = inner / 4;
-    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月收入', content.money(state.ledger.income)], ['本月已开支', content.money(content.monthSpent(state))]].map(([name, value], index) => {
+    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月收入', content.money(state.ledger.income)], ['本月支出', content.money(content.monthSpent(state))]].map(([name, value], index) => {
       this.text(finance, name, 10 + column * index, 3, column - 10, 16, 10, colors.muted);
       return this.text(finance, value, 10 + column * index, 18, column - 12, 22, 15, index === 0 ? colors.green : index === 2 ? colors.amber : colors.ink, true);
     })[0];
@@ -438,7 +458,7 @@ export class StudioApp extends Component {
         const id = ['project', 'testing', 'market'].includes(menu) ? this.watching : undefined;
         this.openMenu(target, id);
       });
-      this.image(node, 'icons/' + (lock ? 'Lock' : icon), (cellWidth - 22) / 2, 5, 22, 22, lock ? colors.line : colors.green);
+      this.navIcon(node, lock ? 'Lock' : icon, (cellWidth - 22) / 2, 5, 22, lock ? colors.line : colors.green);
       this.text(node, title, 0, 32, cellWidth, 18, 11, lock ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
       this.anchors.set('nav-' + menu, node);
     });
@@ -545,12 +565,19 @@ export class StudioApp extends Component {
     this.text(body, core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, y, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     y += 28;
     y += this.milestones(body, y, project, metrics, forecast) + 6;
+    // The radar is six zeroes and a lot of empty space until a prototype exists. Reveal the scoring
+    // panel when it actually has a shape instead of opening the game on a wall of zeroes.
+    if (!project.checkpoints?.prototype) {
+      const hint = this.box(body, 'PrototypeHint', 0, y, inner, 54, colors.pale, 8);
+      this.text(hint, '完成 25% 原型后，这里显示六维评分、瓶颈与关注。现在先开始时间或调整分工。', 12, 2, inner - 24, 50, 12, colors.muted);
+      return y + 62;
+    }
     y += this.radar(body, y, metrics, project.type, project) + 8;
     const bottleneck = forecast.bottleneck ? core.DIMENSIONS.find(dimension => dimension.key === forecast.bottleneck.key)?.name : '—';
     const cells: any[] = [
       ['综合评分', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
-      ['已知缺陷', project.tests ? metrics.known + ' 项' : '未测试', colors.blue, -1, 'stat-defects'],
+      ['已知缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
     ];
     const cell = inner / 4;
@@ -578,6 +605,7 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const height = 184;
     const { node, pen } = this.canvasNode(body, 'Radar', 0, y, inner, height);
+    this.anchors.set('radar', node);
     const weights = core.TYPES[type].weights;
     const center = { x: inner / 2, y: 82 };
     const radius = 52;
@@ -649,26 +677,31 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const track = this.box(body, 'Track', 0, y, inner, 58);
     this.anchors.set('track', track);
-    const phases = [['立项', 0], ['原型', 25], ['体验版', 55], ['完成', 100], ['发售', 101]];
-    const gap = (inner - 24) / 4;
+    // Launch unlocks at the trial build, not at 100%. The old track ended in "发售" at full progress,
+    // which taught the opposite and made players grind to 100% before daring to release.
+    const phases = [['立项', 0], ['原型', 25], ['体验版', 55], ['做满', 100]];
+    const railLeft = 12;
+    const railWidth = inner - 24;
     const railY = 22;
+    const fill = Math.max(0, Math.min(1, metrics.progress / 100));
+    // Nodes sit at their own thresholds. Spacing them evenly made a 25% prototype unlock sit at a third
+    // of the rail, so the bar always looked behind the milestone the game had already passed.
+    const at = (threshold: number) => railLeft + railWidth * (threshold / 100);
+    this.box(track, 'Rail', railLeft, railY + 5, railWidth, 3, colors.line);
+    this.box(track, 'Fill', railLeft, railY + 5, railWidth * fill, 3, colors.green);
+    const days = forecast.days;
     const phase = metrics.progress < 25 ? 0 : metrics.progress < 55 ? 1 : metrics.progress < 100 ? 2 : 3;
-    const phaseStart = [0, 25, 55, 100][phase];
-    const phaseEnd = [25, 55, 100, 100][phase];
-    const fill = (phase + (phaseEnd > phaseStart ? (metrics.progress - phaseStart) / (phaseEnd - phaseStart) : 0)) / 4;
-    this.box(track, 'Rail', 12, railY + 5, inner - 24, 3, colors.line);
-    this.box(track, 'Fill', 12, railY + 5, (inner - 24) * fill, 3, colors.green);
-    const estimate = phase === 0 ? Math.round((forecast.days || 0) * 0.5) : forecast.days;
-    const note = phase === 3 ? '可以发售' : estimate == null ? '缺人手' : '约 ' + estimate + ' 天';
-    const warn = phase < 3 && (estimate == null || !!forecast.bottleneck);
-    const noteX = 12 + gap * (phase + 0.5);
-    this.text(track, note, Math.max(0, Math.min(inner - 130, noteX - 65)), 0, 130, 18, 11, warn ? colors.amber : colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+    const note = phase === 3 ? '已可发售' : phase === 2 && days != null ? '可发售 · 做满约 ' + days + ' 天' : days == null ? '缺人手' : '距做完约 ' + days + ' 天';
+    const warn = phase < 3 && (days == null || !!forecast.bottleneck);
+    const noteWidth = phase >= 2 ? 190 : 130;
+    const noteCenter = at(metrics.progress);
+    this.text(track, note, Math.max(0, Math.min(inner - noteWidth, noteCenter - noteWidth / 2)), 0, noteWidth, 18, 11, warn ? colors.amber : colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
     phases.forEach(([title, threshold], index) => {
-      this.box(track, String(title), 6 + index * gap, railY, 13, 13, metrics.progress >= Number(threshold) ? colors.green : colors.line, 6);
-      const label = this.text(track, title, Math.min(inner - 48, Math.max(0, index * gap - 11)), railY + 16, 48, 16, 10, colors.muted);
+      const x = at(Number(threshold));
+      this.box(track, String(title), x - 6.5, railY, 13, 13, metrics.progress >= Number(threshold) ? colors.green : colors.line, 6);
+      const label = this.text(track, title, Math.min(inner - 48, Math.max(0, x - 24)), railY + 16, 48, 16, 10, colors.muted);
       label.horizontalAlign = index === 0 ? HorizontalTextAlignment.LEFT : index === phases.length - 1 ? HorizontalTextAlignment.RIGHT : HorizontalTextAlignment.CENTER;
     });
-    if (phase < 3 && forecast.days != null) this.text(track, '全部约 ' + forecast.days + ' 天', 3 * gap - 22, railY + 31, 70, 14, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
     return 58;
   }
 
@@ -743,7 +776,10 @@ export class StudioApp extends Component {
     const y = this.top;
     if (this.routes.length > 1) this.button(this.stage, '', 20, y, 40, 40, () => { this.routes.pop(); this.render(); }, false, false, 'ArrowLeft');
     this.text(this.stage, title, 70, y, this.width - 140, 40, 19, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-    if (this.state.company && route.menu !== 'event') this.button(this.stage, '', this.width - 60, y, 40, 40, () => this.closeMenu(), false, false, 'X');
+    // Event pages used to have no close button at all, so the release screen trapped the player in it.
+    // A single-choice event (release, settlement) can be dismissed with ✕; a real decision still must be made.
+    const singleChoiceEvent = route.menu === 'event' && (this.state.event?.choices?.length || 0) === 1;
+    if (this.state.company && (route.menu !== 'event' || singleChoiceEvent)) this.button(this.stage, '', this.width - 60, y, 40, 40, () => this.closeMenu(), false, false, 'X');
     this.box(this.stage, 'Divider', 20, y + 54, this.width - 40, 1, colors.line);
     const footer = this.resumeAfterMenu && this.state.company && !this.state.event ? 64 : 0;
     const scroll = this.scroller(y + 68, this.height - y - 68 - this.bottom - footer);
@@ -835,6 +871,9 @@ export class StudioApp extends Component {
         return y + 48;
       }
       case 'text': return y + this.paragraph(parent, block.text, y, block.muted, 0, width, block.muted ? 13 : 14);
+      case 'foot':
+        this.text(parent, block.text, 0, y + 10, width, 18, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+        return y + 34;
       case 'section':
         this.text(parent, block.title, 0, y + 8, width, 26, 16, colors.ink, true);
         return y + 42;
@@ -871,10 +910,18 @@ export class StudioApp extends Component {
         return block.note ? y + this.paragraph(parent, block.note, y, true, 0, width, 12) : y;
       case 'buttons': {
         const start = y;
-        for (const item of block.items) {
-          this.button(parent, item.text, 0, y, width, 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, undefined, item.anchor);
-          y += 56;
-        }
+        // Wide menus used to stack every action as a full-width row, pushing real content far below
+        // the fold. Blocks can now ask for two or three compact columns (roles, save actions).
+        const columns = Math.max(1, Math.min(3, Number(block.columns) || 1, block.items.length));
+        const gap = 8;
+        const cell = (width - (columns - 1) * gap) / columns;
+        block.items.forEach((item: any, index: number) => {
+          const column = index % columns;
+          const line = Math.floor(index / columns);
+          this.button(parent, item.text, column * (cell + gap), y + line * 56, cell, 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, item.icon, item.anchor);
+        });
+        const rows = Math.ceil(block.items.length / columns);
+        y += rows * 56;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }
@@ -1062,8 +1109,10 @@ export class StudioApp extends Component {
             if (returnedHome) this.notify(person.name + '：每人至少做一项，已回到本行。');
             else this.notify(person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
           });
-          if (index === 0) this.anchors.set('person-assign-' + block.index, node);
         });
+        // The lesson is "everyone picks their work", so the ring has to hug the whole grid. Anchoring
+        // the first cell made it look like only 创意 could be chosen.
+        this.anchors.set('person-assign-' + block.index, this.box(card, 'AssignGrid', 8, header - 4, width - 16, rows * 50 + 4));
         const person = this.state.staff.find((item: any) => item.id === block.personId);
         const homeKey = person ? ((core.ROLES[person.role].home || []).find((key: string) => core.WORK_KEYS.includes(key)) || 'discover') : '';
         const half = (width - 32) / 2;
@@ -1183,7 +1232,6 @@ export class StudioApp extends Component {
     this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
     this.text(banner, item.title, 50, 12, width - 64, 24, 16, '#ffffff', true);
     this.text(banner, item.text, 50, 36, width - 64, 20, 12, '#fff3d6');
-    if (item.kind !== 'notice' && item.kind !== 'settle') this.burst(this.effects, this.width / 2, this.top + 133, big ? Math.max(15, item.amount) : 5);
     banner.setScale(0.9, 0.9, 1);
     const opacity = banner.addComponent(UIOpacity);
     opacity.opacity = 0;
@@ -1213,7 +1261,10 @@ export class StudioApp extends Component {
     const route = this.routes.length ? this.routes[this.routes.length - 1] : null;
     const step = content.guide(this.state, route, this.playing);
     if (!step) return;
-    if (step.ack && route) this.menuAck = step.ack;
+    // In a menu the tip has nothing to forward to: its anchor is usually a whole group of rows, not a
+    // button, so an overlay would swallow the press and the real buttons underneath would go dead.
+    // Instead the tip rides on the click: whatever the player presses counts as having read it.
+    if (route && (step.ack || step.tap)) this.menuAck = step.ack || step.tap;
     const target = this.anchors.get(step.anchor);
     let rect = null;
     if (target) {
@@ -1226,10 +1277,9 @@ export class StudioApp extends Component {
       const local = this.stage.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(bounds.x, bounds.y, 0));
       rect = { x: local.x - 5, y: -(local.y + bounds.height) - 5, w: bounds.width + 10, h: bounds.height + 10 };
     }
-    // The dimmer belongs to the main screen's spotlight. Inside a menu it used to darken the very
-    // boxes the tip asks the player to tap, which made a changed colour look like no change at all.
+    // Every tip dims whatever it is not pointing at, menus included: a highlight only reads as a
+    // highlight when the rest of the screen steps back.
     const dim = (x: number, y: number, w: number, h: number) => {
-      if (this.routes.length) return;
       if (w > 0 && h > 0) this.box(this.stage, 'Dim', x, y, w, h, colors.night, 0, 120);
     };
     const acknowledge = () => { this.apply(core.markSeen(this.state, step.ack)); this.resumeFromGuide(); };
@@ -1252,7 +1302,10 @@ export class StudioApp extends Component {
       shield(0, rect.y, rect.x, rect.h);
       shield(rect.x + rect.w, rect.y, this.width - rect.x - rect.w, rect.h);
       if (step.ack) shield(rect.x, rect.y, rect.w, rect.h);
-      if (step.tap && !this.confirmSkip) {
+      // The tap forwarder exists for the main screen only: there the highlight sits on a navigation
+      // button and the tip has to hand the press over. Menus are already interactive, so the rows keep
+      // the press themselves — no overlay, no dead buttons.
+      if (step.tap && !this.confirmSkip && !this.routes.length && target?.getComponent(Button)) {
         const anchor = step.anchor;
         this.clickable(this.box(this.stage, 'GuideTap', rect.x, rect.y, rect.w, rect.h), () => {
           this.state = core.markSeen(this.state, step.tap);
@@ -1370,7 +1423,15 @@ export class StudioApp extends Component {
 
   private closeMenu() {
     if (!this.state.company) return;
-    if (this.state.event) { this.routes = [{ menu: 'event' }]; this.render(); return; }
+    if (this.state.event) {
+      // 只有一个选项的事件（发售、月度结算这类）点 ✕ 就该等于收下结果。原来一律弹回事件页，
+      // 右上角的关闭看起来完全没反应，玩家只能从页面里的按钮退出。
+      const choices = this.state.event.choices || [];
+      if (choices.length === 1) { this.decide(choices[0].id); return; }
+      this.routes = [{ menu: 'event' }];
+      this.render();
+      return;
+    }
     this.routes = [];
     this.inputRequest = null;
     this.playing = this.resumeAfterMenu && !this.state.over;
@@ -1392,6 +1453,7 @@ export class StudioApp extends Component {
 
   private notify(message: string) {
     this.notice = String(message || '操作未完成');
+    this.noticeFresh = true;
     this.unschedule(this.clearNotice);
     this.scheduleOnce(this.clearNotice, 2.5);
     this.render();

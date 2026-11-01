@@ -16,9 +16,12 @@ export function guideOn(state: any) {
 }
 
 export function menuLock(state: any, menu: string) {
-  if (!core.tutorialActive(state)) return '';
-  const project = core.projectOpen(state).find((item: any) => item.checkpoints.demo);
-  if ((menu === 'testing' || menu === 'market') && !project) return '任一项目 体验版完成后开放';
+  // A tool shop before the first project is just six prices with nothing to spend them on.
+  if (menu === 'tools' && !state.projects.length) return '立项后开放';
+  // Playtesting and promotion are about a build that exists. Opening them at day one let a player walk
+  // into three empty pages before the prototype was even done.
+  const shown = core.projectOpen(state).some((project: any) => project.checkpoints.demo) || state.catalog.length > 0;
+  if ((menu === 'testing' || menu === 'market') && !shown) return '任一项目 体验版完成后开放';
   return '';
 }
 
@@ -53,18 +56,25 @@ function recruitMenu(state: any, id: string) {
   // 没有指定岗位或渠道时不报错：退回第一个已开放的组合，界面上仍有可点的入口。
   const openRole = Object.keys(core.ROLES).find((key: string) => core.roleOpen(state, key)) || 'code';
   const openChannel = bestChannel(state) || 'friends';
-  const [role, channel] = String(id || openRole + ':' + openChannel).split(':');
-  if (!core.ROLES[role] || !core.CHANNELS[channel]) return recruitMenu(state, openRole + ':' + openChannel);
-  const pool = state.candidates[id];
+  let [role, channel] = String(id || openRole + ':' + openChannel).split(':');
+  // Old links and stale routes may point at a job or channel that is still locked. Fall back to an
+  // open combination instead of rendering a dead page.
+  if (!core.ROLES[role] || !core.roleOpen(state, role)) role = openRole;
+  if (!core.CHANNELS[channel] || !core.channelOpen(state, channel)) channel = openChannel;
+  const pool = state.candidates[role + ':' + channel];
   const fee = core.recruitFee(state, channel);
+  const roles = Object.keys(core.ROLES).filter((key: string) => core.roleOpen(state, key));
+  const channels = Object.keys(core.CHANNELS).filter((key: string) => core.channelOpen(state, key));
   const blocks: any[] = [
-    { type: 'tabs', items: Object.keys(core.ROLES).map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role, locked: !core.roleOpen(state, key) })) },
-    { type: 'tabs', items: Object.keys(core.CHANNELS).map(key => ({ text: core.CHANNELS[key].name, route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
+    { type: 'tabs', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role })) },
+    { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name, route: { menu: 'recruit', id: role + ':' + key }, active: key === channel })) },
     { type: 'text', text: core.ROLES[role].task + '。' + core.CHANNELS[channel].text, muted: true }
   ];
   if ((state.notices.layout || 0) > 0) blocks.push({ type: 'note', icon: 'Users', text: '近期裁员影响了公司的招聘吸引力，招聘费用已上浮。' });
-  if (!core.roleOpen(state, role)) return { title: '招聘' + core.ROLES[role].name, blocks: [...blocks, { type: 'note', icon: 'Lock', text: core.ROLES[role].name + '岗位首作发售后开放。' }] };
-  if (!core.channelOpen(state, channel)) return { title: '招聘' + core.ROLES[role].name, blocks: [...blocks, { type: 'note', icon: 'Lock', text: core.CHANNELS[channel].name + core.CHANNELS[channel].lock + '。' }] };
+  const lockedRoles = Object.keys(core.ROLES).filter((key: string) => !core.roleOpen(state, key));
+  const lockedChannels = Object.keys(core.CHANNELS).filter((key: string) => !core.channelOpen(state, key));
+  if (lockedRoles.length) blocks.push({ type: 'text', text: lockedRoles.map((key: string) => core.ROLES[key].name).join('、') + '岗位在首作发售后开放。', muted: true });
+  if (lockedChannels.length) blocks.push({ type: 'text', text: lockedChannels.map((key: string) => core.CHANNELS[key].name + core.CHANNELS[key].lock).join('；') + '。', muted: true });
   if (pool) {
     blocks.push({ type: 'candidates', people: pool.people });
     blocks.push({ type: 'text', text: '这批名单保持到第 ' + (pool.batch + 1) * 14 + ' 天，之后可以查看新一批。', muted: true });
@@ -107,7 +117,24 @@ export function menu(state: any, route: any) {
     case 'history': return historyMenu(state);
     case 'goals': return goalsMenu(state);
     case 'archive': return archiveMenu(state);
-    case 'event': return state.event ? { title: state.event.title, blocks: [{ type: 'text', text: state.event.text }, { type: 'choices', items: state.event.choices.map((choice: any) => ({ ...choice, action: 'decision' })) }] } : { title: '没有待决事项', blocks: [{ type: 'text', text: '继续经营即可。' }] };
+    case 'event': {
+      if (!state.event) return { title: '没有待决事项', blocks: [{ type: 'text', text: '继续经营即可。' }] };
+      const event = state.event;
+      const choices = { type: 'choices', items: event.choices.map((choice: any) => ({ ...choice, action: 'decision' })) };
+      // 发售瞬间既是决策页，也是这一作的成绩单：封面、首发到账、玩家评价和复盘入口。
+      // 重构时这几块被删到只剩一行文字，发售就变成了一个没有仪式感的确认框。
+      const released = event.id === 'release' ? state.catalog.find((book: any) => book.id === state.lastRelease) : null;
+      if (!released) return { title: event.title, blocks: [{ type: 'text', text: event.text }, choices] };
+      const blocks: any[] = [
+        { type: 'cover', book: released },
+        { type: 'payout', amount: released.openingReceipt, label: '首发到账', note: '首发售出 ' + number(released.openingUnits) + ' 份 · 玩家评价 ' + released.reviewScore.toFixed(1) },
+        ...(released.review?.quotes?.length ? [{ type: 'quotes', items: released.review.quotes }] : []),
+        { type: 'text', text: event.text },
+        { type: 'buttons', items: [{ text: released.tutorial ? '查看首作复盘' : '查看发售复盘', action: 'review', data: { id: released.id }, anchor: 'review' }] },
+        choices
+      ];
+      return { title: event.title, blocks };
+    }
     default: return { title: '菜单', blocks: [{ type: 'text', text: '没有找到该页面。' }] };
   }
 }
@@ -120,8 +147,12 @@ export function planPreview(state: any, draft: any) {
   const type = core.TYPES[draft.type];
   const scale = core.SCALES[draft.scale] || core.SCALES[0];
   const workload = type.work * scale.work;
-  const forecast = core.projectForecast(state, { type: draft.type, scale: draft.scale, work: Object.fromEntries(core.DIM_KEYS.map(key => [key, { total: workload * type.share[key], done: 0, value: 0 }])), defects: [], progress: 0 });
-  const time = forecast && forecast.days === null ? '还没有能推进的人，招聘后才能开始。' : forecast ? '当前团队约 ' + forecast.days + ' 天完成。' : '';
+  // The quote must be the whole job, not the single dimension a founder happens to default to. Output
+  // per day is the team's combined speed, so the estimate is total work over total hands and stays
+  // honest no matter how the work gets split later.
+  const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
+  const days = capacity > 0.0001 ? Math.ceil(workload / capacity) : null;
+  const time = days === null ? '还没有能推进的人，招聘后才能开始。' : '现有 ' + state.staff.length + ' 人、六项都有人做，做满约 ' + days + ' 天（约 ' + (days / 30).toFixed(1) + ' 个月）。';
   return '工作量 ' + workload.toFixed(0) + '，' + time + '\n售价 ' + price(type.price * scale.price) + '；基础市场容量 ' + number(core.MARKET_SIZE * scale.reach) + ' 份，不是保底销量。\n' + type.audience + '最看重：' + core.audienceFocus(draft.type) + '。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
@@ -159,10 +190,11 @@ function projectMenu(state: any, id?: string) {
     ...(project.deadline !== null ? [{ type: 'text', text: '已公布：第 ' + project.deadline + ' 天发售。到期未发会损失关注。', muted: true }] : []),
     { type: 'buttons', items: [
       { text: '调整分工', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-      { text: '招募试玩', action: 'menu', data: { menu: 'testing', id: project.id } },
-      { text: '市场与推广', action: 'menu', data: { menu: 'market', id: project.id } },
+      { text: '招募试玩', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !project.checkpoints.demo },
+      { text: '市场与推广', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !project.checkpoints.demo },
       { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '带着未完成的评分项发售' : '正式发售') : '体验版完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
-      ...(open.length < 4 ? [{ text: '再开一个项目', action: 'menu', data: { menu: 'new-project' } }] : [])
+      // Running two titles at once needs room for two teams; before the first move there is not any.
+      ...(open.length < 4 ? [{ text: state.office > 0 ? '再开一个项目' : '搬进正式办公室后可再开项目', action: 'menu', data: { menu: 'new-project' }, disabled: state.office === 0, anchor: 'new-project' }] : [])
     ] },
     ...(project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null ? [
       { type: 'section', title: '声音外包（每作一次）' },
@@ -251,8 +283,19 @@ function testingMenu(state: any, id?: string) {
   const offer = core.playtestOffer(state, project);
   const blocks: any[] = [];
   if (project.test) {
-    blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 发现 ' + project.test.found + ' 项缺陷' });
+    blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 发现 ' + project.test.found + ' 项缺陷 · 累计 ' + project.testCount + ' 人次参与' });
+    // Comparing with the previous run is the whole point of a retest: a bare score cannot tell you
+    // whether the last round of work helped.
+    const history = project.testLog || [];
+    if (history.length > 1) {
+      const last = history[history.length - 1];
+      const previous = history[history.length - 2];
+      const delta = last.score - previous.score;
+      const base = '（第 ' + previous.day + ' 天 ' + previous.score.toFixed(1) + ' 分）';
+      blocks.push({ type: 'text', text: Math.abs(delta) < 0.05 ? '与上次' + base + '持平。' : '比上次' + base + (delta > 0 ? '高 ' : '低 ') + Math.abs(delta).toFixed(1) + ' 分。' });
+    }
     blocks.push({ type: 'note', icon: 'Target', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) });
+    blocks.push({ type: 'section', title: '逐项评价' });
     blocks.push({ type: 'feedback', items: project.test.findings });
     blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   } else {
@@ -378,6 +421,9 @@ function archiveMenu(state: any) {
 
 function teamMenu(state: any) {
   const channel = bestChannel(state);
+  const hasTeammate = state.staff.some((person: any) => !person.founder);
+  const openRoles = Object.keys(core.ROLES).filter((role: string) => core.roleOpen(state, role));
+  const lockedRoles = Object.keys(core.ROLES).filter((role: string) => !core.roleOpen(state, role));
   const stressed = state.staff.filter((person: any) => person.stressTags.length);
   const sample = stressed[0] || state.staff[0];
   const chance = sample ? Math.round(core.outingChance(state, sample, 2) * 100) : 0;
@@ -386,11 +432,15 @@ function teamMenu(state: any) {
     title: '团队',
     blocks: [
       { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（含房租）', money(core.monthlyCost(state))]] },
-      { type: 'buttons', items: Object.keys(core.ROLES).map(role => ({ text: '招聘' + core.ROLES[role].name + (core.roleOpen(state, role) ? '' : '（未开放）'), action: 'menu', data: { menu: 'recruit', id: role + ':' + channel }, disabled: !core.roleOpen(state, role), anchor: 'recruit-' + role })) },
-      { type: 'text', text: '加班按人设置：产出更高，但缺陷更多，也会累积「疲惫」「想走」这类负面标签。没有数值仪表，标签会常驻在员工卡上。', muted: true },
-      { type: 'segments', title: '团建时长（占工作日，工资照付）', items: [1, 2, 3].map(value => ({ text: value + ' 天', action: 'outing', data: { days: value, value }, active: false, anchor: 'outing-' + value })) },
-      ...(state.staff.length ? [{ type: 'lines', items: [['当前清除标签概率', chance + '%'], ['保底', `${pity} / ${core.OUTING_PITY} 次必出`], ['频率影响', '连着做会越来越难见效，隔一段时间会回升']] }] : []),
-      { type: 'staff' }
+      { type: 'buttons', columns: 3, items: openRoles.map(role => ({ text: '招聘' + core.ROLES[role].name, action: 'menu', data: { menu: 'recruit', id: role + ':' + channel }, anchor: 'recruit-' + role })) },
+      ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
+      { type: 'staff' },
+      ...(hasTeammate ? [
+        { type: 'section', title: '团队管理' },
+        { type: 'text', text: '加班按人设置：产出更高，但缺陷更多，也会累积「疲惫」「想走」这类负面标签。', muted: true },
+        { type: 'segments', title: '团建时长（占工作日，工资照付）', items: [1, 2, 3].map(value => ({ text: value + ' 天', action: 'outing', data: { days: value, value }, active: false, anchor: 'outing-' + value })) },
+        ...(state.staff.length ? [{ type: 'lines', items: [['当前清除标签概率', chance + '%'], ['保底', `${pity} / ${core.OUTING_PITY} 次必出`], ['频率影响', '连着做会越来越难见效，隔一段时间会回升']] }] : [])
+      ] : [{ type: 'text', text: '创始人也在工作。首作一个人就能做完，招人是为了补上自己干不了的那一头：程序或策划请配美术，美术请配程序。', muted: true }])
     ]
   };
 }
@@ -445,14 +495,18 @@ function dismissMenu(state: any, id: string) {
 }
 
 function toolsMenu(state: any) {
+  const keys = Object.keys(core.STUDIO_TOOLS);
+  const open = keys.filter((key: string) => core.toolOpen(state, key));
+  const locked = keys.filter((key: string) => !core.toolOpen(state, key));
   return {
     title: '工具',
     blocks: [
       { type: 'text', text: '工具属于公司，以后的作品都能用；只加速对应那类工作，不提高质量。', muted: true },
-      ...Object.keys(core.STUDIO_TOOLS).map(key => {
+      ...open.map((key: string) => {
         const tool = core.STUDIO_TOOLS[key];
         return { type: 'card', title: tool.name, text: tool.text, button: { text: state.tools.includes(key) ? '已购置' : '购置 · ' + money(tool.cost), action: 'buy-tool', data: { key }, disabled: state.tools.includes(key) || state.cash < tool.cost, anchor: 'tool-' + key } };
-      })
+      }),
+      ...(locked.length ? [{ type: 'text', text: locked.map((key: string) => core.STUDIO_TOOLS[key].name).join('、') + '在首个作品完成原型后开放。', muted: true }] : [])
     ]
   };
 }
@@ -463,15 +517,22 @@ function financeMenu(state: any) {
     title: '公司',
     blocks: [
       { type: 'lines', items: [['现金', money(state.cash)], ['本月收入', money(ledger.income)], ['本月已开支', money(monthSpent(state))], ['已累计应付', money(state.accrued)], ['月开支（工资 + 房租）', money(core.monthlyCost(state))]] },
+      { type: 'section', title: '公司与记录' },
       { type: 'buttons', items: [
         { text: '成长目标与扩建', action: 'menu', data: { menu: 'goals' } },
         { text: '公司档案 · 名望 ' + core.reputationOf(state), action: 'menu', data: { menu: 'archive' } },
-        { text: '经营记录', action: 'menu', data: { menu: 'history' } },
+        { text: '经营记录', action: 'menu', data: { menu: 'history' } }
+      ] },
+      { type: 'section', title: '存档与设置' },
+      { type: 'buttons', columns: 3, items: [
         { text: '导出存档', action: 'export' },
         { text: '导入存档', action: 'import' },
         { text: '重新创业', action: 'menu', data: { menu: 'restart' } }
       ] },
-      { type: 'toggle', text: '音效', value: state.sound, action: 'sound' }
+      { type: 'toggle', text: '音效', value: state.sound, action: 'sound' },
+      // The build number lives here instead of on the studio header: it is a "which build am I on"
+      // question you ask once, not something worth a line of the main screen every session.
+      { type: 'foot', text: '版本 v' + core.VERSION }
     ]
   };
 }
@@ -521,42 +582,104 @@ function rankingsMenu(state: any) {
 // control and counts as seen once the player presses it; neither means "press the highlighted control".
 export type GuideStep = { anchor: string; text: string; ack?: string; tap?: string };
 
+// One founder covers one trade and leaves the other blind. A programmer and a designer both ship
+// games nobody wants to look at, so both pair with an artist; an artist pairs with a programmer.
+// Reading the raw ability numbers instead kept answering "design" for a programmer, because design
+// is the stat they score lowest on — but design is work they can still carry, visuals are not.
+const PARTNER: any = { code: 'art', design: 'art', art: 'code' };
+
+export function weakestRole(state: any) {
+  const founder = state.staff[0];
+  const open = Object.keys(core.ROLES).filter((role: string) => core.roleOpen(state, role));
+  if (!founder) return open[0] || 'code';
+  const partner = PARTNER[founder.role];
+  if (partner && open.includes(partner)) return partner;
+  let worst = open[0] || 'code';
+  let low = 999;
+  for (const role of open) {
+    const keys = (core.ROLES[role].home || []).filter((key: string) => typeof founder.abilities?.[key] === 'number');
+    if (!keys.length) continue;
+    const value = Math.min(...keys.map((key: string) => founder.abilities[key]));
+    if (value < low) { low = value; worst = role; }
+  }
+  return worst;
+}
+
 export function guide(state: any, route: any, playing: boolean): GuideStep | null {
   if (!guideOn(state)) return null;
   const seen = state.tutorial.seen;
   const project = core.projectOpen(state)[0];
-  const hasWorker = state.staff.length > 0;
+  const hasTeammate = state.staff.some((person: any) => !person.founder);
   const complete = !!project && project.progress >= 100;
   const explain = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };
   const introduce = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, tap: key };
   if (!route) {
     if (state.event) return { anchor: 'next', text: '有一个决定在等你，点这里查看。' };
     const steps: Array<() => GuideStep | null> = [
-      () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标：完成后会解锁新能力。'),
-      () => hasWorker ? null : { anchor: 'nav-team', text: '「团队」负责招聘和管理同事。点这里，招一位程序员把游戏做出来。' },
-      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一从资金扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
-      () => project || state.catalog.length ? null : { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里，为第一款游戏立项。' },
-      () => project ? explain('track', 'track', '六个评分项各有自己的进度，最慢的一项就是瓶颈。完成度 55% 可以试玩，100% 可以发售。') : null,
-      () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。' } : null,
-      () => state.reports.length ? introduce('navFinance', 'nav-finance', '第一个月结算了：工资和房租已从资金扣除。点「公司」看看上个月的账单，目标和存档也在这里。') : null,
-      () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把同事分到各项工作上。' } : null,
-      () => project && (state.staff.length >= 2 || (project.progress > 0 && project.progress < 25 && state.day > 30)) ? introduce('tools', 'nav-tools', '「工具」能加速对应工作：开局就能买，属于公司、以后的作品都能用，但只提速不提高质量。') : null,
-      () => project?.test ? explain('defects', 'stat-defects', '已知缺陷：试玩发现的缺陷数。只有发现之后才能修复，发售后玩家也会陆续报告。') : null,
-      () => complete && !seen.checklist ? { anchor: 'nav-project', text: '各评分项都做满了。点「项目」，可以正式发售，也可以继续返工提高评分。', tap: 'checklist' } : null,
-      () => !project && state.catalog.length === 1 ? { anchor: 'nav-market', text: '点「市场」打开首作，看看复盘：哪里亏了，下一作怎么改。' } : null
+      // Where you are comes before what you do: the goal card carries both the ambition and the current
+      // state, so the opening sequence starts there, then reads the money, and only then asks for a title.
+      () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标，也看看现在的处境。'),
+      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
+      () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项；首作选小型就够。', tap: 'navProject' } : null,
+      () => project && !seen.track ? explain('track', 'track', '六个评分项各有进度，最慢的一项就是瓶颈。完成度 55% 自动完成体验版，这时就能试玩和发售；做满只是继续打磨。') : null,
+      () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
+      () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
+      // A hire is only useful against a short board, so the tip names the trade that covers the
+      // founder's weakest ability instead of always saying "programmer". Tapping the tab is enough:
+      // the condition must be satisfied by the very tap it asks for, or the tip can never be cleared.
+      () => project && project.progress >= 10 && !hasTeammate && !seen.navTeam ? { anchor: 'nav-team', text: '一个人也能做完首作，但一个人只能顾一头。点「团队」招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '，进度会快很多。', tap: 'navTeam' } : null,
+      // A new hire only covers their own trade by default. Teaching the habit of re-splitting the
+      // work right after the first hire is the difference between a second pair of hands and a salary.
+      () => project && seen.assign && hasTeammate && !seen.reassign && !project.released ? { anchor: 'nav-project', text: '新同事到岗了。他默认只做本行，点「项目」→「调整分工」，可以让他多担几项。', tap: 'navReassign' } : null,
+      // The radar only appears once a prototype exists, so its explanation has to wait for that moment
+      // too — teaching six axes before they are on screen is a wall of words with nothing to point at.
+      () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '原型出来了，六维评分也解锁：创意、深度、流畅、画面、声音、稳定。实线是现在的分数，虚线是按当前团队的水平能到哪；综合评分是六项按玩家口味加权。', ack: 'dimensions' } : null,
+      // On the main screen these two stay forced taps: opening the page is the lesson. Only the tip
+      // inside each page is a "知道了" explanation, because acting there costs money.
+      () => project?.checkpoints.prototype && !seen.navTools ? { anchor: 'nav-tools', text: '原型成形了。点「工具」看看：只提速、不提高质量，画面、声音和测试工具也已开放。', tap: 'navTools' } : null,
+      () => project?.checkpoints.demo && !seen.testing ? { anchor: 'nav-testing', text: '体验版完成：点「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
+      () => project?.test && !seen.promote && !project.promoted ? { anchor: 'nav-market', text: '试玩后再去「市场」投放推广。推广只换关注，不保证销量，首作先投一小笔。', tap: 'navMarket' } : null,
+      () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '已知缺陷：试玩发现的缺陷数。发现之后团队会顺手修掉，发售后玩家也会陆续报告。') : null,
+      () => complete && !project.released && !seen.launchBook ? { anchor: 'nav-project', text: '各评分项都做满了。点「项目」可以正式发售，也可以继续返工提高评分。', tap: 'navProject' } : null,
+      () => !project && state.catalog.length === 1 ? introduce('review', 'nav-market', '首作已发售。点「市场」打开档案，看看复盘：哪里亏了，下一作怎么改。') : null
     ];
     for (const step of steps) { const result = step(); if (result) return result; }
     return null;
   }
   switch (route.menu) {
-    case 'team': return hasWorker ? null : { anchor: 'recruit-code', text: '点「招聘程序」。' };
-    case 'recruit': return state.candidates[route.id] ? (hasWorker ? null : { anchor: 'candidates', text: '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。' };
-    case 'candidate': return hasWorker ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
-    case 'project': return project && !seen.assign && state.staff.length ? { anchor: 'assign', text: '点「调整分工」，把同事分到各项工作上；没有人做的工作会一直停在原地。' } : null;
+    case 'team': return hasTeammate ? null : { anchor: 'recruit-' + weakestRole(state), text: '招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '。' };
+    case 'tools': {
+      // The main screen only walks the player to this page; inside, point at a tool they can afford,
+      // so the lesson ends with something bought rather than another tip that cannot be cleared.
+      if (seen.tools || !project) return null;
+      const unowned = Object.keys(core.STUDIO_TOOLS)
+        .filter((key: string) => core.toolOpen(state, key) && !state.tools.includes(key));
+      if (!unowned.length) return null;
+      const buyable = unowned.find((key: string) => state.cash >= core.STUDIO_TOOLS[key].cost) || unowned[0];
+      return { anchor: 'tool-' + buyable, text: '工具只加速对应那类工作，不提高质量。买不起也不要紧，钱先花在招人或推广上更划算。', ack: 'tools' };
+    }
+    case 'recruit':
+      return state.candidates[route.id] ? (hasTeammate ? null : { anchor: 'candidates', text: '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。' };
+    case 'candidate': return hasTeammate ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
+    case 'project':
+      if (!project) return null;
+      if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
+      if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
+      // Several buttons live on this page; once the trial build exists the useful one is the release.
+      if (project.checkpoints.demo && !project.released) return { anchor: 'launch', text: '体验版已经能卖了：点这里正式发售，也可以继续返工提高评分。', tap: 'launchBook' };
+      return null;
+    case 'assign': {
+      if (!seen.assign) return { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。做别的岗位的工作照样推进工期，只是评分更低、缺陷更多。', ack: 'assign' };
+      if (hasTeammate && !seen.reassign) {
+        const mate = state.staff.findIndex((person: any) => !person.founder);
+        return { anchor: 'person-assign-' + Math.max(0, mate), text: '新同事默认只做本行。也可以点其它工作让他多担几项，做完会自动空出手。', ack: 'reassign' };
+      }
+      return null;
+    }
+    case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：能发现大部分缺陷，也会指出这类玩家最在意的评分项。预算紧可以晚点再试。', ack: 'testing' };
     case 'market':
-      if (project && !project.promoted) return { anchor: 'promotions', text: '推广把钱换成关注：越多越贵，每多花一万元关注增长会变慢。首作预算有限，可以先投一小笔。' };
-      return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。' } : null;
-    case 'assign': return seen.assign ? null : { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。做别的岗位的工作照样推进工期，只是评分更低、缺陷更多。', ack: 'assign' };
+      if (project && !project.promoted) return { anchor: 'promotions', text: '推广把钱换成关注：越多越贵，每多花一万元关注增长会变慢。首作预算有限，可以先投一小笔。', tap: 'promote' };
+      return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
     default: return null;
   }
 }

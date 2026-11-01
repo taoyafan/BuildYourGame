@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.4';
+export const VERSION = '0.1.18';
 
 // Six quality dimensions. Only creativity, depth and stability carry their own mechanics; fluidity,
 // picture and sound only weigh in through the audience's preferences.
@@ -26,8 +26,7 @@ export const WORKS: any[] = [
   { key: 'fluidity', name: '流畅', ability: 'fluidity', dimension: 'fluidity' },
   { key: 'picture', name: '画面', ability: 'picture', dimension: 'picture' },
   { key: 'sound', name: '声音', ability: 'sound', dimension: 'sound' },
-  { key: 'discover', name: '发现缺陷', ability: 'discover', dimension: 'stability' },
-  { key: 'repair', name: '修复缺陷', ability: 'discover', dimension: 'stability' }
+  { key: 'discover', name: '发现缺陷', ability: 'discover', dimension: 'stability' }
 ];
 export const WORK_KEYS = WORKS.map(work => work.key);
 // A safe dimension read: a malformed or legacy project that is somehow missing a dimension must never
@@ -55,19 +54,22 @@ export const SCALES = [
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
 // how much the audience cares about each dimension. Genres never cap a dimension.
+// Workloads are tuned for the first title's pacing: a small game with two people takes about a month,
+// so the opening tutorial (project → prototype → trial build → promotion → release) fits in one sit.
+// One person alone still needs roughly twice that, which is what makes the first hire feel worthwhile.
 export const TYPES: any = {
   action: {
-    name: '操作型', audience: '动作玩家', work: 180, price: 0.01,
+    name: '操作型', audience: '动作玩家', work: 60, price: 0.01,
     share: { creativity: 0.1, depth: 0.12, fluidity: 0.3, picture: 0.22, sound: 0.1, stability: 0.16 },
     weights: { creativity: 0.1, depth: 0.15, fluidity: 0.35, picture: 0.2, sound: 0.08, stability: 0.12 }
   },
   think: {
-    name: '思考型', audience: '策略玩家', work: 210, price: 0.008,
+    name: '思考型', audience: '策略玩家', work: 70, price: 0.008,
     share: { creativity: 0.2, depth: 0.34, fluidity: 0.06, picture: 0.16, sound: 0.1, stability: 0.14 },
     weights: { creativity: 0.15, depth: 0.4, fluidity: 0.05, picture: 0.15, sound: 0.1, stability: 0.15 }
   },
   story: {
-    name: '叙事型', audience: '叙事玩家', work: 165, price: 0.007,
+    name: '叙事型', audience: '叙事玩家', work: 55, price: 0.007,
     share: { creativity: 0.2, depth: 0.16, fluidity: 0.08, picture: 0.24, sound: 0.2, stability: 0.12 },
     weights: { creativity: 0.28, depth: 0.12, fluidity: 0.05, picture: 0.2, sound: 0.25, stability: 0.1 }
   }
@@ -145,6 +147,15 @@ export const STUDIO_TOOLS: any = {
   sound: { name: '音频工作站', cost: 4, text: '做声音工作时速度 +20%。' },
   discover: { name: '自动化测试', cost: 6, text: '发现与修复缺陷的速度 +20%。' }
 };
+// Do not open the whole tool shop on day one: three core development tools are enough while the
+// first project is still taking shape. Visual, audio and defect tooling appears once a prototype
+// exists, when the player can actually see which dimension is lagging.
+const EARLY_TOOLS = ['creativity', 'depth', 'fluidity'];
+export function toolOpen(state: any, key: string) {
+  if (!has(STUDIO_TOOLS, key)) return false;
+  if (EARLY_TOOLS.includes(key)) return true;
+  return state.catalog.length > 0 || state.projects.some((project: any) => project.checkpoints?.prototype || project.released);
+}
 
 // Sound can be bought instead of hired: a one-off purchase finishes part of the sound dimension at a
 // modest quality, which is how a small team ships sound at all before it can afford an audio hire.
@@ -534,7 +545,6 @@ function remainingOf(project: any, workKey: string) {
     const stability = project.work.stability;
     return Math.max(0, stability.total - stability.done);
   }
-  if (workKey === 'repair') return project.defects.filter((defect: any) => defect.found && !defect.fixed).length * 2;
   const work = workOf(project, workKey);
   return Math.max(0, work.total - work.done);
 }
@@ -556,7 +566,7 @@ export function projectMetrics(project: any) {
   // reads as clean, and open defects pull it down. It is the only dimension that can rise without rework.
   const open = project.defects.filter((defect: any) => !defect.fixed).length;
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
-  const built = clamp(dimensionScore(project.work.stability), 0, 100);
+  const built = clamp(dimensionScore(workOf(project, 'stability')), 0, 100);
   dimensions.stability = round(clamp(built - open * 1.5, 0, 100));
   const progress = clamp(DIM_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)), 0, 1);
   const weights = TYPES[project.type].weights;
@@ -637,7 +647,12 @@ export function dimensionPipeline(state: any, project: any) {
   // are not a date at all: they are reported separately so the player can see what to staff, and the
   // rest of the estimate stays useful instead of collapsing to "unknown".
   const scheduled = pending.filter((row: any) => row.days !== null);
-  const bottleneck = scheduled.length ? scheduled.reduce((slowest: any, row: any) => row.days > slowest.days ? row : slowest) : null;
+  // A bottleneck is a dimension that finishes strictly later than every other one. When the day is
+  // split in proportion to what is left, all dimensions land together — that is not a bottleneck,
+  // it is a balanced plan; reporting the arbitrary slowest row as one was simply wrong.
+  const slowestDays = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : 0;
+  const slowest = scheduled.filter((row: any) => row.days === slowestDays);
+  const bottleneck = scheduled.length > 1 && slowest.length === 1 && slowestDays > 0 ? slowest[0] : null;
   return { rows, discover: round(discover), repair: round(repair), bottleneck, idle, blocked: idle.length > 0 };
 }
 
@@ -647,9 +662,11 @@ export function projectForecast(state: any, project: any) {
   const metrics = projectMetrics(project);
   const totalRemaining = DIM_KEYS.reduce((total, key) => total + Math.max(0, workOf(project, key).total - workOf(project, key).done), 0);
   const aggregate = sum(DIM_KEYS.map(key => pipeline.rows.find((row: any) => row.key === key)?.rate || 0));
-  const pending = pipeline.rows.filter((row: any) => row.remaining > 0.0001);
-  const scheduled = pending.filter((row: any) => row.days !== null);
-  const days = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : null;
+  // Total remaining work over total hands: that is the date the whole team can actually reach, and it
+  // does not move when the day is split differently between dimensions. Taking the slowest dimension
+  // instead threw away every dimension nobody had been assigned to, which is why a six-month title was
+  // quoted as roughly ten days. Idle dimensions make any date a guess, so the estimate stays unknown.
+  const days = pipeline.idle.length ? null : aggregate > 0.0001 ? Math.ceil(totalRemaining / aggregate) : null;
   const done = DIM_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + workOf(project, key).total, 0));
   return { ...pipeline, days, aggregate: round(aggregate), remaining: round(totalRemaining), progress: round(done * 100), metrics, eta: days === null ? null : state.day + days };
 }
@@ -736,6 +753,9 @@ export function teamOuting(state: any, days = 2) {
 export function startProject(state: any, plan: any, priority = 0) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
+  // One title at a time until the studio moves: a second project needs a second desk, so the player
+  // cannot stack unfinished games in a one-room office by sneaking past the project menu.
+  if (next.office === 0 && next.projects.filter((project: any) => !project.released).length > 0) throw new Error('搬进正式办公室后才能同时开发第二个项目。');
   if (!plan || !has(TYPES, plan.type) || !tier(plan.scale)) throw new Error('请选择作品类型与体量。');
   if (!scaleOpen(next, plan.scale)) throw new Error(plan.scale === 1 ? '首作发售后开放中型作品。' : '搬进正式办公室后开放大型作品。');
   const original = plan.sequel ? next.catalog.find((book: any) => book.id === plan.sequel) : null;
@@ -744,7 +764,9 @@ export function startProject(state: any, plan: any, priority = 0) {
   if (!name) throw new Error('请为作品取个名字。');
   if (next.projects.some((project: any) => !project.released && project.name === name)) throw new Error('已有同名作品在开发。');
   const project = blankProject(`${next.day}-${next.seed}-${next.projects.length}`, { ...plan, name, expectation: original ? (original.expectation || 0) + 4 : 0 }, next.day);
-  project.followers = Math.round(80 * market(plan.type, Math.ceil(next.day / 30)).multiplier + next.fans * 0.5);
+  // A title nobody has heard of opens with no audience. Only the company's existing fans carry over,
+  // and only once the studio has some: a first game cannot start at a few hundred followers.
+  project.followers = Math.round(next.fans * 0.2);
   // Known names bring their own audience to whatever they work on.
   const stars = next.staff.filter((person: any) => person.fame).length;
   if (stars) project.followers += stars * 260;
@@ -808,6 +830,7 @@ export function setPriority(state: any, projectId: string, priority: number) {
 
 export function buyTool(state: any, key: string) {
   if (!has(STUDIO_TOOLS, key)) throw new Error('工具不存在。');
+  if (!toolOpen(state, key)) throw new Error('这类工具要等首个作品完成原型后开放。');
   const next = studioAction(state);
   if (next.tools.includes(key)) throw new Error('该工具已购置。');
   spend(next, STUDIO_TOOLS[key].cost, `购置${STUDIO_TOOLS[key].name}`);
@@ -884,8 +907,6 @@ function produceProject(state: any, project: any) {
       delivered += amount;
       if (work.key === 'discover') {
         discover(state, project, amount, person);
-      } else if (work.key === 'repair') {
-        repair(state, project, amount, person);
       } else {
         const quality = able(person, work.ability);
         const remaining = workOf(project, work.dimension).total - workOf(project, work.dimension).done;
@@ -897,14 +918,25 @@ function produceProject(state: any, project: any) {
         }
       }
     }
+    // Repair is not a job anyone is assigned: once a person's own work is finished, the time left goes
+    // into fixing the defects already found. Every trade does this, settled by their own ability.
+    const left = keys.filter(key => key !== 'discover' && remainingOf(project, key) > 0.0001).length;
+    if (!left) repair(state, project, speedOf(state, person, 'creativity') * factor * mood, person);
   }
   project.progress = round(DIM_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, DIM_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)) * 100);
   if (!project.released) {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
-    if (project.progress >= PROTO * 100) project.checkpoints.prototype = true;
-    if (project.progress >= TRIAL * 100) project.checkpoints.demo = true;
+    // Followers arrive when something is actually shown, not on every idle day: a milestone pays once.
+    const mult = market(project.type, Math.ceil(state.day / 30)).multiplier;
+    if (!project.checkpoints.prototype && project.progress >= PROTO * 100) {
+      project.checkpoints.prototype = true;
+      project.followers += Math.round(30 * mult);
+    }
+    if (!project.checkpoints.demo && project.progress >= TRIAL * 100) {
+      project.checkpoints.demo = true;
+      project.followers += Math.round(70 * mult);
+    }
     if (project.progress >= 100) project.checkpoints.ready = true;
-    if (project.progress >= PROTO * 100) project.followers += (project.progress >= TRIAL * 100 ? 8 : 3) * market(project.type, Math.ceil(state.day / 30)).multiplier;
   }
   // An update in the making is fed by the same hands: the work they deliver on this title is the
   // update, so no one's day is spent twice.
@@ -1026,10 +1058,36 @@ export function testDemo(state: any, projectId: string, count = 30) {
   target.testLog = [...(target.testLog || []), { day: next.day, count, score }].slice(-5);
   target.followers += Math.round(count * score / 100 * 2);
   const metrics = projectMetrics(target);
+  // A score alone tells the player nothing actionable, so every dimension explains its own cause:
+  // unfinished work, a missing trade, or the defects that are still open.
+  const trades = new Set(next.staff.map((person: any) => person.role));
+  const unfinished = metrics.progress < 99.9;
+  const diagnosis: any = {
+    creativity: metrics.dimensions.creativity < 45
+      ? (trades.has('design') ? '创意分偏低：题材与玩法结构都偏保守，让策划做专项改进最快。' : '创意分偏低：没有策划，题材和玩法结构只能靠默认套路，招一位策划会有明显改善。')
+      : metrics.dimensions.creativity < 70 ? '创意还不错，换题材时保持这个方向，别回到最保守的套路。' : '创意得到认可，玩家觉得这一作有辨识度。',
+    depth: unfinished && metrics.dimensions.depth < 70
+      ? `深度 ${metrics.dimensions.depth} 分，但内容才完成 ${metrics.progress.toFixed(0)}%：玩家嫌不够玩主要是没做完，继续开发即可。`
+      : metrics.dimensions.depth < 60 ? '内容做完了，但系统还不够深：策划专项、集中打磨或更大体量都能推高这一项。' : '深度得到认可，长尾玩家会留下来。',
+    fluidity: metrics.dimensions.fluidity < 45
+      ? (trades.has('code') ? '流畅分偏低：手感与性能都要程序兜底，让他把这一项做满。' : '流畅分偏低：没有程序，操作手感只能勉强支撑，招一位程序最直接。')
+      : metrics.dimensions.fluidity < 70 ? '流畅能玩，但还不算顺滑；修复缺陷和集中打磨都会改善。' : '流畅得到认可，操作型玩家不会抱怨手感。',
+    picture: metrics.dimensions.picture < 45
+      ? (trades.has('art') ? '画面分偏低：美术还在赶这一项，做完后会有明显改善。' : '画面很简陋：没有美术，作品基本是色块，玩家明确在意。招一位美术，或采购素材。')
+      : metrics.dimensions.picture < 70 ? '画面能看但不够出彩，美术越早加入，越有时间做细节。' : '画面得到认可。',
+    sound: metrics.dimensions.sound < 45
+      ? (trades.has('audio') ? '声音分偏低：音频还在补，这一项做完能把评价拉回来。' : '几乎没有声音：没有音频，音乐音效只能留空，玩家会明显感到单调。招一位音频。')
+      : metrics.dimensions.sound < 70 ? '声音够用但不出彩，音频能再提高沉浸感。' : '声音得到认可。',
+    stability: newlyFound
+      ? `本轮发现 ${newlyFound} 项缺陷，已知 ${target.found} 项；带缺陷发售会拖低口碑，尽量先修完。`
+      : metrics.known ? `没有发现新缺陷，但还有 ${metrics.known} 项已知缺陷没修，修完这一项会回升。`
+        : metrics.defects ? `还有 ${metrics.defects} 项缺陷没被玩家挖出来，再招一批玩家能继续暴露。`
+          : metrics.dimensions.stability >= 70 ? '本轮没有发现明显缺陷，稳定性是这一作的强项。' : '没有已知缺陷，但这一项的工作量还没做满，继续开发还能推高。'
+  };
   const findings = DIM_KEYS.map(key => {
     const dimension = DIMENSIONS.find(item => item.key === key);
     const weight = TYPES[target.type].weights[key];
-    return { key, title: dimension.name, value: metrics.dimensions[key], weight, text: metrics.dimensions[key] < 45 ? `${dimension.name}分偏低，玩家能明显感觉到。` : metrics.dimensions[key] < 70 ? `${dimension.name}尚可，但在意的玩家觉得还可以更好。` : `${dimension.name}得到认可。` };
+    return { key, title: dimension.name, value: metrics.dimensions[key], weight, text: diagnosis[key] };
   }).sort((left, right) => (100 - left.value) * left.weight < (100 - right.value) * right.weight ? 1 : -1);
   target.test = { day: next.day, count, score, findings, found: newlyFound, source: '试玩玩家' };
   next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位${TYPES[target.type].audience}给出 ${score.toFixed(1)} 分，发现 ${newlyFound} 项缺陷。他们最看重：${audienceFocus(target.type)}。`, choices: [{ id: 'continue', title: '收下反馈，继续调整分工', detail: '短板维度可以在项目里调整人手。' }] };
