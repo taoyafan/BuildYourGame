@@ -65,6 +65,8 @@ export class StudioApp extends Component {
   private floatTimes = new Map<string, number>();
   private groupTops = new Map<string, number>();
   private menuAck: string | null = null;
+  private helpKey = '';
+  private chartSelection: { id: string; index: number } | null = null;
   private activeTouches = new Set<number>();
   private renderPending = false;
   // timeUp clears both: a storage warning shares the toast with normal notices, so if it were left
@@ -139,6 +141,7 @@ export class StudioApp extends Component {
   private background() {
     this.activeTouches.clear();
     this.playing = false;
+    this.guidePaused = false;
     this.resumeAfterMenu = false;
     this.elapsed = 0;
     this.save();
@@ -169,10 +172,9 @@ export class StudioApp extends Component {
           this.resumeAfterMenu = false;
           this.routes = [{ menu: 'event' }];
         }
+        if (content.guide(this.state, null, true)?.ack) { this.elapsed = 0; break; }
       }
       if (this.state.over) this.playing = false;
-      // Explanations no longer stop the clock here: a pending tip must never look like the game
-      // pausing itself the moment the player presses play. The tip stays on screen while time runs.
       // Daily sales and payroll are summarised at month end instead of floating every day.
       if (changed && this.shown) this.shown.cash = this.state.cash;
       const report = this.state.report;
@@ -387,6 +389,11 @@ export class StudioApp extends Component {
     if (!this.stage || !this.state) return;
     if (this.activeTouches.size) { this.renderPending = true; return; }
     this.renderPending = false;
+    if (this.playing && !this.routes.length && !this.inputRequest && !this.state.event && !this.state.over && content.guide(this.state, null, true)?.ack) {
+      this.guidePaused = true;
+      this.playing = false;
+      this.elapsed = 0;
+    }
     // A day tick re-renders the whole page. Without carrying the offset over, scrolling down while the
     // clock ran snapped back to the top every tick. A different screen starts at the top again.
     const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>') + (this.inputRequest ? '#' : '');
@@ -410,7 +417,8 @@ export class StudioApp extends Component {
     if (this.notice || this.storageIssue) {
       const message = this.notice || this.storageIssue;
       const toast = this.box(this.stage, 'Toast', 20, this.height - this.bottom - 130, this.width - 40, 52, colors.night, 12, 235);
-      this.text(toast, message, 16, 0, this.width - 72, 52, 13, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.text(toast, message, 16, 0, this.width - 128, 52, 13, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.button(toast, '', this.width - 82, 8, 34, 36, () => this.clearNotice(), false, false, 'X', 'dismiss-notice');
       // Dismissing drops the sticky storage warning too, so it cannot come straight back on the next render.
       this.clickable(toast, () => { this.notice = ''; this.storageIssue = ''; this.render(); });
       const opacity = toast.addComponent(UIOpacity);
@@ -471,15 +479,14 @@ export class StudioApp extends Component {
     let contentTop = contentY;
     if (open.length > 1) {
       const strip = this.box(this.stage, 'Projects', 20, contentY, inner, 38);
-      const cell = (inner - (open.length - 1) * 6) / open.length;
-      open.forEach((item: any, index: number) => {
-        const active = item.id === shown.id;
-        const node = this.box(strip, 'Project-' + item.id, index * (cell + 6), 0, cell, 34, active ? colors.green : colors.soft, 8);
-        this.text(node, item.name, 6, 0, cell - 12, 22, 11, active ? colors.paper : colors.green, active).horizontalAlign = HorizontalTextAlignment.CENTER;
-        this.text(node, Math.round(item.progress) + '%', 6, 18, cell - 12, 14, 10, active ? '#d7e2d9' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
-        this.clickable(node, () => { this.watching = item.id; this.render(); });
-        this.anchors.set('project-tab-' + index, node);
-      });
+      const index = open.findIndex((item: any) => item.id === shown.id);
+      const previous = this.box(strip, 'PreviousProject', 0, 0, 36, 34, colors.soft, 8);
+      this.navIcon(previous, 'ArrowLeft', 8, 7, 20, colors.green);
+      this.clickable(previous, () => { this.watching = open[(index + open.length - 1) % open.length].id; this.render(); });
+      const next = this.box(strip, 'NextProject', inner - 36, 0, 36, 34, colors.soft, 8);
+      this.navIcon(next, 'ChevronRight', 8, 7, 20, colors.green);
+      this.clickable(next, () => { this.watching = open[(index + 1) % open.length].id; this.render(); });
+      this.text(strip, `${shown.name} · ${index + 1}/${open.length}`, 44, 0, inner - 88, 34, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
       contentTop = contentY + 44;
     }
     const project = shown;
@@ -489,7 +496,7 @@ export class StudioApp extends Component {
     let y = this.goalCard(body, 0) + 8;
     const sceneTop = y;
     y += this.office(body, y, 116 - Math.round(shrink / 2)) + 6;
-    const metrics = project ? core.projectMetrics(project) : null;
+    const metrics = project ? core.visibleMetrics(project) : null;
     const workHeight = 96 - Math.round(shrink / 2);
     const { node: work, pen } = this.canvasNode(body, 'Work', 0, y, inner, workHeight);
     if (project) drawWork(pen, inner, workHeight, project.type, metrics.progress / 100, metrics.dimensions.picture, project.started);
@@ -575,7 +582,7 @@ export class StudioApp extends Component {
     y += this.radar(body, y, metrics, project.type, project) + 8;
     const bottleneck = forecast.bottleneck ? core.DIMENSIONS.find(dimension => dimension.key === forecast.bottleneck.key)?.name : '—';
     const cells: any[] = [
-      ['综合评分', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
+      ['综合估计', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
       ['已知缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
@@ -918,10 +925,17 @@ export class StudioApp extends Component {
         block.items.forEach((item: any, index: number) => {
           const column = index % columns;
           const line = Math.floor(index / columns);
-          this.button(parent, item.text, column * (cell + gap), y + line * 56, cell, 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, item.icon, item.anchor);
+          const left = column * (cell + gap);
+          const row = y + line * 56;
+          this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, item.icon, item.anchor);
+          if (item.help) this.button(parent, '', left + cell - 38, row + 4, 38, 38, () => {
+            this.helpKey = this.helpKey === item.helpKey ? '' : item.helpKey;
+            this.render();
+          }, false, false, 'CircleHelp', 'hire-help');
         });
         const rows = Math.ceil(block.items.length / columns);
         y += rows * 56;
+        for (const item of block.items) if (item.help && this.helpKey === item.helpKey) y += this.paragraph(parent, item.help, y, true, 0, width, 13);
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }
@@ -940,9 +954,10 @@ export class StudioApp extends Component {
         return y + 4;
       }
       case 'tabs': {
-        const cell = (width - (block.items.length - 1) * 6) / block.items.length;
-        block.items.forEach((item: any, index: number) => this.button(parent, item.text, index * (cell + 6), y, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.render(); }, item.active, false, item.locked ? 'Lock' : undefined));
-        return y + 50;
+        const columns = Math.min(3, block.items.length);
+        const cell = (width - (columns - 1) * 6) / columns;
+        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked, item.locked ? 'Lock' : undefined));
+        return y + Math.ceil(block.items.length / columns) * 44 + 6;
       }
       case 'card': {
         const start = y;
@@ -1047,13 +1062,13 @@ export class StudioApp extends Component {
         // is the bottleneck, and dimensions nobody works on are called out instead of pencilled in.
         for (const item of block.items) {
           const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
-          const idle = item.remaining > 0.0001 && item.days === null;
+          const idle = item.key !== 'stability' && item.remaining > 0.0001 && item.days === null;
           const slow = item.key === block.bottleneck;
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
           this.text(row, dimension?.name || item.key, 12, 4, width - 150, 18, 13, colors.ink, true);
-          this.text(row, item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : '预计 ' + item.days + ' 天';
-          this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
+          this.text(row, item.key === 'stability' ? '已知问题 · 点开查看' : item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          const note = item.key === 'stability' ? '内容完成后自动修复，不保证找全' : item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : '预计 ' + item.days + ' 天';
+          this.text(row, note, 12, 24, item.key === 'stability' ? width - 24 : width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
           if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           // Tap a row to open its detail page (score, who's on it, and a shortcut to assign).
@@ -1066,7 +1081,8 @@ export class StudioApp extends Component {
         const flags = [...(block.stress || []), ...(block.fame ? ['磨合期'] : [])];
         const columns = Math.min(3, Math.max(1, block.works.length));
         const rows = Math.ceil(block.works.length / columns);
-        const header = flags.length ? 66 : 48;
+        const detailHeight = Math.max(20, Math.ceil(block.detail.length / 25) * 16);
+        const header = 30 + detailHeight + (flags.length ? 20 : 0);
         // Extra row at the bottom: the two shortcuts. Without them a player who wants a plain
         // "do everything" or "back to your own trade" has to tap seven boxes one at a time.
         const shortcut = 44;
@@ -1077,8 +1093,8 @@ export class StudioApp extends Component {
         this.text(card, block.title, 12, 8, width - 128, 20, 13, colors.ink, true);
         if (block.status) this.text(card, block.status, width - 116, 8, 104, 20, 10, colors.amber).horizontalAlign = HorizontalTextAlignment.RIGHT;
         this.clickable(titleRow, () => this.openMenu('person', block.personId));
-        this.text(card, block.detail, 12, 28, width - 24, 18, 11, colors.muted);
-        if (flags.length) this.text(card, '产出下降：' + flags.join(' · '), 12, 46, width - 24, 16, 10, colors.danger);
+        this.text(card, block.detail, 12, 28, width - 24, detailHeight, 11, colors.muted);
+        if (flags.length) this.text(card, '产出下降：' + flags.join(' · '), 12, 28 + detailHeight, width - 24, 16, 10, colors.danger);
         const cell = (width - 24 - (columns - 1) * 8) / columns;
         block.works.forEach((work: any, index: number) => {
           const on = work.on;
@@ -1150,32 +1166,91 @@ export class StudioApp extends Component {
 
   private chart(parent: Node, y: number, book: any) {
     const width = this.width - 40;
-    const height = 150;
-    this.text(parent, '累计回款（按周）', 0, y, width, 20, 13, colors.ink, true);
-    y += 24;
-    const { node, pen } = this.canvasNode(parent, 'Chart', 0, y, width, height);
-    pen.rect(0, 0, width, height, colors.paper, 8);
-    const weekly: number[] = book.weekly;
+    const origin = y;
+    const { weekly, cumulative, cost } = content.salesHistory(book);
     const flags: number[] = Array.isArray(book.saleFlags) ? book.saleFlags : [];
-    const slots = Math.max(8, weekly.length);
-    const peak = Math.max(...weekly, 0.01);
-    const chartTop = 16;
-    const chartHeight = height - 44;
-    const slot = (width - 24) / slots;
-    const scale = (value: number) => chartHeight * value / peak;
-    weekly.forEach((value: number, index: number) => {
-      const barHeight = Math.max(2, scale(value));
-      // A sale week is drawn in amber so its take can be compared against full-price weeks directly.
-      pen.rect(12 + index * slot + slot * 0.15, chartTop + chartHeight - barHeight, slot * 0.7, barHeight, flags[index] ? colors.amber : '#b9cfc4', 2);
-    });
+    const selected = this.chartSelection?.id === book.id ? Math.max(0, Math.min(weekly.length - 1, this.chartSelection.index)) : weekly.length - 1;
+    const start = Math.floor(selected / 12) * 12;
+    const count = Math.min(12, weekly.length - start);
+    this.text(parent, '收入历史', 0, y, width - 90, 34, 16, colors.ink, true);
+    const changePage = (offset: number) => {
+      this.chartSelection = { id: book.id, index: Math.max(0, Math.min(weekly.length - 1, selected + offset)) };
+      this.render();
+    };
+    this.button(parent, '', width - 78, y, 34, 34, () => changePage(-12), false, start === 0, 'ArrowLeft', 'chart-previous');
+    this.button(parent, '', width - 34, y, 34, 34, () => changePage(12), false, start + count >= weekly.length, 'ChevronRight', 'chart-next');
+    y += 42;
+    this.text(parent, `第 ${start + 1}～${start + count} 周`, 0, y, width, 20, 12, colors.muted);
+    y += 28;
+    const left = 44;
+    const right = width - 12;
+    const slot = (right - left) / count;
+    const plot = (title: string, values: number[], accumulated: boolean) => {
+      this.text(parent, title, 0, y, width, 22, 14, colors.ink, true);
+      y += 28;
+      const height = accumulated ? 174 : 154;
+      const top = 32;
+      const bottom = height - 28;
+      const peak = Math.max(...values.slice(start, start + count), accumulated ? cost : 0, 0.01) * 1.12;
+      const valueY = (value: number) => bottom - (bottom - top) * value / peak;
+      const { node, pen } = this.canvasNode(parent, accumulated ? 'CumulativeIncome' : 'WeeklyIncome', 0, y, width, height);
+      pen.rect(left + (selected - start) * slot, top, slot, bottom - top, colors.soft);
+      this.text(node, '万元', 0, 4, left - 6, 18, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+      for (const fraction of [0, 0.5, 1]) {
+        const value = peak * fraction;
+        const axisY = valueY(value);
+        pen.line(left, axisY, right, axisY, colors.line, 1);
+        this.text(node, value.toFixed(value >= 100 ? 0 : 2), 0, axisY - 8, left - 6, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+      }
+      for (let index = start; index < start + count; index++) {
+        const center = left + (index - start + 0.5) * slot;
+        const pointY = valueY(values[index]);
+        if (accumulated) {
+          const previousX = index === start ? left : center - slot;
+          const previousValue = index === 0 ? 0 : values[index - 1];
+          pen.line(previousX, valueY(previousValue), center, pointY, colors.green, 2);
+          pen.circle(center, pointY, index === selected ? 4 : 2, colors.green);
+        } else if (values[index] > 0) {
+          pen.rect(center - slot * 0.3, pointY, slot * 0.6, bottom - pointY, flags[index] ? colors.amber : colors.green, 2);
+        }
+      }
+      if (accumulated) {
+        const costY = valueY(cost);
+        for (let cursor = left; cursor < right; cursor += 12) pen.line(cursor, costY, Math.min(cursor + 7, right), costY, colors.amber, 1.5);
+        this.text(node, '当前累计投入 ' + content.money(cost), left, 4, right - left, 18, 11, colors.amber);
+      } else {
+        this.text(node, '原价周', left, 4, 70, 18, 11, colors.green);
+        this.text(node, '促销周', left + 78, 4, 70, 18, 11, colors.amber);
+      }
+      this.text(node, '第 ' + (start + 1) + ' 周', left, height - 22, 80, 18, 10, colors.muted);
+      if (count > 1) this.text(node, '第 ' + (start + count) + ' 周', right - 80, height - 22, 80, 18, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+      let touchStart: Vec2 | null = null;
+      node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { touchStart = event.getUILocation().clone(); });
+      node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+        const location = event.getUILocation();
+        if (!touchStart || Math.hypot(location.x - touchStart.x, location.y - touchStart.y) > 12) return;
+        const local = node.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(location.x, location.y, 0));
+        if (local.x < left || local.x > right || -local.y < top || -local.y > bottom) return;
+        this.chartSelection = { id: book.id, index: start + Math.min(count - 1, Math.floor((local.x - left) / slot)) };
+        this.render();
+      });
+      node.on(Node.EventType.TOUCH_CANCEL, () => { touchStart = null; });
+      y += height + 16;
+    };
+    plot('每周收入', weekly, false);
+    plot('累计收入与当前成本', cumulative, true);
+    const currentWeek = Math.floor((this.state.day - book.released) / 7);
+    this.text(parent, `第 ${selected + 1} 周${selected === currentWeek ? ' · 本周未结束' : ''}${flags[selected] ? ' · 有促销' : ''}`, 0, y, width, 22, 13, colors.ink, true);
+    y += 28;
+    y += this.paragraph(parent, `当周收入 ${content.money(weekly[selected])} · 累计 ${content.money(cumulative[selected])}`, y, false, 0, width, 13);
+    const balance = cumulative[selected] - cost;
+    y += this.paragraph(parent, (balance >= 0 ? '超过当前投入 ' : '距覆盖当前投入还差 ') + content.money(Math.abs(balance)), y, true, 0, width, 12);
     const saleWeeks = flags.filter(flag => flag).length;
     const fullWeeks = weekly.length - saleWeeks;
     const saleTotal = weekly.reduce((total: number, value: number, index: number) => total + (flags[index] ? value : 0), 0);
     const fullTotal = weekly.reduce((total: number, value: number, index: number) => total + (flags[index] ? 0 : value), 0);
-    this.text(node, '促销周平均 ' + (saleWeeks ? content.money(saleTotal / saleWeeks) : '—'), 12, height - 30, width - 24, 14, 10, colors.amber);
-    this.text(node, '原价周平均 ' + (fullWeeks ? content.money(fullTotal / fullWeeks) : '—'), 12, height - 16, width - 24, 14, 10, colors.muted);
-    this.text(node, '第 ' + slots + ' 周', width - 70, height - 16, 60, 14, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    return height + 24;
+    y += this.paragraph(parent, '促销周平均 ' + (saleWeeks ? content.money(saleTotal / saleWeeks) : '暂无') + ' · 原价周平均 ' + (fullWeeks ? content.money(fullTotal / fullWeeks) : '暂无'), y, true, 0, width, 12);
+    return y - origin;
   }
 
   private payout(parent: Node, y: number, block: any) {
@@ -1247,9 +1322,9 @@ export class StudioApp extends Component {
   private resumeFromGuide() {
     if (!this.guidePaused) return;
     const next = content.guide(this.state, null, false);
-    if (next?.ack || next?.tap) return;
+    if (next?.ack) return;
     this.guidePaused = false;
-    if (!this.routes.length && !this.state.event && !this.state.over && core.projectOpen(this.state).length) {
+    if (!this.routes.length && !this.inputRequest && !this.state.event && !this.state.over) {
       this.playing = true;
       this.elapsed = 0;
     }
@@ -1407,7 +1482,8 @@ export class StudioApp extends Component {
   }
 
   private openMenu(menu: string, id?: string, critical = false, dim?: string) {
-    if (!this.routes.length) { this.resumeAfterMenu = this.playing; this.playing = false; this.elapsed = 0; }
+    this.helpKey = '';
+    if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
     if (menu === 'new-project') this.draft = { name: '', type: '', scale: 0 };
@@ -1480,7 +1556,6 @@ export class StudioApp extends Component {
           if (this.state.event) return this.openMenu('event', undefined, true);
           if (!this.state.over && !this.routes.length) {
             this.playing = !this.playing;
-            // A pending explanation is what paused time; pressing play again must not be undone by it.
             this.guidePaused = false;
             this.elapsed = 0;
             if (this.playing && !this.state.tutorial.seen.clock) this.state = core.markSeen(this.state, 'clock');
@@ -1521,7 +1596,14 @@ export class StudioApp extends Component {
         }
         case 'buy-tool': this.apply(core.buyTool(this.state, data.key), '工具已购置，对应工作更快了。'); break;
         case 'outsource': this.apply(core.outsourceSound(this.state, data.id, Number(data.tier)), '声音已外包，相关评分项立即推进。'); break;
-        case 'dlc': this.apply(core.makeDLC(this.state, data.id), '资料片已立项，把同事分过去完成它。'); break;
+        case 'dlc': {
+          const next = core.makeDLC(this.state, data.id);
+          const project = next.projects[next.projects.length - 1];
+          this.watching = project.id;
+          this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];
+          this.apply(next, '资料片已作为新项目立项，请安排人手。');
+          break;
+        }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
         case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
         case 'test': this.apply(core.testDemo(this.state, data.id, Number(data.count))); break;

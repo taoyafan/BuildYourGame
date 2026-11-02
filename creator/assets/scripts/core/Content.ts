@@ -3,6 +3,12 @@ import * as core from './Studio';
 export const money = (value: number) => Number(value).toFixed(2) + ' 万';
 export const number = (value: number) => Math.round(value).toLocaleString('zh-CN');
 export const price = (value: number) => (value * 10000).toFixed(0) + ' 元/份';
+export function salesHistory(book: any) {
+  const weekly: number[] = Array.isArray(book.weekly) && book.weekly.length ? book.weekly.map((value: number) => Number.isFinite(value) ? Math.max(0, value) : 0) : [0];
+  let total = 0;
+  const cumulative = weekly.map(value => { total = Number((total + value).toFixed(2)); return total; });
+  return { weekly, cumulative, cost: Math.max(0, Number(book.invested) || 0) };
+}
 // Spent this month: purchases already paid plus wages and rent accrued until month-end settlement.
 export const monthSpent = (state: any) => state.ledger.expense + state.accrued;
 
@@ -64,10 +70,10 @@ function recruitMenu(state: any, id: string) {
   const pool = state.candidates[role + ':' + channel];
   const fee = core.recruitFee(state, channel);
   const roles = Object.keys(core.ROLES).filter((key: string) => core.roleOpen(state, key));
-  const channels = Object.keys(core.CHANNELS).filter((key: string) => core.channelOpen(state, key));
+  const channels = Object.keys(core.CHANNELS);
   const blocks: any[] = [
     { type: 'tabs', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role })) },
-    { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name, route: { menu: 'recruit', id: role + ':' + key }, active: key === channel })) },
+    { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
     { type: 'text', text: core.ROLES[role].task + '。' + core.CHANNELS[channel].text, muted: true }
   ];
   if ((state.notices.layout || 0) > 0) blocks.push({ type: 'note', icon: 'Users', text: '近期裁员影响了公司的招聘吸引力，招聘费用已上浮。' });
@@ -152,7 +158,7 @@ export function planPreview(state: any, draft: any) {
   // honest no matter how the work gets split later.
   const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
   const days = capacity > 0.0001 ? Math.ceil(workload / capacity) : null;
-  const time = days === null ? '还没有能推进的人，招聘后才能开始。' : '现有 ' + state.staff.length + ' 人、六项都有人做，做满约 ' + days + ' 天（约 ' + (days / 30).toFixed(1) + ' 个月）。';
+  const time = days === null ? '还没有能推进的人，招聘后才能开始。' : '现有 ' + state.staff.length + ' 人、五项内容都有人做，做满约 ' + days + ' 天（约 ' + (days / 30).toFixed(1) + ' 个月），不含测试与修复。';
   return '工作量 ' + workload.toFixed(0) + '，' + time + '\n售价 ' + price(type.price * scale.price) + '；基础市场容量 ' + number(core.MARKET_SIZE * scale.reach) + ' 份，不是保底销量。\n' + type.audience + '最看重：' + core.audienceFocus(draft.type) + '。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
@@ -168,33 +174,38 @@ function newProjectMenu(state: any) {  return {
 function projectMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   if (!project) return { title: '项目', blocks: [{ type: 'buttons', items: [{ text: '新作立项', action: 'menu', data: { menu: 'new-project' } }] }] };
-  const metrics = core.projectMetrics(project);
+  const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
   const open = core.projectOpen(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
-  const finished = forecast.rows.every((row: any) => row.remaining <= 0.0001);
-  const idleRows = forecast.rows.filter((row: any) => row.remaining > 0.0001 && row.days === null);
+  const finished = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
+  const idleRows = forecast.rows.filter((row: any) => row.key !== 'stability' && row.remaining > 0.0001 && row.days === null);
   const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）';
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(open.length > 1 ? [{ type: 'tabs', items: open.map((item: any) => ({ text: item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
-    { type: 'radar', metrics, genre: project.type, projectId: project.id },
+    ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
-    { type: 'lines', items: [['预计完成', etaText], ['已知缺陷', metrics.known + ' / ' + metrics.defects], ['关注', number(project.followers) + ' 人']] },
+    { type: 'lines', items: [['预计内容完成', etaText], ['已知缺陷', metrics.known + ' 项（不代表全部）'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
-    ...(open.length > 1 ? [{ type: 'segments', title: '项目优先级（同时进行的项目会分摊效率）', items: [0, 1, 2].map(rank => ({ text: '第 ' + (rank + 1) + ' 优先', action: 'priority', data: { id: project.id, priority: rank }, active: project.priority === rank, anchor: 'priority-' + rank })) }] : []),
+    ...(core.projectOrder(state).length > 1 ? [
+      { type: 'text', text: '当前第 ' + (core.projectOrder(state).findIndex((item: any) => item.id === project.id) + 1) + ' 优先；其余项目按顺序承担协调成本。' },
+      { type: 'buttons', columns: 2, items: [
+        { text: '提高优先级', action: 'priority', data: { id: project.id, priority: core.projectOrder(state).findIndex((item: any) => item.id === project.id) - 1 }, disabled: core.projectOrder(state)[0]?.id === project.id },
+        { text: '降低优先级', action: 'priority', data: { id: project.id, priority: core.projectOrder(state).findIndex((item: any) => item.id === project.id) + 1 }, disabled: core.projectOrder(state).slice(-1)[0]?.id === project.id }
+      ] }
+    ] : []),
     { type: 'note', icon: 'Users', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) },
-    ...(project.progress >= 55 && project.deadline === null ? [{ type: 'segments', title: '公布发售日（换关注，延期会损失关注）', items: [14, 30, 60].map(days => ({ text: days + ' 天', action: 'deadline', data: { id: project.id, days }, active: false, anchor: 'deadline-' + days })) }] : []),
+    ...(project.progress >= 55 && project.deadline === null ? [{ type: 'buttons', items: [{ text: '公布 ' + core.RELEASE_LEAD_DAYS + ' 天后发售', action: 'deadline', data: { id: project.id, days: core.RELEASE_LEAD_DAYS }, anchor: 'deadline' }] }] : []),
     ...(project.deadline !== null ? [{ type: 'text', text: '已公布：第 ' + project.deadline + ' 天发售。到期未发会损失关注。', muted: true }] : []),
     { type: 'buttons', items: [
       { text: '调整分工', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '招募试玩', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !project.checkpoints.demo },
       { text: '市场与推广', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !project.checkpoints.demo },
       { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '带着未完成的评分项发售' : '正式发售') : '体验版完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
-      // Running two titles at once needs room for two teams; before the first move there is not any.
-      ...(open.length < 4 ? [{ text: state.office > 0 ? '再开一个项目' : '搬进正式办公室后可再开项目', action: 'menu', data: { menu: 'new-project' }, disabled: state.office === 0, anchor: 'new-project' }] : [])
+      { text: '再开一个项目', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
     ] },
     ...(project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null ? [
       { type: 'section', title: '声音外包（每作一次）' },
@@ -211,26 +222,25 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   if (!project) return { title: '评分项', blocks: [{ type: 'text', text: '项目不存在。' }] };
   const dimension = core.DIMENSIONS.find(entry => entry.key === dimKey);
   if (!dimension) return { title: '评分项', blocks: [{ type: 'text', text: '没有这一项。' }] };
-  const metrics = core.projectMetrics(project);
+  const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
   const row = forecast.rows.find((entry: any) => entry.key === dimKey);
   // The works whose dimension maps to this one (stability is fed by discover + repair).
   const works = core.WORKS.filter(work => work.dimension === dimKey);
   const workKeys = works.map(work => work.key);
-  const assignedPeople = state.staff.filter((person: any) => core.assignedWorks(project, person).some((key: string) => workKeys.includes(key)));
+  const assignedPeople = state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
   const blocks: any[] = [
-    { type: 'lines', items: [['当前评分', score.toFixed(0) + ' 分'], ['剩余工作量', row ? (row.remaining > 0 ? row.remaining.toFixed(0) + ' 人日' : '已完成') : '—'], ['预计完成', row ? (row.days === null ? (row.remaining > 0 ? '无人负责' : '已完成') : '约 ' + row.days + ' 天') : '—']] },
+    { type: 'lines', items: dimKey === 'stability' ? [['已知缺陷', metrics.known + ' 项'], ['自动修复产出', forecast.repair + ' 人日/天']] : [['当前评分', score.toFixed(0) + ' 分'], ['剩余工作量', row ? (row.remaining > 0 ? row.remaining.toFixed(0) + ' 人日' : '已完成') : '—'], ['预计完成', row ? (row.days === null ? (row.remaining > 0 ? '无人负责' : '已完成') : '约 ' + row.days + ' 天') : '—']] },
     { type: 'text', text: dimension.desc + (weight >= 0.3 ? ' ' + core.TYPES[project.type].audience + '玩家很看重这一项。' : ' 这类玩家相对不挑剔这一项。'), muted: true },
     { type: 'section', title: assignedPeople.length ? '负责这一项的人（点工作块直接调整）' : '还没有人做，点工作块安排人手' },
     ...state.staff.map((person: any, index: number) => {
-      const assigned = core.assignedWorks(project, person);
-      const elsewhere = state.projects.find((item: any) => item.id !== projectId && !item.released && core.chosenWorks(item, person).length);
-      const doing = assigned.filter((key: string) => workKeys.includes(key));
+      const assigned = core.personWorks(state, project, person);
+      const elsewhere = state.projects.find((item: any) => item.id !== projectId && core.personWorks(state, item, person).length);
       return {
         type: 'person-assign', title: person.name + ' · ' + core.ROLES[person.role].name,
-        detail: doing.length ? '正在做：' + doing.map(k => core.WORKS.find(w => w.key === k)?.name).join('、') : elsewhere ? '目前在其他项目，点这里的工作即可调过来' : '尚未负责这一项',
+        detail: core.personActivity(state, project, person),
         personId: person.id, projectId, index, assigned,
         status: elsewhere ? '在《' + elsewhere.name + '》' : '',
         stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
@@ -239,7 +249,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
       };
     }),
     { type: 'buttons', items: [{ text: '查看整部作品的分工', action: 'menu', data: { menu: 'assign', id: projectId }, anchor: 'to-assign' }] },
-    { type: 'text', text: '评分 = 完成部分的质量 × 进度。完成度越高、负责的人能力越强，这一项分数越高。', muted: true }
+    { type: 'text', text: dimKey === 'stability' ? '稳定由未修缺陷决定；这里只反映已知问题，不保证已经找全。负责的内容完成后，员工自动用实际工时修复已知问题；发现与修复不能重复使用工时。' : '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。', muted: true }
   ];
   return { title: dimension.name, blocks };
 }
@@ -249,20 +259,19 @@ function assignMenu(state: any, projectId: string) {
   if (!project) return { title: '分工', blocks: [{ type: 'text', text: '项目不存在。' }] };
   if (!state.staff.length) return { title: '分工', blocks: [{ type: 'text', text: '还没有同事，先去招聘。' }] };
   const blocks: any[] = [
-    { type: 'text', text: '点工作块即可分工：绿色是在做，灰色是没做。每人至少保留一项工作；可以同时做多项，做完会自动空出手。', muted: false }
+    { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的内容完成后自动消耗工时修复已知缺陷；没有已知问题时才继续返工或测试。', muted: false }
   ];
   state.staff.forEach((person: any, index: number) => {
     // Show what the person actually does in this project (explicit assignment, else their default
     // home work) rather than the belongsTo-gated personWorks. personWorks hides every box when a
     // founder/employee is "locked out" by an old assignment on a shipped title, which made the whole
     // assign page read as unassigned and every click report "已退出".
-    const assigned: string[] = core.assignedWorks(project, person);
-    const elsewhere = state.projects.find((item: any) => item.id !== projectId && !item.released && core.chosenWorks(item, person).length);
-    const automatic = !elsewhere && !core.chosenWorks(project, person).length;
+    const assigned: string[] = core.personWorks(state, project, person);
+    const elsewhere = state.projects.find((item: any) => item.id !== projectId && core.personWorks(state, item, person).length);
     blocks.push({
       type: 'person-assign',
       title: person.name + ' · ' + core.ROLES[person.role].name,
-      detail: elsewhere ? '目前在其他项目，点任意工作即可调过来' : automatic ? '默认做本行：' + assigned.map(k => core.WORKS.find(w => w.key === k)?.name).join('、') : '已安排：' + assigned.map(k => core.WORKS.find(w => w.key === k)?.name).join('、'),
+      detail: core.personActivity(state, project, person),
       personId: person.id,
       projectId: project.id,
       index,
@@ -299,7 +308,7 @@ function testingMenu(state: any, id?: string) {
     blocks.push({ type: 'feedback', items: project.test.findings });
     blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   } else {
-    blocks.push({ type: 'text', text: '缺陷藏在作品里，只有让玩家试玩才能发现；试玩还会告诉你这类玩家最在意哪一项。' });
+    blocks.push({ type: 'text', text: '测试人员、付费试玩与发售后玩家都可能发现缺陷；能力更强的测试人员更容易找到遗漏，试玩还能提供不同样本的体验反馈。' });
   }
   if ((project.testLog || []).length > 1) {
     blocks.push({ type: 'section', title: '试玩历史' });
@@ -323,7 +332,6 @@ function marketMenu(state: any, id?: string) {
   blocks.push({ type: 'buttons', items: [{ text: expo.entry ? '展会已报名' : '体验版报名展会 · 1.00 万', action: 'exhibition', data: { id: project?.id }, disabled: !expo.available || currentNotReady }, { text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '销量榜与年度评选', action: 'menu', data: { menu: 'rankings' } }] });
   if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版 后才能报名展会。', muted: true });
   else if (!expo.available) blocks.push({ type: 'text', text: expo.reason, muted: true });
-  if (state.operation) blocks.push({ type: 'note', icon: 'Wrench', text: '更新制作中：剩余 ' + state.operation.remaining.toFixed(1) + ' 工作量。' });
   if (project) {
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)]] });
     blocks.push({ type: 'text', text: '首发销量主要来自关注者。体验版完成后会自然积累关注，推广能扩大首发，但钱花出去就收不回。市场行情不预告，只能从新闻、榜单与既有作品的回款曲线里自己判断。', muted: true });
@@ -343,7 +351,9 @@ function bookMenu(state: any, id: string) {
   const book = state.catalog.find((item: any) => item.id === id);
   if (!book) return { title: '作品档案', blocks: [{ type: 'text', text: '没有找到该作品。' }] };
   const balance = book.received - book.invested;
-  const dims = book.metrics.dimensions;
+  const project = state.projects.find((item: any) => item.id === id);
+  const dims = project ? core.visibleMetrics(project).dimensions : book.metrics.dimensions;
+  const dlcs = state.projects.filter((item: any) => item.parentId === id);
   return {
     title: '《' + book.name + '》',
     blocks: [
@@ -351,6 +361,8 @@ function bookMenu(state: any, id: string) {
       { type: 'stats', items: [['累计回款', money(book.received)], ['项目投入', money(book.invested)], [balance >= 0 ? '已盈利' : '尚差回本', money(Math.abs(balance))]], tone: balance >= 0 ? 'up' : 'down' },
       ...(book.review.reasons.length ? [{ type: 'section', title: book.tutorial ? '首作复盘：下一作怎么改' : '复盘' }, { type: 'reasons', items: book.review.reasons }] : []),
       { type: 'chart', book },
+      ...(book.parentId ? [{ type: 'text', text: '原作：《' + (state.catalog.find((item: any) => item.id === book.parentId)?.name || '原作') + '》；本资料片独立核算。', muted: true }] : []),
+      ...dlcs.map((item: any) => ({ type: 'buttons', items: [{ text: item.name + (item.released ? ' · 已发售' : ' · 开发中'), action: 'menu', data: { menu: item.released ? 'book' : 'project', id: item.id } }] })),
       { type: 'lines', items: [
         ['玩家评价', book.reviewScore.toFixed(1) + ' · ' + number(book.reviewCount) + ' 人'],
         ['首发', number(book.openingUnits) + ' 份 · ' + money(book.openingReceipt)],
@@ -366,14 +378,10 @@ function bookMenu(state: any, id: string) {
       { type: 'buttons', items: [
         { text: '派人做补丁 / 返工', action: 'menu', data: { menu: 'assign', id }, anchor: 'assign-book' },
         { text: book.sale ? '关闭促销' : '开启促销', action: 'sale', data: { id, enabled: !book.sale }, disabled: state.day - book.released > 540, anchor: 'sale-toggle' },
-        { text: '制作更新 · ' + money(2 + book.scale), action: 'operate', data: { id, kind: 'update' }, disabled: !!state.operation || book.updates >= 3 || state.cash < 2 + book.scale || !state.staff.length || state.day - book.released > 540 },
-        { text: '追加资料片（DLC）· ' + money(4 + book.scale * 2), action: 'dlc', data: { id }, disabled: (book.dlcs || 0) >= 2 || state.cash < 4 + book.scale * 2 || state.day - book.released > 540 },
+        ...(!book.parentId ? [{ text: '新项目：资料片（DLC）· ' + money(4 + book.scale * 2), action: 'dlc', data: { id }, disabled: dlcs.length >= 2 || state.cash < 4 + book.scale * 2 || state.day - book.released > 540 }] : []),
         { text: book.reviewScore >= 70 ? '开发续作' : '好评达到 70 分可开发续作', action: 'sequel', data: { id }, disabled: book.reviewScore < 70 }
       ] },
-      ...(book.sale ? [
-        { type: 'segments', title: '可接受的最低折扣', items: core.DISCOUNTS.map((value, index) => ({ text: Math.round(value * 100) + ' 折', action: 'sale', data: { id, enabled: true, floor: value }, active: book.saleFloor === index, anchor: 'sale-floor-' + index })) },
-        { type: 'text', text: '开启后由系统决定什么时候打折、打多深：余量多、口碑好的作品折扣浅，便宜的尾货打得深。担心促销期比原价期赚得少，就关掉它，或在档案的按周回款里对照。' }
-      ] : [{ type: 'text', text: '开启促销后，系统会在作品余量还够时自动打折；卖得越深，单份回款越低，但销量更多。' }]),
+      { type: 'text', text: '促销统一 ' + (core.DISCOUNTS[0] * 10) + ' 折；开启后系统按剩余需求决定何时开始，关闭立即恢复原价。补丁与更新直接来自分工中的实际修复、返工，不再单独购买。', muted: true },
       { type: 'text', text: '团队：' + (book.team.length ? book.team.map((person: any) => person.name + '（' + core.ROLES[person.role].name + '）').join('、') : '—'), muted: true }
     ]
   };
@@ -386,7 +394,7 @@ function goalsMenu(state: any) {
   return {
     title: '公司目标',
     blocks: [
-      { type: 'lines', items: [['当前阶段', phase.name + ' · ' + phase.scarce], ['公司名望', String(core.reputationOf(state))]] },
+      { type: 'lines', items: [['当前阶段', phase.name + ' · ' + phase.scarce], ['已发售作品', state.catalog.length + ' 部']] },
       { type: 'text', text: phase.text },
       { type: 'goals', items: goals.steps, current: goals.current.key },
       ...(goals.current.key === 'record' ? [{ type: 'note', icon: 'Trophy', text: goals.current.title + '：' + goals.current.text }] : []),
@@ -400,8 +408,7 @@ function goalsMenu(state: any) {
 function archiveMenu(state: any) {
   const archive = core.companyArchive(state);
   const blocks: any[] = [
-    { type: 'lines', items: [['公司名望', String(archive.reputation)], ['年度获奖', archive.wins + ' 次'], ['已发售作品', archive.books.length + ' 部']] },
-    { type: 'text', text: '名望由作品的奖项与口碑累积而来，不单独计分；它决定能进多大的展会、能不能挖到行业名人。', muted: true }
+    { type: 'lines', items: [['年度获奖', archive.wins + ' 次'], ['已发售作品', archive.books.length + ' 部']] }
   ];
   if (!archive.books.length) blocks.push({ type: 'text', text: '还没有作品。第一作发售后，这里会记下它的成绩与参与的人。' });
   for (const book of archive.books) {
@@ -416,6 +423,9 @@ function archiveMenu(state: any) {
     ] });
     if (book.contributions.length) blocks.push({ type: 'lines', title: '参与的人', items: book.contributions.map((item: any) => [item.name, core.ROLES[item.role].name + ' · 贡献约 ' + Math.round(item.share * 100) + '%']) });
   }
+  blocks.push({ type: 'section', title: '名望详情' });
+  blocks.push({ type: 'lines', items: [['公司名望', String(archive.reputation)]] });
+  blocks.push({ type: 'text', text: '名望由作品口碑、发售数量与奖项积累，影响行业名人出现的机会；当前展会和榜单不按名望分级。', muted: true });
   return { title: '公司档案', blocks };
 }
 
@@ -439,7 +449,7 @@ function teamMenu(state: any) {
         { type: 'section', title: '团队管理' },
         { type: 'text', text: '加班按人设置：产出更高，但缺陷更多，也会累积「疲惫」「想走」这类负面标签。', muted: true },
         { type: 'segments', title: '团建时长（占工作日，工资照付）', items: [1, 2, 3].map(value => ({ text: value + ' 天', action: 'outing', data: { days: value, value }, active: false, anchor: 'outing-' + value })) },
-        ...(state.staff.length ? [{ type: 'lines', items: [['当前清除标签概率', chance + '%'], ['保底', `${pity} / ${core.OUTING_PITY} 次必出`], ['频率影响', '连着做会越来越难见效，隔一段时间会回升']] }] : [])
+        ...(state.staff.length ? [{ type: 'lines', items: [['当前长期成长概率', chance + '%'], ['保底', `${pity} / ${core.OUTING_PITY} 次必出`], ['频率影响', '连着做概率低，隔一段时间恢复']] }, { type: 'text', text: '成功时获得永久能力成长，并清除一个负面标签；团建时间越长，越可能额外觉醒性格标签。每人的效果与觉醒记录在经营记录中。', muted: true }] : [])
       ] : [{ type: 'text', text: '创始人也在工作。首作一个人就能做完，招人是为了补上自己干不了的那一头：程序或策划请配美术，美术请配程序。', muted: true }])
     ]
   };
@@ -468,14 +478,15 @@ function personMenu(state: any, id: string) {
 function candidateMenu(state: any, id: string) {
   const person: any = Object.values(state.candidates).flatMap((pool: any) => pool.people).find((item: any) => item.id === id);
   if (!person) return { title: '候选人', blocks: [{ type: 'text', text: '这份简历已经过期。' }] };
+  const reasons = core.hireReasons(state, id);
   return {
     title: person.name,
     blocks: [
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['月薪', money(person.wage)], ['工作速度', String(person.speed)]] },
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：自带粉丝，新作首发关注更高；入职前 30 天需要磨合，产出打八折。要价也高。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') }] : []),
       { type: 'lines', title: '六项能力', items: core.ABILITIES.map(ability => [ability.name, String(person.abilities[ability.key])]) },
-      ...(person.tags.length ? [{ type: 'lines', title: '标签（只作摘要，不加数值）', items: person.tags.map((tag: any) => [core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name, core.ABILITY_TAGS[tag.key]?.text || core.PERSONALITY_TAGS[tag.key]?.text]) }] : []),
-      { type: 'buttons', anchor: 'hire', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', data: { id: person.id }, disabled: person.hired || state.staff.length >= core.seats(state) }] }
+      ...(person.tags.length ? [{ type: 'lines', title: '能力标签为数值摘要；性格标签有独立效果', items: person.tags.map((tag: any) => [core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name, core.ABILITY_TAGS[tag.key]?.text || core.PERSONALITY_TAGS[tag.key]?.text]) }] : []),
+      { type: 'buttons', anchor: 'hire', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', data: { id: person.id }, disabled: reasons.length > 0, help: reasons.join('\n'), helpKey: 'hire:' + person.id }] }
     ]
   };
 }
@@ -520,7 +531,7 @@ function financeMenu(state: any) {
       { type: 'section', title: '公司与记录' },
       { type: 'buttons', items: [
         { text: '成长目标与扩建', action: 'menu', data: { menu: 'goals' } },
-        { text: '公司档案 · 名望 ' + core.reputationOf(state), action: 'menu', data: { menu: 'archive' } },
+        { text: '公司档案与作品履历', action: 'menu', data: { menu: 'archive' } },
         { text: '经营记录', action: 'menu', data: { menu: 'history' } }
       ] },
       { type: 'section', title: '存档与设置' },
@@ -621,7 +632,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标，也看看现在的处境。'),
       () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项；首作选小型就够。', tap: 'navProject' } : null,
-      () => project && !seen.track ? explain('track', 'track', '六个评分项各有进度，最慢的一项就是瓶颈。完成度 55% 自动完成体验版，这时就能试玩和发售；做满只是继续打磨。') : null,
+      () => project && !seen.track ? explain('track', 'track', '五项内容各有进度，最慢的一项是瓶颈；稳定看缺陷，不是建设进度。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
       // A hire is only useful against a short board, so the tip names the trade that covers the
@@ -639,7 +650,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => project?.checkpoints.prototype && !seen.navTools ? { anchor: 'nav-tools', text: '原型成形了。点「工具」看看：只提速、不提高质量，画面、声音和测试工具也已开放。', tap: 'navTools' } : null,
       () => project?.checkpoints.demo && !seen.testing ? { anchor: 'nav-testing', text: '体验版完成：点「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
       () => project?.test && !seen.promote && !project.promoted ? { anchor: 'nav-market', text: '试玩后再去「市场」投放推广。推广只换关注，不保证销量，首作先投一小笔。', tap: 'navMarket' } : null,
-      () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '已知缺陷：试玩发现的缺陷数。发现之后团队会顺手修掉，发售后玩家也会陆续报告。') : null,
+      () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '已知缺陷只统计报告的问题，不保证找全。员工负责的内容完成后，自动消耗工时修复；发售后仍可重新派人维护。') : null,
       () => complete && !project.released && !seen.launchBook ? { anchor: 'nav-project', text: '各评分项都做满了。点「项目」可以正式发售，也可以继续返工提高评分。', tap: 'navProject' } : null,
       () => !project && state.catalog.length === 1 ? introduce('review', 'nav-market', '首作已发售。点「市场」打开档案，看看复盘：哪里亏了，下一作怎么改。') : null
     ];

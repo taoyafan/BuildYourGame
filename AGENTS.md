@@ -13,18 +13,25 @@
 
 设计与玩法只在 [游戏设计.md](游戏设计.md) 维护；参数与公式只在代码里维护。
 
+## 内容与文档范围
+
+- 游戏内容文档只记录当前版本已确定的目标，不混写下一版、终版或未来扩展承诺。
+- 未来扩展方向统一记录在 [TODO.md](TODO.md) 的「暂缓范围」，具体数值仍只在代码中维护。
+- 尚未确定的当前问题放「待讨论」；讨论确认且能够当轮完成的直接实现并验证，不先堆进「待实现」。只有已确定但尚不能完成的任务才进入「待实现」。
+- 已完成任务从 TODO 删除，不保留完成历史；程序、设计与运行说明在对应行为变更时同步更新。
+
 ## 本机环境
 
 | 项 | 值 |
 | --- | --- |
-| Cocos Creator | `E:\CocosCreator\3.8.8\CocosCreator.exe`（官方 zip 解压，非 Dashboard 安装） |
-| 环境变量 | `COCOS_CREATOR` 已设为上述路径（用户级） |
+| Cocos Creator | `C:\temp\CocosCreator-3.8.8\CocosCreator.exe`（本轮构建已验证，非 Dashboard 安装） |
+| 环境变量 | 构建时显式设置 `COCOS_CREATOR`，不要假定旧的 E 盘路径仍存在 |
 | 微信开发者工具 | `E:\Tencent\微信web开发者工具\cli.bat` |
 | 微信 AppID | `wx6ec12949d6ad0ad8` |
 | H5 构建输出 | `creator/build/web-mobile` |
 | 微信构建输出 | `creator/build/wechatgame` |
 
-`dist/` 已从仓库移除并 ignore（见提交 `0aaf371`）。**不要再找 `dist/BuildYourGame.html`**，预览一律走 `creator/build/`。
+所有平台产物均在 `creator/build/`。只维护 Creator 工程，不另建独立 HTML / DOM 预览版；浏览器试玩使用 Creator 构建的 H5，小游戏平台适配仍须独立验收。
 
 ## 构建与预览
 
@@ -42,8 +49,10 @@ CocosCreator.exe: bad option: --project
 
 ```powershell
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-$env:COCOS_CREATOR = 'E:\CocosCreator\3.8.8\CocosCreator.exe'
+$env:COCOS_CREATOR = 'C:\temp\CocosCreator-3.8.8\CocosCreator.exe'
 ```
+
+安装位置变化时，先确认可执行文件存在且版本为 3.8.8，再设置上述变量。
 
 ### 构建命令
 
