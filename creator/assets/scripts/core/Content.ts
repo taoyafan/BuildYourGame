@@ -231,8 +231,16 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const assignedPeople = state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
+  const fixed = project.defects.filter((defect: any) => defect.fixed).length;
+  const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
+  const head: any[] = dimKey === 'stability'
+    ? [
+      { type: 'stats', tone: 'plain', items: [['当前估计', score.toFixed(0) + ' 分'], ['已知待修', metrics.known + ' 项'], ['累计已修', fixed + ' 项']] },
+      { type: 'lines', items: [['测试投入', forecast.discover + ' 人日/天'], ['修复投入', forecast.repair + ' 人日/天'], ['修完已知', metrics.known ? (row?.days === null ? '暂无人修' : '约 ' + row?.days + ' 天') : '暂无待修']] }
+    ]
+    : [{ type: 'stats', tone: 'plain', items: [['当前评分', score.toFixed(0) + ' 分'], ['剩余', row && row.remaining > 0.0001 ? row.remaining.toFixed(0) + ' 人日' : '已做满'], ['预计完成', finish]] }];
   const blocks: any[] = [
-    { type: 'lines', items: dimKey === 'stability' ? [['已知缺陷', metrics.known + ' 项'], ['自动修复产出', forecast.repair + ' 人日/天']] : [['当前评分', score.toFixed(0) + ' 分'], ['剩余工作量', row ? (row.remaining > 0 ? row.remaining.toFixed(0) + ' 人日' : '已完成') : '—'], ['预计完成', row ? (row.days === null ? (row.remaining > 0 ? '无人负责' : '已完成') : '约 ' + row.days + ' 天') : '—']] },
+    ...head,
     { type: 'text', text: dimension.desc + (weight >= 0.3 ? ' ' + core.TYPES[project.type].audience + '玩家很看重这一项。' : ' 这类玩家相对不挑剔这一项。'), muted: true },
     { type: 'section', title: assignedPeople.length ? '负责这一项的人（点工作块直接调整）' : '还没有人做，点工作块安排人手' },
     ...state.staff.map((person: any, index: number) => {
@@ -290,9 +298,12 @@ function testingMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   if (!project) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把体验版做出来。' }] };
   const offer = core.playtestOffer(state, project);
-  const blocks: any[] = [];
+  const known = core.visibleMetrics(project).known;
+  const blocks: any[] = [
+    { type: 'stats', tone: 'plain', items: [['已知待修', known + ' 项'], ['累计试玩', (project.testCount || 0) + ' 人次'], ['试玩轮数', (project.tests || 0) + ' 轮']] }
+  ];
   if (project.test) {
-    blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 发现 ' + project.test.found + ' 项缺陷 · 累计 ' + project.testCount + ' 人次参与' });
+    blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 新发现 ' + project.test.found + ' 项缺陷' });
     // Comparing with the previous run is the whole point of a retest: a bare score cannot tell you
     // whether the last round of work helped.
     const history = project.testLog || [];
@@ -314,11 +325,12 @@ function testingMenu(state: any, id?: string) {
     blocks.push({ type: 'section', title: '试玩历史' });
     blocks.push({ type: 'lines', items: [...(project.testLog || [])].reverse().map((entry: any) => ['第 ' + entry.day + ' 天 · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
   }
-  blocks.push({ type: 'buttons', anchor: 'tests', items: [
-    { text: '招募 30 人 · 0.80 万（发现约六成缺陷）', action: 'test', data: { id: project.id, count: 30 }, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
-    { text: '招募 100 人 · 2.00 万（发现约九成缺陷）', action: 'test', data: { id: project.id, count: 100 }, disabled: !offer.available || state.cash < 2 }
+  blocks.push({ type: 'section', title: '招募试玩' });
+  blocks.push({ type: 'buttons', anchor: 'tests', columns: 2, items: [
+    { text: '30 人 · 0.80 万', action: 'test', data: { id: project.id, count: 30 }, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
+    { text: '100 人 · 2.00 万', action: 'test', data: { id: project.id, count: 100 }, disabled: !offer.available || state.cash < 2 }
   ] });
-  if (!offer.available) blocks.push({ type: 'text', text: offer.reason || '先处理当前决策。', muted: true });
+  blocks.push({ type: 'text', text: offer.available ? '30 人约发现六成未知缺陷，100 人约九成；人数越多，评分波动越小。' : offer.reason || '先处理当前决策。', muted: true });
   return { title: '试玩', blocks };
 }
 

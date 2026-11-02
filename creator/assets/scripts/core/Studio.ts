@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.23';
+export const VERSION = '0.1.24';
 
 // Six quality dimensions. Only creativity, depth and stability carry their own mechanics; fluidity,
 // picture and sound only weigh in through the audience's preferences.

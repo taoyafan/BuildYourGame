@@ -904,7 +904,7 @@ export class StudioApp extends Component {
         const cell = width / block.items.length;
         block.items.forEach(([name, value]: any, index: number) => {
           this.text(parent, name, index * cell, y, cell - 6, 18, 11, colors.muted);
-          this.text(parent, value, index * cell, y + 18, cell - 6, 28, 17, index === block.items.length - 1 ? (block.tone === 'up' ? colors.green : colors.danger) : colors.ink, true);
+          this.text(parent, value, index * cell, y + 18, cell - 6, 28, 17, index === block.items.length - 1 && block.tone !== 'plain' ? (block.tone === 'up' ? colors.green : colors.danger) : colors.ink, true);
         });
         return y + 58;
       }
