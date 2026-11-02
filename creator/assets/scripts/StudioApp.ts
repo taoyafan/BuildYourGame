@@ -613,7 +613,6 @@ export class StudioApp extends Component {
     const height = 184;
     const { node, pen } = this.canvasNode(body, 'Radar', 0, y, inner, height);
     this.anchors.set('radar', node);
-    const weights = core.TYPES[type].weights;
     const center = { x: inner / 2, y: 82 };
     const radius = 52;
     const count = core.DIM_KEYS.length;
@@ -650,10 +649,9 @@ export class StudioApp extends Component {
       pen.line(solid[index].x, solid[index].y, next.x, next.y, colors.green, 2);
     }
     core.DIM_KEYS.forEach((key: string, index: number) => {
-      const weight = weights[key];
       const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
       const score = Math.round(metrics.dimensions[key] || 0);
-      const label = this.text(node, name + '\n' + score + ' 分', 0, 0, 56, 32, 11, weight >= 0.3 ? colors.ink : colors.muted, weight >= 0.3);
+      const label = this.text(node, name + '\n' + score + ' 分', 0, 0, 56, 32, 11, colors.muted);
       label.horizontalAlign = HorizontalTextAlignment.CENTER;
       // setPosition uses engine coords (y up). Center the 32px label on the radial point.
       const spot = point(index, 120);

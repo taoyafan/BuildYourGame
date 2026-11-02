@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.21';
+export const VERSION = '0.1.23';
 
 // Six quality dimensions. Only creativity, depth and stability carry their own mechanics; fluidity,
 // picture and sound only weigh in through the audience's preferences.
@@ -1525,7 +1525,7 @@ function salesDay(state: any) {
     book.followers += Math.round(fans);
     state.fans = round(state.fans + fans);
     book.received = round(book.received + income);
-    const week = Math.min(51, Math.floor(age / 7));
+    const week = Math.floor(age / 7);
     while (book.weekly.length <= week) book.weekly.push(0);
     book.weekly[week] = round(book.weekly[week] + income);
     // Remember which weeks ran a sale, so the archive chart can show the difference against full price.
