@@ -4,17 +4,17 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.26';
+export const VERSION = '0.1.27';
 
-// Six quality dimensions, all scored the same way. Creativity and stability carry extra mechanics:
-// stability is testing, and its score is also the share of defects the testing has caught.
+// Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
+// defects still open, and testing only decides how many of them are found in time to be fixed.
 export const DIMENSIONS: any[] = [
   { key: 'creativity', name: '创意', short: '创', desc: '作品的新意与辨识度，影响能否出圈。' },
   { key: 'depth', name: '深度', short: '深', desc: '系统与策略的掌握空间，影响长尾与后续扩展。' },
   { key: 'fluidity', name: '流畅', short: '流', desc: '操作响应、帧率与加载，操作型最看重。' },
   { key: 'picture', name: '画面', short: '画', desc: '美术与场景的呈现水准。' },
   { key: 'sound', name: '声音', short: '声', desc: '音乐与音效的呈现水准。' },
-  { key: 'stability', name: '稳定', short: '稳', desc: '测试的覆盖与彻底程度；没测到的缺陷会在发售后被玩家发现，拖低口碑。' }
+  { key: 'stability', name: '稳定', short: '稳', desc: '未修缺陷越多越低。测试把缺陷找出来，修好才加分；没测到的会在发售后被玩家碰到。' }
 ];
 export const DIM_KEYS = DIMENSIONS.map(dimension => dimension.key);
 export const CONTENT_KEYS = DIM_KEYS.filter(key => key !== 'stability');
@@ -179,6 +179,10 @@ export const UNIT_MARKS = [1000, 5000, 10000, 50000];
 export const MARKET_SIZE = 5000;
 // One work unit is one person-day of a newcomer. A dimension never stops at a cap; rework replaces the
 // weakest finished part, so pushing a score up costs full wages for what the new hand can reach.
+// Defects left per person-day of content at ability 0; a full-ability hand leaves none.
+const DEFECT_RATE = 0.5;
+// Person-days to fix one defect at full ability.
+const REPAIR_WORK = 0.4;
 const START_CASH = 50;
 const BRIDGE = 20;
 const PROTO = 0.25;
@@ -232,7 +236,7 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   return {
-    version: 6, rulesRevision: 2, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 3, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], tools: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -568,45 +572,65 @@ function dimensionScore(work: any) {
   return work.value / work.total;
 }
 
+// Test coverage: the testing workload scored like any other work, read as a share from 0 to 1.
+function coverage(project: any) {
+  return clamp(dimensionScore(workOf(project, 'stability')), 0, 100) / 100;
+}
+
+// Stability is measured against the most defects the finished content could have left.
+function stabilityFrom(project: any, unfixed: number) {
+  const room = CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) * DEFECT_RATE;
+  return room > 0 ? round(clamp(100 * (1 - unfixed / room), 0, 100)) : 0;
+}
+
+function overallOf(type: string, dimensions: any) {
+  const weights = TYPES[type].weights;
+  return round(DIM_KEYS.reduce((total, key) => total + dimensions[key] * weights[key], 0));
+}
+
+// What the player can infer: defects testing caught divided by coverage estimates the total, so the
+// hidden part is a guess that can be off either way. Below 10% coverage there is nothing to go on.
+function estimatedUnfixed(project: any) {
+  const share = coverage(project);
+  if (share < 0.1) return null;
+  const caught = project.defects.filter((defect: any) => (defect.roll ?? 1) < share).length;
+  const found = project.defects.filter((defect: any) => defect.found).length;
+  const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
+  return known + Math.max(0, caught / share - found);
+}
+
 export function projectMetrics(project: any) {
   const dimensions: any = {};
-  for (const key of DIM_KEYS) {
-    const work = workOf(project, key);
-    dimensions[key] = round(clamp(dimensionScore(work), 0, 100));
-  }
+  for (const key of CONTENT_KEYS) dimensions[key] = round(clamp(dimensionScore(workOf(project, key)), 0, 100));
   const open = project.defects.filter((defect: any) => !defect.fixed).length;
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
+  dimensions.stability = stabilityFrom(project, open);
   const progress = clamp(CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)), 0, 1);
-  const weights = TYPES[project.type].weights;
-  const overall = round(DIM_KEYS.reduce((total, key) => total + dimensions[key] * weights[key], 0));
   return {
     progress: round(progress * 100),
-    dimensions, overall,
-    defects: open, known, found: project.found,
+    dimensions, overall: overallOf(project.type, dimensions),
+    defects: open, known, found: project.found, coverage: round(coverage(project) * 100),
     unfinished: CONTENT_KEYS.filter(key => workOf(project, key).done < workOf(project, key).total - 0.001)
   };
 }
 
+// The player's view: stability is estimated from what testing found, never read from the true count.
 export function visibleMetrics(project: any) {
   const metrics = projectMetrics(project);
-  return { ...metrics, defects: metrics.known };
+  const estimate = estimatedUnfixed(project);
+  const dimensions = { ...metrics.dimensions, stability: estimate === null ? 0 : stabilityFrom(project, estimate) };
+  return { ...metrics, dimensions, overall: overallOf(project.type, dimensions), untested: estimate === null, defects: metrics.known };
 }
 
-// Testing catches the same share of defects as its stability score; the rest wait for the players.
+// Each defect is caught by testing once coverage passes its own roll, so on average testing finds its
+// coverage share, sometimes more and sometimes fewer. The roll is fixed at birth: reloading never rerolls.
 function syncFound(project: any) {
-  const caught = Math.round(project.defects.length * workScore(project, 'stability') / 100);
-  let found = project.defects.filter((defect: any) => defect.found).length;
+  const share = coverage(project);
   for (const defect of project.defects) {
-    if (found >= caught) break;
-    if (defect.found) continue;
+    if (defect.found || (defect.roll ?? 1) >= share) continue;
     defect.found = true;
     project.found += 1;
-    found += 1;
   }
-}
-
-function workScore(project: any, key: string) {
-  return clamp(dimensionScore(workOf(project, key)), 0, 100);
 }
 
 // Where today's team would land if it finished the work: the finished part keeps its score, the
@@ -632,6 +656,17 @@ export function expectedDimensions(state: any, project: any) {
     }
     if (!hands || remaining <= 0.0001) { out[key] = dimensionScore(work); continue; }
     out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
+  }
+  // The stability loop above produced the expected coverage; turn it into stability assuming every
+  // found defect gets fixed and the defect density seen so far holds for the rest of the content.
+  const estimate = estimatedUnfixed(project);
+  if (estimate === null) out.stability = 0;
+  else {
+    const share = coverage(project);
+    const caught = project.defects.filter((defect: any) => (defect.roll ?? 1) < share).length;
+    const room = CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) * DEFECT_RATE;
+    const density = room > 0 ? caught / share / room : 0;
+    out.stability = round(clamp(100 * (1 - density * (1 - out.stability / 100)), 0, 100));
   }
   return out;
 }
@@ -921,7 +956,7 @@ function addDefect(project: any, person: any, dimension: string, chance: number,
   project.defectDebt = (project.defectDebt || 0) + debt;
   while (project.defectDebt >= 1) {
     project.defectDebt -= 1;
-    project.defects.push({ id: `${project.id}-${project.defects.length}`, dimension, found: false, fixed: false });
+    project.defects.push({ id: `${project.id}-${project.defects.length}`, dimension, found: false, fixed: false, roll: random(state) });
   }
 }
 
@@ -965,7 +1000,7 @@ function produceProject(state: any, project: any) {
         const used = Math.min(amount, Math.max(0, remaining));
         if (remaining > 0) {
           recordWork(project, person, work.dimension, used, quality);
-          if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * 0.1, state);
+          if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * DEFECT_RATE, state);
         }
         const spare = amount - used;
         if (spare > 0) {
@@ -996,8 +1031,7 @@ function produceProject(state: any, project: any) {
 }
 
 // Repair only touches found defects, and is settled by the ability of the dimension that left it: a
-// weaker hand still fixes it, just slower. Two person-days per defect at full ability — the same
-// number the pipeline estimate shows — and no attempt is ever wasted.
+// weaker hand still fixes it, just slower. No attempt is ever wasted.
 function repair(state: any, project: any, amount: number, person: any) {
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed);
   if (!known.length) return;
@@ -1005,10 +1039,10 @@ function repair(state: any, project: any, amount: number, person: any) {
     if (amount <= 0) break;
     const skill = 0.5 + able(person, target.dimension) / 200;
     const progress = target.repairWork || 0;
-    const used = Math.min(amount, (2 - progress) / skill);
+    const used = Math.min(amount, (REPAIR_WORK - progress) / skill);
     target.repairWork = progress + used * skill;
     amount -= used;
-    if (target.repairWork < 2 - 0.000001) continue;
+    if (target.repairWork < REPAIR_WORK - 0.000001) continue;
     target.fixed = true;
     project.found = Math.max(0, project.found - 1);
   }
@@ -1100,7 +1134,7 @@ export function testDemo(state: any, projectId: string, count = 30) {
     stability: (newlyFound
       ? `试玩玩家碰到 ${newlyFound} 项测试漏掉的缺陷，待修 ${metrics.known} 项。`
       : metrics.known ? `没有碰到新缺陷，还有 ${metrics.known} 项待修。` : '本轮没有碰到新问题。')
-      + (metrics.dimensions.stability < 60 ? '测试还不够彻底：安排人继续测试，或让测试能力更强的人复测，没测到的缺陷会在发售后被玩家发现。' : '')
+      + (metrics.untested ? '还没测试，稳定无从估计：安排人测试，找出的缺陷修好才加分。' : metrics.dimensions.stability < 60 ? '估计还有不少缺陷没修：继续测试找出更多，并给修复留出工时；没测到的会在发售后被玩家碰到。' : '')
   };
   const findings = DIM_KEYS.map(key => {
     const dimension = DIMENSIONS.find(item => item.key === key);
@@ -1229,7 +1263,7 @@ export function launchChecklist(state: any, project: any) {
   return [
     { label: '计划内容完成', ok: metrics.unfinished.length === 0, required: false, text: metrics.unfinished.length ? `还差 ${metrics.unfinished.length} 维，提前发售评分会偏低` : `完成度 ${metrics.progress.toFixed(0)}%` },
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
-    { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
+    { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；估计稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
     { label: '六维估计', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
     { label: '关注人数', ok: project.followers >= 1500, text: `${Math.round(project.followers)} 人${project.followers >= 1500 ? '' : '，推广能扩大首发'}` }
   ];
@@ -1253,7 +1287,8 @@ export function launchProject(state: any, projectId: string) {
   const { units, price, receipt } = openingSales(project, trend.multiplier, score);
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
   const capacity = Math.round(MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1) * (1 + Math.max(0, score - 70) / 25 * 4) * 0.5);
-  const review = reviewOf(next, project, visibleMetrics(project));
+  // At launch the players see the real game, so the review reads the true stability, not the estimate.
+  const review = reviewOf(next, project, metrics);
   const book = {
     id: project.id, name: project.name, type: project.type, scale: project.scale,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
@@ -1797,6 +1832,26 @@ export function restoreStudio(saved: any) {
       if (book) book.metrics = projectMetrics(project);
     }
     next.rulesRevision = 2;
+  }
+  if (next.rulesRevision < 3) {
+    // Stability now counts open defects, so defects became five times finer and five times cheaper to
+    // fix. Each old defect splits into five, and testing finds are kept by giving them rolls below coverage.
+    for (const project of next.projects) {
+      const share = coverage(project);
+      const old = project.defects;
+      project.defects = [];
+      for (const defect of old) {
+        for (let copy = 0; copy < 5; copy += 1) {
+          const roll = defect.found ? random(next) * share : share + random(next) * (1 - share);
+          project.defects.push({ ...defect, id: `${project.id}-${project.defects.length}`, roll, repairWork: (defect.repairWork || 0) * REPAIR_WORK / 2 });
+        }
+      }
+      project.defectDebt = (project.defectDebt || 0) * 5 % 1;
+      project.found = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
+      const book = next.catalog.find((item: any) => item.id === project.id);
+      if (book) book.metrics = projectMetrics(project);
+    }
+    next.rulesRevision = 3;
   }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;

@@ -651,7 +651,7 @@ export class StudioApp extends Component {
     core.DIM_KEYS.forEach((key: string, index: number) => {
       const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
       const score = Math.round(metrics.dimensions[key] || 0);
-      const label = this.text(node, name + '\n' + score + ' 分', 0, 0, 56, 32, 11, colors.muted);
+      const label = this.text(node, name + '\n' + (key === 'stability' && metrics.untested ? '未测' : score + ' 分'), 0, 0, 56, 32, 11, colors.muted);
       label.horizontalAlign = HorizontalTextAlignment.CENTER;
       // setPosition uses engine coords (y up). Center the 32px label on the radial point.
       const spot = point(index, 120);

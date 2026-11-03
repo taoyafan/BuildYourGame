@@ -232,11 +232,11 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
   const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
-  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', score.toFixed(0) + ' 分'], ['剩余', row && row.remaining > 0.0001 ? row.remaining.toFixed(0) + ' 人日' : '已做满'], ['预计完成', finish]] }];
+  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['剩余', row && row.remaining > 0.0001 ? row.remaining.toFixed(0) + ' 人日' : '已做满'], ['预计完成', finish]] }];
   if (dimKey === 'stability') {
     const found = project.defects.filter((defect: any) => defect.found).length;
     const fixed = project.defects.filter((defect: any) => defect.fixed).length;
-    head.push({ type: 'lines', items: [['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known], ['修复投入', forecast.repair + ' 人日/天']] });
+    head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known], ['修复投入', forecast.repair + ' 人日/天']] });
   }
   const blocks: any[] = [
     ...head,
@@ -256,7 +256,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
       };
     }),
     { type: 'buttons', items: [{ text: '查看整部作品的分工', action: 'menu', data: { menu: 'assign', id: projectId }, anchor: 'to-assign' }] },
-    { type: 'text', text: dimKey === 'stability' ? '评分 = 测试完成部分的发现能力 × 进度，也是测试能抓到的缺陷比例。没测到的缺陷会在发售后被玩家发现；抓到的缺陷由做完自己工作的人自动修复，修复不加分但要占工时。' : '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。', muted: true }
+    { type: 'text', text: dimKey === 'stability' ? '评分按未修缺陷估计：测试覆盖越高，找出的缺陷越多，估计也越准；找出的缺陷由做完自己工作的人自动修复，修好就加分。覆盖不到 10% 时无从估计；没测到的缺陷会在发售后被玩家碰到。' : '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。', muted: true }
   ];
   return { title: dimension.name, blocks };
 }
@@ -318,7 +318,7 @@ function testingMenu(state: any, id?: string) {
     blocks.push({ type: 'feedback', items: project.test.findings });
     blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   } else {
-    blocks.push({ type: 'text', text: '试玩玩家给出体验评价，并会碰到一部分测试漏掉的缺陷；试玩不提高稳定分，稳定只靠测试工作。' });
+    blocks.push({ type: 'text', text: '试玩玩家给出体验评价，并会碰到一部分测试漏掉的缺陷；这些缺陷修好后稳定就会提高。' });
   }
   if ((project.testLog || []).length > 1) {
     blocks.push({ type: 'section', title: '试玩历史' });
@@ -643,7 +643,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标，也看看现在的处境。'),
       () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项；首作选小型就够。', tap: 'navProject' } : null,
-      () => project && !seen.track ? explain('track', 'track', '五项内容各有进度，最慢的一项是瓶颈；稳定是测试进度，没人测试就是 0 分。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
+      () => project && !seen.track ? explain('track', 'track', '五项内容各有进度，最慢的一项是瓶颈；稳定看未修缺陷，没人测试就无从估计。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
       // A hire is only useful against a short board, so the tip names the trade that covers the
