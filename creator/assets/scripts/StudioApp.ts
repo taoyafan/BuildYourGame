@@ -947,7 +947,7 @@ export class StudioApp extends Component {
       case 'choices': {
         const start = y;
         // Event choices carry their id only; hand it to the dispatcher so the decision has something to resolve.
-        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data || { choice: item.id }), { tag: item.recommended ? '推荐' : '', highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
+        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data || { choice: item.id }), { tag: item.tag || (item.recommended ? '推荐' : ''), highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }
@@ -1022,7 +1022,7 @@ export class StudioApp extends Component {
       case 'catalog':
         this.state.catalog.forEach((book: any, index: number) => {
           const balance = book.received - book.invested;
-          y += this.choice(parent, y, '《' + book.name + '》', `${content.number(book.units)} 份 · 回款 ${content.money(book.received)} · 评价 ${book.reviewScore.toFixed(1)}\n${this.state.day - book.released < 7 ? '首周新品 · ' : ''}${book.rank ? '销量榜第 ' + book.rank + ' 名' : '未上榜'}`, () => this.openMenu('book', book.id), { tag: balance >= 0 ? '已回本' : '未回本', tagColor: balance >= 0 ? colors.green : colors.muted, anchor: 'book-' + index }) + 10;
+          y += this.choice(parent, y, '《' + book.name + '》', `${content.number(book.units)} 份 · 回款 ${content.money(book.received)} · 评价 ${book.reviewScore.toFixed(1)}\n${this.state.day - book.released < 7 ? '首周统计中' : book.firstRanks ? '全国首周榜第 ' + book.firstRanks[1] + ' 名' : '首周名次未知'}`, () => this.openMenu('book', book.id), { tag: balance >= 0 ? '已回本' : '未回本', tagColor: balance >= 0 ? colors.green : colors.muted, anchor: 'book-' + index }) + 10;
         });
         return y;
       case 'cover': return y + this.cover(parent, y, block.book) + 14;
@@ -1581,7 +1581,7 @@ export class StudioApp extends Component {
         case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
         case 'deadline': this.apply(core.setDeadline(this.state, data.id, Number(data.days)), '发售日期已公布。'); break;
-        case 'exhibition': this.apply(core.enterExhibition(this.state, data.id), '展会已报名，继续完善会影响名次。'); break;
+        case 'exhibition': this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。'); break;
         case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), '更新已开始制作。'); break;
         case 'sale': this.apply(core.setSale(this.state, data.id, !!data.enabled, data.floor), data.enabled ? '已开启促销，系统会按余量决定打折时机。' : '已关闭促销，恢复原价销售。'); break;
         case 'sequel': {

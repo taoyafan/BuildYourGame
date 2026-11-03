@@ -102,7 +102,9 @@ export function menu(state: any, route: any) {
     case 'testing': return testingMenu(state, route.id);
     case 'market': return marketMenu(state, route.id);
     case 'book': return bookMenu(state, route.id);
-    case 'rankings': return rankingsMenu(state);
+    case 'rankings':
+    case 'industry': return industryMenu(state, route.id);
+    case 'rival': return rivalMenu(state, route.id);
     case 'exhibitions': return exhibitionsMenu(state);
     case 'team': return teamMenu(state);
     case 'recruit': return recruitMenu(state, route.id);
@@ -337,12 +339,13 @@ function marketMenu(state: any, id?: string) {
   // Follow the project the player is actually looking at, not whichever one sorts first.
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   const blocks: any[] = [];
-  const expo = core.exhibitionOffer(state);
-  blocks.push({ type: 'lines', items: [['下届日光游戏展', '第 ' + expo.day + ' 天'], ['体验版报名截止', '第 ' + expo.deadline + ' 天（剩余 ' + (expo.deadline - state.day) + ' 天）'], ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
+  const offers = core.exhibitionOffers(state);
   const currentNotReady = !!project && project.progress < 55;
-  blocks.push({ type: 'buttons', items: [{ text: expo.entry ? '展会已报名' : '体验版报名展会 · 1.00 万', action: 'exhibition', data: { id: project?.id }, disabled: !expo.available || currentNotReady }, { text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '销量榜与年度评选', action: 'menu', data: { menu: 'rankings' } }] });
-  if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版 后才能报名展会。', muted: true });
-  else if (!expo.available) blocks.push({ type: 'text', text: expo.reason, muted: true });
+  blocks.push({ type: 'lines', items: [...offers.map((offer: any) => [offer.name + ' · 报名 ' + money(offer.fee), '第 ' + offer.day + ' 天（截止还剩 ' + (offer.deadline - state.day) + ' 天）']), ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
+  blocks.push({ type: 'buttons', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
+  blocks.push({ type: 'buttons', items: [{ text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '行业：榜单 · 对手 · 档期 · 新闻', action: 'menu', data: { menu: 'industry' } }] });
+  if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版后才能报名展会。', muted: true });
+  else blocks.push({ type: 'text', text: '三级展会都可以报名：级别越高报名费越贵、对手越强，作品不够突出时几乎换不来关注。', muted: true });
   if (project) {
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)]] });
     blocks.push({ type: 'text', text: '首发销量主要来自关注者。体验版完成后会自然积累关注，推广能扩大首发，但钱花出去就收不回。市场行情不预告，只能从新闻、榜单与既有作品的回款曲线里自己判断。', muted: true });
@@ -384,7 +387,7 @@ function bookMenu(state: any, id: string) {
         ['发售时市场', book.trend]
       ] },
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
-      { type: 'lines', items: [['发售首周', state.day - book.released < 7 ? '新品上榜中' : '已结束'], ['当前 / 最高排名', (book.rank || '未上榜') + ' / ' + (book.bestRank || '未上榜')], ['排名变化', rankChange(book)], ['系列期待', book.expectation + ' 分评价压力'], ['主要更新', book.updates + ' 次']] },
+      { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['主要更新', book.updates + ' 次']] },
       { type: 'section', title: '作品运营' },
       { type: 'buttons', items: [
         { text: '派人做补丁 / 返工', action: 'menu', data: { menu: 'assign', id }, anchor: 'assign-book' },
@@ -429,14 +432,16 @@ function archiveMenu(state: any) {
       ['发售', '第 ' + book.released + ' 天'],
       ['口碑', book.review.toFixed(1) + ' 分'],
       ['销量 / 回款', number(book.units) + ' 份 · ' + money(book.received)],
-      ['最好名次', book.bestRank ? '第 ' + book.bestRank + ' 名' : '未上榜'],
+      ['首周名次', rankText(book.firstRanks)],
       ...(book.breakout ? [['备注', '创意出圈']] : [])
     ] });
     if (book.contributions.length) blocks.push({ type: 'lines', title: '参与的人', items: book.contributions.map((item: any) => [item.name, core.ROLES[item.role].name + ' · 贡献约 ' + Math.round(item.share * 100) + '%']) });
   }
-  blocks.push({ type: 'section', title: '名望详情' });
-  blocks.push({ type: 'lines', items: [['公司名望', String(archive.reputation)]] });
-  blocks.push({ type: 'text', text: '名望由作品口碑、发售数量与奖项积累，影响行业名人出现的机会；当前展会和榜单不按名望分级。', muted: true });
+  const focus = state.focus || 0;
+  const nextAt = core.FOCUS_AT[focus + 1];
+  blocks.push({ type: 'section', title: '行业声量' });
+  blocks.push({ type: 'lines', items: [['行业声量', String(archive.voice)], ['当前关注层级', core.TIERS[focus].name], ['距下一层', nextAt === undefined ? '已在最高层' : String(Math.max(0, Math.ceil(nextAt - archive.voice)))]] });
+  blocks.push({ type: 'text', text: '声量由粉丝、近三作首周销量、获奖（按级别）与公司规模合成，不含现金。它决定新闻与榜单默认关注哪一层（只升不降），也影响行业名人出现的机会；所有展会与榜单始终开放。', muted: true });
   return { title: '公司档案', blocks };
 }
 
@@ -543,6 +548,7 @@ function financeMenu(state: any) {
       { type: 'buttons', items: [
         { text: '成长目标与扩建', action: 'menu', data: { menu: 'goals' } },
         { text: '公司档案与作品履历', action: 'menu', data: { menu: 'archive' } },
+        { text: '行业：榜单 · 对手 · 档期 · 新闻', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', action: 'menu', data: { menu: 'history' } }
       ] },
       { type: 'section', title: '存档与设置' },
@@ -563,17 +569,15 @@ function historyMenu(state: any) {
   return { title: '经营记录', blocks: [] };
 }
 
-function rankChange(book: any) {
-  if (!book.rank) return '未上榜';
-  if (!book.previousRank) return '新上榜';
-  const change = book.previousRank - book.rank;
-  return change > 0 ? '上升 ' + change + ' 名' : change < 0 ? '下降 ' + Math.abs(change) + ' 名' : '持平';
+function rankText(ranks: any) {
+  if (!ranks) return '首周结束后公布';
+  return core.TIERS.map((tier: any, level: number) => tier.name + ' ' + ranks[level]).join(' · ');
 }
 
 function exhibitionsMenu(state: any) {
-  const blocks: any[] = [{ type: 'text', text: '每年第 90、270 天举办展会，提前七天截止报名。完成体验版才能报名，作品体验决定与虚构工作室的比较结果。', muted: true }];
+  const blocks: any[] = [{ type: 'text', text: '城市独立游戏展每年第 90、270 天，全国游戏展第 150 天，国际游戏展第 300 天，都提前七天截止报名。完成体验版才能报名，名次决定换来的关注。', muted: true }];
   for (const entry of [...state.exhibitions].reverse()) {
-    blocks.push({ type: 'section', title: '第 ' + entry.day + ' 天 · 《' + entry.name + '》' });
+    blocks.push({ type: 'section', title: '第 ' + entry.day + ' 天 · ' + core.TIERS[entry.tier ?? 0].expo + ' · 《' + entry.name + '》' });
     if (!entry.result) blocks.push({ type: 'text', text: '已报名，等待展会。期间继续完善会影响名次。' });
     else {
       blocks.push({ type: 'note', icon: 'Megaphone', text: entry.result.media + '：第 ' + entry.result.rank + ' 名，获得 ' + number(entry.result.followers) + ' 人关注。' });
@@ -585,19 +589,73 @@ function exhibitionsMenu(state: any) {
   return { title: '展会与媒体', blocks };
 }
 
-function rankingsMenu(state: any) {
-  const blocks: any[] = [{ type: 'text', text: '按日销量比较，每周更新；首发销量按七日折算，首周标记为新品。竞争作品为虚构。年度评选在每年第 360 天举行。', muted: true }];
-  const newcomers = state.catalog.filter((book: any) => state.day - book.released < 7);
-  if (newcomers.length) blocks.push({ type: 'section', title: '首周新品' }, { type: 'lines', items: newcomers.map((book: any) => ['《' + book.name + '》', '第 ' + (book.rank || '—') + ' 名 · ' + rankChange(book)]) });
-  blocks.push({ type: 'section', title: '本期销量榜 · ' + state.rankings.length + ' 部作品' });
-  if (state.rankings.length) blocks.push({ type: 'lines', items: state.rankings.map((entry: any) => [entry.rank + '. ' + entry.name, number(entry.units) + ' 份/日' + (entry.studio ? '' : ' · 本社')]) });
-  else blocks.push({ type: 'text', text: '第一周结束后公布。' });
-  for (const award of [...state.awards].reverse().slice(0, 9)) {
-    blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
-    blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
-    blocks.push({ type: 'lines', items: award.ranking.slice(0, 5).map((entry: any, index: number) => [(index + 1) + '. ' + entry.name, entry.score.toFixed(1)]) });
+// The industry page: charts, rival studios, announced release dates, news and awards. It opens on the
+// level the company currently pays attention to; every level stays one tap away.
+function industryMenu(state: any, id?: string) {
+  const focus = state.focus || 0;
+  const [tab = 'board', kind = 'first', levelText] = String(id || '').split(':');
+  const level = levelText === undefined || levelText === '' ? focus : Number(levelText) || 0;
+  const route = (nextTab: string, nextKind = kind, nextLevel = level) => ({ menu: 'industry', id: nextTab + ':' + nextKind + ':' + nextLevel });
+  const blocks: any[] = [
+    { type: 'tabs', items: [['board', '榜单'], ['rivals', '对手'], ['schedule', '档期'], ['news', '新闻'], ['awards', '评选']].map(([key, text]) => ({ text, route: route(key), active: key === tab })) }
+  ];
+  const levelTabs = { type: 'tabs', items: core.TIERS.map((tier: any, index: number) => ({ text: tier.name + (index === focus ? ' · 关注' : ''), route: route(tab, kind, index), active: index === level })) };
+  const rivalChoice = (name: string, detail: string, studioId: string | null, own = false) => ({ text: name, detail, action: studioId ? 'menu' : 'none', data: studioId ? { menu: 'rival', id: studioId } : {}, tag: own ? '本社' : '' });
+  if (tab === 'board') {
+    blocks.push({ type: 'tabs', items: [['first', '首周榜'], ['total', '累计榜']].map(([key, text]) => ({ text, route: route('board', key), active: key === kind })) }, levelTabs);
+    blocks.push({ type: 'text', text: kind === 'first' ? '近一年发售作品的首周销量，名次在首周结束时定下。' : '历年作品的累计销量，每月结算。', muted: true });
+    const chart = core.chartOf(state, kind, level);
+    if (!chart.length) blocks.push({ type: 'text', text: '暂无作品。' });
+    else blocks.push({ type: 'choices', items: chart.map((entry: any) => rivalChoice(entry.rank + '. ' + entry.name, entry.studio + ' · ' + number(entry.units) + ' 份', entry.studioId, entry.own)) });
+  } else if (tab === 'rivals') {
+    const live = state.rivals.filter((studio: any) => studio.closed === null);
+    const order = [...live.filter((studio: any) => studio.tier === focus), ...live.filter((studio: any) => studio.tier !== focus)];
+    blocks.push({ type: 'text', text: '有档案的对手工作室，按当前关注层级在前。点开查看历年作品与交锋记录。', muted: true });
+    blocks.push({ type: 'choices', items: order.map((studio: any) => {
+      const profile = core.rivalProfile(state, studio.id);
+      const latest = profile?.works.find((work: any) => work.released <= state.day);
+      return rivalChoice(studio.name, core.TIERS[studio.tier].name + ' · 擅长' + core.TYPES[studio.type].name + ' · 势头' + profile?.trend + (latest ? '\n近作《' + latest.name + '》' : ''), studio.id);
+    }) });
+    const closed = state.rivals.filter((studio: any) => studio.closed !== null);
+    if (closed.length) blocks.push({ type: 'text', text: '已解散：' + closed.map((studio: any) => studio.name).join('、'), muted: true });
+  } else if (tab === 'schedule') {
+    const schedule = core.scheduleOf(state);
+    blocks.push({ type: 'text', text: '已公布的发售日。小作品通常不提前公布；同一周发售的作品会分流首发关注。', muted: true });
+    if (!schedule.length) blocks.push({ type: 'text', text: '近期没有公布的档期。' });
+    else blocks.push({ type: 'choices', items: schedule.map((item: any) => rivalChoice('第 ' + item.day + ' 天 · ' + item.name, item.own ? '本社承诺的发售日' : item.studio + ' · ' + core.TIERS[item.tier].name, item.studioId, item.own)) });
+  } else if (tab === 'news') {
+    const list = core.newsFor(state).slice(0, 30);
+    blocks.push({ type: 'text', text: '主要报道' + core.TIERS[focus].name + '层的动态，更高层只报头条。', muted: true });
+    if (!list.length) blocks.push({ type: 'text', text: '暂时没有新闻。' });
+    else blocks.push({ type: 'choices', items: list.map((item: any) => rivalChoice(item.title, '第 ' + item.day + ' 天' + (item.text ? ' · ' + item.text : ''), item.studio, item.own)) });
+  } else {
+    blocks.push(levelTabs);
+    const awards = [...state.awards].reverse().filter((award: any) => (award.tier ?? 1) === level).slice(0, 9);
+    if (!awards.length) blocks.push({ type: 'text', text: '年度评选在每年第 360 天举行。' });
+    for (const award of awards) {
+      blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
+      blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
+      blocks.push({ type: 'lines', items: award.ranking.slice(0, 5).map((entry: any, index: number) => [(index + 1) + '. ' + entry.name, Number(entry.score).toFixed(1)]) });
+    }
   }
-  return { title: '榜单与年度评选', blocks };
+  return { title: '行业', blocks };
+}
+
+function rivalMenu(state: any, id: string) {
+  const profile = core.rivalProfile(state, id);
+  if (!profile) return { title: '对手', blocks: [{ type: 'text', text: '没有找到这家工作室。' }] };
+  const { studio, works, ranks, clashes, trend } = profile;
+  const rankOf = (work: any) => ranks.find((item: any) => item.work.id === work.id)?.rank;
+  return {
+    title: studio.name,
+    blocks: [
+      { type: 'lines', items: [['层级', core.TIERS[studio.tier].name], ['擅长', core.TYPES[studio.type].name], ['势头', trend], ['状态', studio.closed !== null ? '第 ' + studio.closed + ' 天解散' : '经营中'], ['作品数', String(works.filter((work: any) => work.released <= state.day).length)]] },
+      { type: 'section', title: '作品' },
+      ...(works.length ? [{ type: 'lines', items: works.slice(0, 12).map((work: any) => ['《' + work.name + '》', work.released > state.day ? '定档第 ' + work.released + ' 天' : '第 ' + work.released + ' 天 · 首周 ' + number(work.firstWeek) + ' 份' + (rankOf(work) ? ' · ' + core.TIERS[work.tier].name + '第 ' + rankOf(work) + ' 名' : '')]) }] : [{ type: 'text', text: '还没有作品。' }]),
+      { type: 'section', title: '和本社的交锋' },
+      ...(clashes.length ? [{ type: 'lines', items: clashes.map((item: any) => ['《' + item.work.name + '》 vs 《' + item.book.name + '》', '首周 ' + number(item.work.firstWeek) + ' : ' + number(item.book.firstWeek || 0)]) }] : [{ type: 'text', text: '还没有同周发售过。', muted: true }])
+    ]
+  };
 }
 
 // Tutorial step for the current screen. `ack` explains an area and waits for "知道了"; `tap` introduces a
