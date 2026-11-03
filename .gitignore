@@ -12,3 +12,7 @@ creator/assets/resources/icons/
 creator/assets/resources/icons.meta
 creator/assets/resources/sounds/
 creator/assets/resources/sounds.meta
+
+# 本地旧版 HTML 预览产物，不属于 Creator 工程
+/dist/
+/web/
