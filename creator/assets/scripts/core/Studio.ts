@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.25';
+export const VERSION = '0.1.26';
 
 // Six quality dimensions, all scored the same way. Creativity and stability carry extra mechanics:
 // stability is testing, and its score is also the share of defects the testing has caught.

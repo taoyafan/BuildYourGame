@@ -204,7 +204,7 @@ function projectMenu(state: any, id?: string) {
       { text: '调整分工', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '招募试玩', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !project.checkpoints.demo },
       { text: '市场与推广', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !project.checkpoints.demo },
-      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '带着未完成的评分项发售' : '正式发售') : '体验版完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
+      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售（内容未做满）' : '正式发售') : '体验版完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
       { text: '再开一个项目', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
     ] },
     ...(project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null ? [
@@ -660,9 +660,9 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       // inside each page is a "知道了" explanation, because acting there costs money.
       () => project?.checkpoints.prototype && !seen.navTools ? { anchor: 'nav-tools', text: '原型成形了。点「工具」看看：只提速、不提高质量，画面、声音和测试工具也已开放。', tap: 'navTools' } : null,
       () => project?.checkpoints.demo && !seen.testing ? { anchor: 'nav-testing', text: '体验版完成：点「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
-      () => project?.test && !seen.promote && !project.promoted ? { anchor: 'nav-market', text: '试玩后再去「市场」投放推广。推广只换关注，不保证销量，首作先投一小笔。', tap: 'navMarket' } : null,
+      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投放推广。推广只换关注，不保证销量；首作可以先投一小笔，也可以不投。') : null,
       () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '待修缺陷是测试和玩家发现、还没修的问题。员工负责的工作做满后自动消耗工时修复；没测到的缺陷会在发售后被玩家发现。') : null,
-      () => complete && !project.released && !seen.launchBook ? { anchor: 'nav-project', text: '各评分项都做满了。点「项目」可以正式发售，也可以继续返工提高评分。', tap: 'navProject' } : null,
+      () => complete && !project.released ? explain('launchBook', 'nav-project', '各评分项都做满了。想发售时在「项目」里正式发售，也可以继续返工提高评分。') : null,
       () => !project && state.catalog.length === 1 ? introduce('review', 'nav-market', '首作已发售。点「市场」打开档案，看看复盘：哪里亏了，下一作怎么改。') : null
     ];
     for (const step of steps) { const result = step(); if (result) return result; }
@@ -688,7 +688,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
       if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
       // Several buttons live on this page; once the trial build exists the useful one is the release.
-      if (project.checkpoints.demo && !project.released) return { anchor: 'launch', text: '体验版已经能卖了：点这里正式发售，也可以继续返工提高评分。', tap: 'launchBook' };
+      if (project.checkpoints.demo && !project.released && !seen.launchBook) return { anchor: 'launch', text: '体验版已经能卖了：做好准备后点这里发售，也可以继续制作、返工提高评分。', ack: 'launchBook' };
       return null;
     case 'assign': {
       if (!seen.assign) return { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。做别的岗位的工作照样推进工期，只是评分更低、缺陷更多。', ack: 'assign' };
@@ -700,7 +700,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
     }
     case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：能发现大部分缺陷，也会指出这类玩家最在意的评分项。预算紧可以晚点再试。', ack: 'testing' };
     case 'market':
-      if (project && !project.promoted) return { anchor: 'promotions', text: '推广把钱换成关注：越多越贵，每多花一万元关注增长会变慢。首作预算有限，可以先投一小笔。', tap: 'promote' };
+      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '推广把钱换成关注：越多越贵，每多花一万元关注增长会变慢。首作预算有限，可以先投一小笔，也可以暂不推广。', ack: 'promotions' };
       return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
     default: return null;
   }
