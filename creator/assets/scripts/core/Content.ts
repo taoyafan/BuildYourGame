@@ -188,7 +188,7 @@ function projectMenu(state: any, id?: string) {
     ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
-    { type: 'lines', items: [['预计内容完成', etaText], ['已知缺陷', metrics.known + ' 项（不代表全部）'], ['关注', number(project.followers) + ' 人']] },
+    { type: 'lines', items: [['预计内容完成', etaText], ['待修缺陷', metrics.known + ' 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(core.projectOrder(state).length > 1 ? [
       { type: 'text', text: '当前第 ' + (core.projectOrder(state).findIndex((item: any) => item.id === project.id) + 1) + ' 优先；其余项目按顺序承担协调成本。' },
@@ -225,20 +225,19 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
   const row = forecast.rows.find((entry: any) => entry.key === dimKey);
-  // The works whose dimension maps to this one (stability is fed by discover + repair).
+  // The works whose dimension maps to this one (stability is fed by testing).
   const works = core.WORKS.filter(work => work.dimension === dimKey);
   const workKeys = works.map(work => work.key);
   const assignedPeople = state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
-  const fixed = project.defects.filter((defect: any) => defect.fixed).length;
   const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
-  const head: any[] = dimKey === 'stability'
-    ? [
-      { type: 'stats', tone: 'plain', items: [['当前估计', score.toFixed(0) + ' 分'], ['已知待修', metrics.known + ' 项'], ['累计已修', fixed + ' 项']] },
-      { type: 'lines', items: [['测试投入', forecast.discover + ' 人日/天'], ['修复投入', forecast.repair + ' 人日/天'], ['修完已知', metrics.known ? (row?.days === null ? '暂无人修' : '约 ' + row?.days + ' 天') : '暂无待修']] }
-    ]
-    : [{ type: 'stats', tone: 'plain', items: [['当前评分', score.toFixed(0) + ' 分'], ['剩余', row && row.remaining > 0.0001 ? row.remaining.toFixed(0) + ' 人日' : '已做满'], ['预计完成', finish]] }];
+  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', score.toFixed(0) + ' 分'], ['剩余', row && row.remaining > 0.0001 ? row.remaining.toFixed(0) + ' 人日' : '已做满'], ['预计完成', finish]] }];
+  if (dimKey === 'stability') {
+    const found = project.defects.filter((defect: any) => defect.found).length;
+    const fixed = project.defects.filter((defect: any) => defect.fixed).length;
+    head.push({ type: 'lines', items: [['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known], ['修复投入', forecast.repair + ' 人日/天']] });
+  }
   const blocks: any[] = [
     ...head,
     { type: 'text', text: dimension.desc + (weight >= 0.3 ? ' ' + core.TYPES[project.type].audience + '玩家很看重这一项。' : ' 这类玩家相对不挑剔这一项。'), muted: true },
@@ -257,7 +256,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
       };
     }),
     { type: 'buttons', items: [{ text: '查看整部作品的分工', action: 'menu', data: { menu: 'assign', id: projectId }, anchor: 'to-assign' }] },
-    { type: 'text', text: dimKey === 'stability' ? '稳定由未修缺陷决定；这里只反映已知问题，不保证已经找全。负责的内容完成后，员工自动用实际工时修复已知问题；发现与修复不能重复使用工时。' : '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。', muted: true }
+    { type: 'text', text: dimKey === 'stability' ? '评分 = 测试完成部分的发现能力 × 进度，也是测试能抓到的缺陷比例。没测到的缺陷会在发售后被玩家发现；抓到的缺陷由做完自己工作的人自动修复，修复不加分但要占工时。' : '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。', muted: true }
   ];
   return { title: dimension.name, blocks };
 }
@@ -267,7 +266,7 @@ function assignMenu(state: any, projectId: string) {
   if (!project) return { title: '分工', blocks: [{ type: 'text', text: '项目不存在。' }] };
   if (!state.staff.length) return { title: '分工', blocks: [{ type: 'text', text: '还没有同事，先去招聘。' }] };
   const blocks: any[] = [
-    { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的内容完成后自动消耗工时修复已知缺陷；没有已知问题时才继续返工或测试。', muted: false }
+    { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的工作做满后自动消耗工时修复测试抓到的缺陷；没有待修问题时才继续返工。', muted: false }
   ];
   state.staff.forEach((person: any, index: number) => {
     // Show what the person actually does in this project (explicit assignment, else their default
@@ -319,7 +318,7 @@ function testingMenu(state: any, id?: string) {
     blocks.push({ type: 'feedback', items: project.test.findings });
     blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   } else {
-    blocks.push({ type: 'text', text: '测试人员、付费试玩与发售后玩家都可能发现缺陷；能力更强的测试人员更容易找到遗漏，试玩还能提供不同样本的体验反馈。' });
+    blocks.push({ type: 'text', text: '试玩玩家给出体验评价，并会碰到一部分测试漏掉的缺陷；试玩不提高稳定分，稳定只靠测试工作。' });
   }
   if ((project.testLog || []).length > 1) {
     blocks.push({ type: 'section', title: '试玩历史' });
@@ -330,7 +329,7 @@ function testingMenu(state: any, id?: string) {
     { text: '30 人 · 0.80 万', action: 'test', data: { id: project.id, count: 30 }, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
     { text: '100 人 · 2.00 万', action: 'test', data: { id: project.id, count: 100 }, disabled: !offer.available || state.cash < 2 }
   ] });
-  blocks.push({ type: 'text', text: offer.available ? '30 人约发现六成未知缺陷，100 人约九成；人数越多，评分波动越小。' : offer.reason || '先处理当前决策。', muted: true });
+  blocks.push({ type: 'text', text: offer.available ? '30 人约碰到六成漏测缺陷，100 人约九成；人数越多，评分波动越小。' : offer.reason || '先处理当前决策。', muted: true });
   return { title: '试玩', blocks };
 }
 
@@ -644,7 +643,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => introduce('goal', 'goal', '欢迎！你是工作室的创始人。点这里看看公司目标，也看看现在的处境。'),
       () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项；首作选小型就够。', tap: 'navProject' } : null,
-      () => project && !seen.track ? explain('track', 'track', '五项内容各有进度，最慢的一项是瓶颈；稳定看缺陷，不是建设进度。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
+      () => project && !seen.track ? explain('track', 'track', '五项内容各有进度，最慢的一项是瓶颈；稳定是测试进度，没人测试就是 0 分。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
       // A hire is only useful against a short board, so the tip names the trade that covers the
@@ -662,7 +661,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => project?.checkpoints.prototype && !seen.navTools ? { anchor: 'nav-tools', text: '原型成形了。点「工具」看看：只提速、不提高质量，画面、声音和测试工具也已开放。', tap: 'navTools' } : null,
       () => project?.checkpoints.demo && !seen.testing ? { anchor: 'nav-testing', text: '体验版完成：点「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
       () => project?.test && !seen.promote && !project.promoted ? { anchor: 'nav-market', text: '试玩后再去「市场」投放推广。推广只换关注，不保证销量，首作先投一小笔。', tap: 'navMarket' } : null,
-      () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '已知缺陷只统计报告的问题，不保证找全。员工负责的内容完成后，自动消耗工时修复；发售后仍可重新派人维护。') : null,
+      () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '待修缺陷是测试和玩家发现、还没修的问题。员工负责的工作做满后自动消耗工时修复；没测到的缺陷会在发售后被玩家发现。') : null,
       () => complete && !project.released && !seen.launchBook ? { anchor: 'nav-project', text: '各评分项都做满了。点「项目」可以正式发售，也可以继续返工提高评分。', tap: 'navProject' } : null,
       () => !project && state.catalog.length === 1 ? introduce('review', 'nav-market', '首作已发售。点「市场」打开档案，看看复盘：哪里亏了，下一作怎么改。') : null
     ];

@@ -4,17 +4,17 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.24';
+export const VERSION = '0.1.25';
 
-// Six quality dimensions. Only creativity, depth and stability carry their own mechanics; fluidity,
-// picture and sound only weigh in through the audience's preferences.
+// Six quality dimensions, all scored the same way. Creativity and stability carry extra mechanics:
+// stability is testing, and its score is also the share of defects the testing has caught.
 export const DIMENSIONS: any[] = [
   { key: 'creativity', name: '创意', short: '创', desc: '作品的新意与辨识度，影响能否出圈。' },
   { key: 'depth', name: '深度', short: '深', desc: '系统与策略的掌握空间，影响长尾与后续扩展。' },
   { key: 'fluidity', name: '流畅', short: '流', desc: '操作响应、帧率与加载，操作型最看重。' },
   { key: 'picture', name: '画面', short: '画', desc: '美术与场景的呈现水准。' },
   { key: 'sound', name: '声音', short: '声', desc: '音乐与音效的呈现水准。' },
-  { key: 'stability', name: '稳定', short: '稳', desc: '缺陷与崩溃的程度，决定发售后口碑下滑。' }
+  { key: 'stability', name: '稳定', short: '稳', desc: '测试的覆盖与彻底程度；没测到的缺陷会在发售后被玩家发现，拖低口碑。' }
 ];
 export const DIM_KEYS = DIMENSIONS.map(dimension => dimension.key);
 export const CONTENT_KEYS = DIM_KEYS.filter(key => key !== 'stability');
@@ -217,7 +217,7 @@ function blankProject(id: string, plan: any, day: number) {
   const scale = SCALES[plan.scale];
   const work: any = {};
   const contentShare = sum(CONTENT_KEYS.map(key => type.share[key]));
-  for (const key of DIM_KEYS) work[key] = { total: key === 'stability' ? 0 : type.work * scale.work * type.share[key] / contentShare, done: 0, value: 0, batches: [] };
+  for (const key of DIM_KEYS) work[key] = { total: type.work * scale.work * type.share[key] / contentShare, done: 0, value: 0, batches: [] };
   return {
     id, name: plan.name, type: plan.type, scale: plan.scale, parentId: plan.parentId || null,
     work, progress: 0,
@@ -232,7 +232,7 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   return {
-    version: 6, rulesRevision: 1, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 2, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], tools: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -533,14 +533,14 @@ export function personActivity(state: any, project: any, person: any) {
   if (!belongsTo(state, project, person)) return '未参与本项目';
   if (person.leaveUntil > state.day) return '带薪休假中';
   const split = assignDay(state, project, person);
-  if (split.repair) return '自动修复已知缺陷（消耗工时）';
-  return Object.keys(split).map(key => key === 'discover' ? '测试排查' : `${DIMENSIONS.find(item => item.key === key)?.name}${remainingOf(project, key) > 0.0001 ? '制作' : '返工'}`).join('、');
+  if (split.repair) return '自动修复待修缺陷（消耗工时）';
+  return Object.keys(split).map(key => key === 'discover' ? (remainingOf(project, key) > 0.0001 ? '测试' : '复测') : `${DIMENSIONS.find(item => item.key === key)?.name}${remainingOf(project, key) > 0.0001 ? '制作' : '返工'}`).join('、');
 }
 
 function assignDay(state: any, project: any, person: any) {
   const usable = assignedWorks(project, person);
-  const contentPending = usable.some(key => key !== 'discover' && remainingOf(project, key) > 0.0001);
-  if (!contentPending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
+  const pending = usable.some(key => remainingOf(project, key) > 0.0001);
+  if (!pending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
   const remaining: any = {};
   const open: string[] = [];
   for (const key of usable) {
@@ -557,10 +557,7 @@ function assignDay(state: any, project: any, person: any) {
 }
 
 function remainingOf(project: any, workKey: string) {
-  if (workKey === 'discover') {
-    return Math.max(1, sum(CONTENT_KEYS.map(key => workOf(project, key).total)) * 0.12);
-  }
-  const work = workOf(project, workKey);
+  const work = workOf(project, WORKS.find(item => item.key === workKey)?.dimension || workKey);
   return Math.max(0, work.total - work.done);
 }
 
@@ -577,11 +574,8 @@ export function projectMetrics(project: any) {
     const work = workOf(project, key);
     dimensions[key] = round(clamp(dimensionScore(work), 0, 100));
   }
-  // Stability is judged by the defects the work left, not by a workload: a finished part with no defects
-  // reads as clean, and open defects pull it down. It is the only dimension that can rise without rework.
   const open = project.defects.filter((defect: any) => !defect.fixed).length;
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
-  dimensions.stability = round(clamp(100 - open * 3 / SCALES[project.scale].work, 0, 100));
   const progress = clamp(CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)), 0, 1);
   const weights = TYPES[project.type].weights;
   const overall = round(DIM_KEYS.reduce((total, key) => total + dimensions[key] * weights[key], 0));
@@ -595,9 +589,24 @@ export function projectMetrics(project: any) {
 
 export function visibleMetrics(project: any) {
   const metrics = projectMetrics(project);
-  metrics.dimensions.stability = round(clamp(100 - metrics.known * 3 / SCALES[project.scale].work, 0, 100));
-  metrics.overall = round(sum(DIM_KEYS.map(key => metrics.dimensions[key] * TYPES[project.type].weights[key])));
   return { ...metrics, defects: metrics.known };
+}
+
+// Testing catches the same share of defects as its stability score; the rest wait for the players.
+function syncFound(project: any) {
+  const caught = Math.round(project.defects.length * workScore(project, 'stability') / 100);
+  let found = project.defects.filter((defect: any) => defect.found).length;
+  for (const defect of project.defects) {
+    if (found >= caught) break;
+    if (defect.found) continue;
+    defect.found = true;
+    project.found += 1;
+    found += 1;
+  }
+}
+
+function workScore(project: any, key: string) {
+  return clamp(dimensionScore(workOf(project, key)), 0, 100);
 }
 
 // Where today's team would land if it finished the work: the finished part keeps its score, the
@@ -606,7 +615,7 @@ export function visibleMetrics(project: any) {
 export function expectedDimensions(state: any, project: any) {
   const out: any = {};
   for (const key of DIM_KEYS) {
-    if (key === 'stability') { out[key] = visibleMetrics(project).dimensions.stability; continue; }
+    const job = WORKS.find(item => item.dimension === key);
     const work = workOf(project, key);
     if (work.total <= 0) { out[key] = 0; continue; }
     const remaining = Math.max(0, work.total - work.done);
@@ -615,10 +624,10 @@ export function expectedDimensions(state: any, project: any) {
     for (const person of state.staff) {
       if (!belongsTo(state, project, person)) continue;
       const split = assignDay(state, project, person);
-      const on = split[key] || 0;
+      const on = split[job.key] || 0;
       if (!on) continue;
-      const output = on * speedOf(state, person, key) * conditionFactor(person, project);
-      weighted += able(person, key) * output;
+      const output = on * speedOf(state, person, job.key) * conditionFactor(person, project);
+      weighted += able(person, job.ability) * output;
       hands += output;
     }
     if (!hands || remaining <= 0.0001) { out[key] = dimensionScore(work); continue; }
@@ -648,14 +657,14 @@ export function dimensionPipeline(state: any, project: any) {
     const mood = conditionFactor(person, project);
     for (const [key, share] of Object.entries(split)) {
       const speed = speedOf(state, person, key) * factor * mood;
+      if (key === 'repair') { repair += speed * (share as number); continue; }
       if (key === 'discover') discover += speed * (share as number);
-      else if (key === 'repair') repair += speed * (share as number);
-      else rate[key] += speed * (share as number);
+      rate[WORKS.find(work => work.key === key).dimension] += speed * (share as number);
     }
   }
   const rows = DIM_KEYS.map(key => {
-    const remaining = key === 'stability' ? projectMetrics(project).known * 2 : Math.max(0, workOf(project, key).total - workOf(project, key).done);
-    const daily = key === 'stability' ? repair : rate[key];
+    const remaining = Math.max(0, workOf(project, key).total - workOf(project, key).done);
+    const daily = rate[key];
     // A finished dimension is done whether or not anyone is still on it; only unfinished ones can block.
     const days = remaining <= 0.0001 ? 0 : daily > 0.0001 ? Math.ceil(remaining / daily) : null;
     return { key, remaining: round(remaining), rate: round(daily), days };
@@ -950,15 +959,13 @@ function produceProject(state: any, project: any) {
         repair(state, project, amount, person);
         project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
         person.work = round(person.work + amount);
-      } else if (key === 'discover') {
-        discover(state, project, amount, person);
       } else {
         const quality = able(person, work.ability);
         const remaining = workOf(project, work.dimension).total - workOf(project, work.dimension).done;
         const used = Math.min(amount, Math.max(0, remaining));
         if (remaining > 0) {
           recordWork(project, person, work.dimension, used, quality);
-          addDefect(project, person, work.dimension, used * (100 - quality) / 100 * 0.1, state);
+          if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * 0.1, state);
         }
         const spare = amount - used;
         if (spare > 0) {
@@ -970,6 +977,7 @@ function produceProject(state: any, project: any) {
       }
     }
   }
+  syncFound(project);
   project.progress = projectMetrics(project).progress;
   if (!project.released) {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
@@ -984,22 +992,6 @@ function produceProject(state: any, project: any) {
       project.followers += Math.round(70 * mult);
     }
     if (project.progress >= 100) project.checkpoints.ready = true;
-  }
-}
-
-// Finding defects approaches a limit: the fewer remain, the harder the rest are to find. It never
-// confirms the work is clean.
-function discover(state: any, project: any, amount: number, person: any) {
-  const open = project.defects.filter((defect: any) => !defect.found);
-  const quality = able(person, 'discover');
-  project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
-  person.work = round(person.work + amount);
-  const ratio = project.defects.length > 0 ? open.length / project.defects.length : 0;
-  const chance = 1 - Math.exp(-amount * Math.pow(quality / 100, 2) * 0.12 * ratio);
-  for (const defect of open) {
-    if (random(state) >= chance) continue;
-    defect.found = true;
-    project.found += 1;
   }
 }
 
@@ -1105,10 +1097,10 @@ export function testDemo(state: any, projectId: string, count = 30) {
     sound: metrics.dimensions.sound < 45
       ? '声音分偏低：可以安排员工制作，也可以外包声音；交付后才改变评分，并非没有音频岗位就只能留空。'
       : metrics.dimensions.sound < 70 ? '声音够用但不出彩，音频能再提高沉浸感。' : '声音得到认可。',
-    stability: newlyFound
-      ? `本轮发现 ${newlyFound} 项缺陷，已知 ${target.found} 项；带缺陷发售会拖低口碑，尽量先修完。`
-      : metrics.known ? `没有发现新缺陷，但还有 ${metrics.known} 项已知缺陷没修，修完这一项会回升。`
-        : '本轮没有报告新问题，不代表已经找全；持续测试或再次试玩仍可能发现遗漏。'
+    stability: (newlyFound
+      ? `试玩玩家碰到 ${newlyFound} 项测试漏掉的缺陷，待修 ${metrics.known} 项。`
+      : metrics.known ? `没有碰到新缺陷，还有 ${metrics.known} 项待修。` : '本轮没有碰到新问题。')
+      + (metrics.dimensions.stability < 60 ? '测试还不够彻底：安排人继续测试，或让测试能力更强的人复测，没测到的缺陷会在发售后被玩家发现。' : '')
   };
   const findings = DIM_KEYS.map(key => {
     const dimension = DIMENSIONS.find(item => item.key === key);
@@ -1237,8 +1229,8 @@ export function launchChecklist(state: any, project: any) {
   return [
     { label: '计划内容完成', ok: metrics.unfinished.length === 0, required: false, text: metrics.unfinished.length ? `还差 ${metrics.unfinished.length} 维，提前发售评分会偏低` : `完成度 ${metrics.progress.toFixed(0)}%` },
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
-    { label: '已知缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : '暂无已报告问题，不代表找全' },
-    { label: '六维估计', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分，稳定只按已知问题估计` },
+    { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
+    { label: '六维估计', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
     { label: '关注人数', ok: project.followers >= 1500, text: `${Math.round(project.followers)} 人${project.followers >= 1500 ? '' : '，推广能扩大首发'}` }
   ];
 }
@@ -1751,7 +1743,7 @@ export function markSeen(state: any, id: string) {
 export function restoreStudio(saved: any) {
   const next = clone(saved);
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
-  if (next.rulesRevision !== 1) {
+  if ((next.rulesRevision || 0) < 1) {
     for (const project of next.projects) {
       const share = sum(CONTENT_KEYS.map(key => TYPES[project.type].share[key]));
       for (const key of CONTENT_KEYS) {
@@ -1790,6 +1782,21 @@ export function restoreStudio(saved: any) {
       next.operation = null;
     }
     next.rulesRevision = 1;
+  }
+  if (next.rulesRevision < 2) {
+    // Stability became a testing workload. Shipped titles keep the score they were judged by; work in
+    // progress starts its testing from zero.
+    for (const project of next.projects) {
+      const type = TYPES[project.type];
+      const total = type.work * SCALES[project.scale].work * type.share.stability / sum(CONTENT_KEYS.map(key => type.share[key]));
+      const open = project.defects.filter((defect: any) => !defect.fixed).length;
+      const kept = project.released ? clamp(100 - open * 3 / SCALES[project.scale].work, 0, 100) : 0;
+      project.work.stability = { total, done: kept > 0 ? total : 0, value: total * kept, batches: kept > 0 ? [{ amount: total, quality: kept }] : [] };
+      syncFound(project);
+      const book = next.catalog.find((item: any) => item.id === project.id);
+      if (book) book.metrics = projectMetrics(project);
+    }
+    next.rulesRevision = 2;
   }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;

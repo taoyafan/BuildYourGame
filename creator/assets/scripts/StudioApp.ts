@@ -584,7 +584,7 @@ export class StudioApp extends Component {
     const cells: any[] = [
       ['综合估计', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
-      ['已知缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
+      ['待修缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
     ];
     const cell = inner / 4;
@@ -1064,9 +1064,9 @@ export class StudioApp extends Component {
           const slow = item.key === block.bottleneck;
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
           this.text(row, dimension?.name || item.key, 12, 4, width - 150, 18, 13, colors.ink, true);
-          this.text(row, item.key === 'stability' ? '已知问题 · 点开查看' : item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          const note = item.key === 'stability' ? '内容完成后自动修复，不保证找全' : item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : '预计 ' + item.days + ' 天';
-          this.text(row, note, 12, 24, item.key === 'stability' ? width - 24 : width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
+          this.text(row, item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          const note = item.days === null ? (item.remaining > 0.0001 ? (item.key === 'stability' ? '未安排测试 · 漏掉的缺陷留给玩家' : '无人负责 · 点开分工') : '') : '预计 ' + item.days + ' 天';
+          this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
           if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           // Tap a row to open its detail page (score, who's on it, and a shortcut to assign).
