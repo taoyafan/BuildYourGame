@@ -20,6 +20,18 @@ const navigation = [
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
 ];
 const tierColors = ['#2f7d63', '#3b6ea5', '#d39a1e'];
+// One rarity ramp for tags and values: green → blue → red → gold.
+const toneColors: any = {
+  green: '#2f7d63', blue: '#3b6ea5', red: '#c8574f', gold: '#d39a1e', muted: '#76877d',
+  ability: '#2f7d63', personality: '#3b6ea5', boost: '#c8574f', rare: '#d39a1e', stress: '#8a6d68'
+};
+// Grouped buttons always carry an icon; this picks one from the action when the menu gives none.
+const actionIcons: any = {
+  menu: 'ChevronRight', test: 'FlaskConical', exhibition: 'Award', outsource: 'Music', recruit: 'UserPlus', hire: 'UserPlus',
+  leave: 'Moon', dismiss: 'UserMinus', outing: 'Plane', deadline: 'CalendarDays', launch: 'Rocket', review: 'ChartNoAxesCombined',
+  move: 'Building2', export: 'Download', import: 'Upload', 'restart-confirm': 'RotateCcw', promote: 'Megaphone', mentor: 'GraduationCap',
+  poach: 'Briefcase', sale: 'Coins', dlc: 'Gift', sequel: 'Sparkles'
+};
 
 @ccclass('StudioApp')
 export class StudioApp extends Component {
@@ -158,6 +170,8 @@ export class StudioApp extends Component {
   }
 
   update(delta: number) {
+    // Real time with the game open, for the founder's dream; not scaled by game speed.
+    if (this.state?.company) this.state.playSeconds = (this.state.playSeconds || 0) + Math.min(delta, 1);
     if (this.activeTouches.size || !this.playing || this.routes.length || this.inputRequest || this.state?.event || this.state?.over) return;
     this.elapsed += Math.min(delta, 0.25) * this.speed;
     let changed = false;
@@ -317,13 +331,17 @@ export class StudioApp extends Component {
   private button(parent: Node, title: string, x: number, y: number, width: number, height: number, callback: () => void, primary = false, disabled = false, icon?: string, anchor?: string) {
     const node = this.box(parent, title, x, y, width, height, disabled ? colors.pale : primary ? colors.green : colors.soft, 8);
     this.clickable(node, callback, !disabled);
-    // Icons are reserved for icon-only buttons (clock, speed). A titled button is words alone and
-    // centred: mixing a small glyph into a row of plain buttons was never worth the asymmetry.
+    // Grouped buttons all carry an icon so a row never mixes iconed and plain buttons; the icon sits
+    // before the centred title.
     if (icon && !title) this.navIcon(node, icon, (width - 20) / 2, (height - 20) / 2, 20, disabled ? colors.muted : primary ? '#ffffff' : colors.green);
     if (title) {
-      const label = this.text(node, title, 0, 0, width, height, 14, disabled ? colors.muted : primary ? colors.paper : colors.green, primary);
+      const iconSize = icon ? 16 : 0;
+      const textWidth = Math.min(width - 12 - iconSize, title.length * 14 + 4);
+      const start = (width - textWidth - (icon ? iconSize + 6 : 0)) / 2;
+      if (icon) this.navIcon(node, icon, Math.max(6, start), (height - iconSize) / 2, iconSize, disabled ? colors.muted : primary ? '#ffffff' : colors.green);
+      const label = this.text(node, title, icon ? Math.max(6, start) + iconSize + 6 : 0, 0, icon ? Math.min(width - Math.max(6, start) - iconSize - 10, textWidth) : width, height, 14, disabled ? colors.muted : primary ? colors.paper : colors.green, primary);
       label.enableWrapText = false;
-      label.horizontalAlign = HorizontalTextAlignment.CENTER;
+      label.horizontalAlign = icon ? HorizontalTextAlignment.LEFT : HorizontalTextAlignment.CENTER;
     }
     if (anchor) this.anchors.set(anchor, node);
     return node;
@@ -337,23 +355,96 @@ export class StudioApp extends Component {
     let cursor = 12;
     if (options.icon) this.image(node, 'icons/' + options.icon, 14, 14, 20, 20, options.disabled ? colors.muted : colors.green);
     const left = options.icon ? 44 : 14;
-    this.text(node, title, left, cursor, width - left - (options.tag ? 70 : 14), 22, 15, options.disabled ? colors.muted : colors.ink, true);
+    // A person card carries a small ability radar on the right; the text column makes room for it.
+    const side = options.radar ? 70 : 0;
+    this.text(node, title, left, cursor, width - left - side - (options.tag ? 70 : 14), 22, 15, options.disabled ? colors.muted : colors.ink, true);
     if (options.tag) {
-      const tag = this.box(node, 'Tag', width - 62, cursor + 1, 50, 20, options.tagColor || colors.gold, 10);
+      const tag = this.box(node, 'Tag', width - 62 - side, cursor + 1, 50, 20, options.tagColor || colors.gold, 10);
       this.text(tag, options.tag, 0, 0, 50, 20, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
     }
     cursor += 26;
     if (detail && options.compact) {
-      this.text(node, detail, left, cursor - 2, width - left - 14, 18, 12, colors.muted);
+      this.text(node, detail, left, cursor - 2, width - left - 14 - side, 18, 12, colors.muted);
       cursor += 20;
-    } else if (detail) cursor += this.paragraph(node, detail, cursor, true, left, width - left - 14, 12) - 4;
+    } else if (detail) cursor += this.paragraph(node, detail, cursor, true, left, width - left - 14 - side, 12) - 4;
+    if (options.chips?.length) cursor = this.chips(node, options.chips, left, cursor, width - left - 14 - side) + 4;
+    if (options.radar) cursor = Math.max(cursor, 74);
     const height = cursor + 8;
+    if (options.radar) this.miniRadar(node, width - side + 4, 8, 60, options.radar);
     node.getComponent(UITransform).setContentSize(width, height);
     const pen = new Pen(background);
     pen.rect(0, 0, width, height, options.highlight ? '#fff8e6' : colors.paper, 10);
     pen.frame(0, 0, width, height, options.highlight ? colors.gold : colors.line, options.highlight ? 2 : 1, 10);
     this.clickable(node, callback, !options.disabled);
     if (options.anchor) this.anchors.set(options.anchor, node);
+    return height;
+  }
+
+  // Coloured tag chips: ability green, personality blue, team boost red, rare gold, stress grey-red.
+  private chips(parent: Node, items: any[], x: number, y: number, width: number) {
+    let cursorX = x;
+    let cursorY = y;
+    for (const item of items) {
+      const chipWidth = item.name.length * 12 + 14;
+      if (cursorX + chipWidth > x + width && cursorX > x) { cursorX = x; cursorY += 22; }
+      const chip = this.box(parent, 'Chip', cursorX, cursorY, chipWidth, 18, toneColors[item.tone] || colors.green, 9);
+      this.text(chip, item.name, 0, 0, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      cursorX += chipWidth + 6;
+    }
+    return cursorY + 22;
+  }
+
+  // Six abilities as a radar, mapped onto the same axes as a project's six dimensions.
+  private abilityValues(abilities: any) {
+    const out: any = {};
+    for (const key of core.DIM_KEYS) out[key] = abilities[key === 'stability' ? 'discover' : key] || 0;
+    return out;
+  }
+
+  private miniRadar(parent: Node, x: number, y: number, size: number, abilities: any) {
+    const { pen } = this.canvasNode(parent, 'MiniRadar', x, y, size, size);
+    const values = this.abilityValues(abilities);
+    const center = size / 2;
+    const radius = size / 2 - 4;
+    const point = (index: number, value: number) => {
+      const angle = -Math.PI / 2 + index * Math.PI * 2 / 6;
+      return [center + Math.cos(angle) * radius * value / 100, center + Math.sin(angle) * radius * value / 100];
+    };
+    const ring = core.DIM_KEYS.map((_key: string, index: number) => point(index, 100));
+    pen.poly(([] as number[]).concat(...ring), colors.pale);
+    const shape = core.DIM_KEYS.map((key: string, index: number) => point(index, values[key]));
+    pen.poly(([] as number[]).concat(...shape), colors.green, 170);
+  }
+
+  // Monthly ability record as six lines, with ticks on the days something happened to the person.
+  private trace(parent: Node, y: number, trace: any[], history: any[]) {
+    const width = this.width - 40;
+    const height = 150;
+    const { node, pen } = this.canvasNode(parent, 'Trace', 0, y, width, height);
+    const left = 28;
+    const right = width - 8;
+    const top = 8;
+    const bottom = height - 40;
+    const lineColors = ['#c8574f', '#3b6ea5', '#2f7d63', '#d39a1e', '#9b6fb0', '#76877d'];
+    const first = trace[0].day;
+    const last = trace[trace.length - 1].day;
+    const xOf = (day: number) => left + (right - left) * (last > first ? (day - first) / (last - first) : 0);
+    const yOf = (value: number) => bottom - (bottom - top) * value / 100;
+    for (const value of [0, 50, 100]) {
+      pen.line(left, yOf(value), right, yOf(value), colors.line, 1);
+      this.text(node, String(value), 0, yOf(value) - 8, left - 4, 16, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    }
+    core.ABILITY_KEYS.forEach((key: string, index: number) => {
+      for (let step = 1; step < trace.length; step++) pen.line(xOf(trace[step - 1].day), yOf(trace[step - 1].a[key]), xOf(trace[step].day), yOf(trace[step].a[key]), lineColors[index], 1.6);
+    });
+    for (const item of history) if (item.day >= first && item.day <= last) pen.circle(xOf(item.day), bottom + 6, 2.5, colors.amber);
+    core.ABILITIES.forEach((ability: any, index: number) => {
+      const x = left + index * (right - left) / 6;
+      this.box(node, 'Key', x, bottom + 16, 10, 4, lineColors[index], 2);
+      this.text(node, ability.name, x + 12, bottom + 10, 40, 16, 10, colors.muted);
+    });
+    this.text(node, '第 ' + first + ' 天', left, height - 14, 80, 14, 9, colors.muted);
+    this.text(node, '第 ' + last + ' 天 · 橙点为档案事件', right - 160, height - 14, 160, 14, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     return height;
   }
 
@@ -443,17 +534,7 @@ export class StudioApp extends Component {
     const controlsRight = headerRight - (platform.mini ? 22 : 8);
     const controlsLeft = controlsRight - 4 * 40;
     const companyName = state.company || '日光工作室';
-    const nameRoom = controlsLeft - 32 - 50;
-    // Rough glyph width so the tier badge can sit right after the name without measuring the label.
-    const nameWidth = Math.min(nameRoom, Array.from(companyName).reduce((total: number, char: string) => total + (char.charCodeAt(0) > 255 ? 17 : 9.5), 0));
-    this.text(this.stage, companyName, 20, top, nameRoom, 24, 17, colors.ink, true);
-    if (state.company) {
-      const rating = core.ratingOf(state);
-      const badge = this.box(this.stage, 'TierBadge', 20 + nameWidth + 6, top + 3, 44, 19, tierColors[rating.tier], 9);
-      this.text(badge, core.TIERS[rating.tier].name + (rating.watch ? ' !' : ''), 0, 0, 44, 19, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
-      this.clickable(badge, () => this.openMenu('rating'));
-      this.anchors.set('tier', badge);
-    }
+    this.text(this.stage, companyName, 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
     this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
     [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
@@ -501,29 +582,14 @@ export class StudioApp extends Component {
     }
     const project = shown;
     // Fixed rows below and above the scene; the scene absorbs any shortage on short screens.
-    const shrink = Math.max(0, Math.min(80, (project ? 468 : 410) - (navY - contentTop - 10)));
+    // Content heights below the header: office, bulletin, project panel and the next-step card.
+    const shrink = Math.max(0, Math.min(70, (project ? 586 : 334) - (navY - contentTop - 10)));
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
-    let y = this.goalCard(body, 0) + 8;
-    const sceneTop = y;
-    y += this.office(body, y, 116 - Math.round(shrink / 2)) + 4;
-    y += this.bulletin(body, y) + 4;
-    const workTop = y;
+    let y = 0;
     const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
-    const workHeight = 96 - Math.round(shrink / 2);
-    const { node: work, pen } = this.canvasNode(body, 'Work', 0, y, inner, workHeight);
-    if (project) drawWork(pen, inner, workHeight, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
-    else if (state.catalog.length) drawWork(pen, inner, workHeight, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
-    else { pen.rect(0, 0, inner, workHeight, colors.pale, 6); this.text(work, '立项后，作品会在这里一点点成形', 0, 0, inner, workHeight, 13, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER; }
-    if (!project && state.catalog.length) {
-      const caption = '上一作《' + state.catalog[0].name + '》';
-      const chipWidth = Math.min(inner - 16, caption.length * 12 + 20);
-      const chip = this.box(work, 'Caption', 8, workHeight - 28, chipWidth, 22, colors.night, 11, 190);
-      this.text(chip, caption, 10, 0, chipWidth - 20, 22, 11, '#ffffff');
-    }
-    this.clickable(work, () => project ? this.openMenu('project', project.id) : this.openMenu(state.catalog.length ? 'finance' : 'new-project'));
-    this.anchors.set('work', work);
-    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, sceneTop, inner, workTop + workHeight - sceneTop));
-    y += workHeight + 10;
+    y += this.office(body, y, 190 - shrink, project, metrics) + 4;
+    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, 0, inner, y - 4));
+    y += this.bulletin(body, y) + 8;
     if (project?.released) y = this.patchPanel(body, y, project);
     else if (project) y = this.projectPanel(body, y, metrics);
     else {
@@ -536,53 +602,76 @@ export class StudioApp extends Component {
     this.showDeltas(cashLabel);
   }
 
-  private goalCard(body: Node, y: number) {
-    const goals = core.goalsOf(this.state);
-    const inner = this.width - 40;
-    const index = goals.steps.findIndex(step => step.key === goals.current.key);
-    const card = this.box(body, 'Goal', 0, y, inner, 34, '#fff8e6', 10);
-    this.image(card, 'icons/' + (index < 0 ? 'Trophy' : 'Target'), 10, 7, 20, 20, colors.amber);
-    const title = (index < 0 ? '挑战' : `目标 ${index + 1}/${goals.steps.length}`) + ' · ' + goals.current.title;
-    this.text(card, title, 38, 1, inner - 124, 17, 12, colors.ink, true);
-    this.text(card, '奖励：' + goals.current.reward, 38, 17, inner - 124, 15, 10, colors.amber);
-    goals.steps.forEach((step, dot) => this.box(card, 'Dot', inner - 12 - (goals.steps.length - dot) * 10, 14, 6, 6, step.done ? colors.amber : step.key === goals.current.key ? '#f0c56a' : colors.line, 3));
-    this.clickable(card, () => this.openMenu('goals'));
-    this.anchors.set('goal', card);
-    return 34;
-  }
-
-  private office(body: Node, y: number, height: number) {
+  // The office is the main screen's picture and its doors: the big screen shows the current work, the
+  // plaque the star rating, the whiteboard opens the calendar, the shelf the achievements and the desks
+  // the team. At most eight desks are drawn; the rest of the team is a "+N" chip.
+  private office(body: Node, y: number, height: number, project: any, metrics: any) {
     const state = this.state;
     const inner = this.width - 40;
     const { node, pen } = this.canvasNode(body, 'Office', 0, y, inner, height);
-    const wins = state.awards.filter((award: any) => award.own).length;
-    drawRoom(pen, inner, height, state.office, { awards: wins, books: state.catalog.length });
+    const rating = core.ratingOf(state);
+    const achievements = core.achievementsOf(state);
+    drawRoom(pen, inner, height, state.office, { cups: Math.min(3, Math.ceil(achievements.count / 6)), books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] });
+    this.clickable(node, () => this.openMenu('team'));
+    const props = roomProps(inner, height, state.office);
+    // Big screen with the work the main screen is looking at, or the last release.
+    const screen = props.screen;
+    const { node: monitor, pen: screenPen } = this.canvasNode(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
+    if (project) drawWork(screenPen, screen.w, screen.h, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
+    else if (state.catalog.length) drawWork(screenPen, screen.w, screen.h, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
+    else { screenPen.rect(0, 0, screen.w, screen.h, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
+    const caption = project ? '《' + project.name + '》' + (project.released ? ' 补丁' : '') : state.catalog.length ? '上一作《' + state.catalog[0].name + '》' : '';
+    if (caption) {
+      const tag = this.box(monitor, 'Caption', 4, screen.h - 16, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
+      this.text(tag, caption, 5, 0, Math.min(screen.w - 18, caption.length * 10), 14, 9, '#ffffff');
+    }
+    this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu(state.catalog.length ? 'finance' : 'new-project'));
+    this.anchors.set('work', monitor);
+    // Desks: people on the watched project first, then anyone resting or stressed, then by seniority.
     const working = this.playing && core.liveProjects(state).length > 0;
-    const layout = seatLayout(core.seats(state), inner, height);
+    const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
+    const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
+    const shown = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0)).slice(0, 8);
+    const layout = seatLayout(Math.min(8, core.seats(state)), inner, height);
     const desks = new Pen(this.box(node, 'Desks', 0, 0, inner, height).addComponent(Graphics));
     layout.forEach((seat, index) => {
-      const person = state.staff[index];
-      drawDesk(desks, seat.x, seat.y, seat.scale, !!person, person?.role, working);
+      const person = shown[index];
+      drawDesk(desks, seat.x, seat.y, seat.scale, !!person, person?.role, working && person && person.leaveUntil <= state.day);
       if (!person) return;
       const head = this.box(node, 'Head', seat.x, seat.y - 42 * seat.scale, 1, 1);
-      drawHead(new Pen(head.addComponent(Graphics)), seat.scale, person.role);
-      if (working) tween(head).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
+      const face = new Pen(head.addComponent(Graphics));
+      drawHead(face, seat.scale, person.role);
+      if (person.stressTags.length) face.circle(8 * seat.scale, -12 * seat.scale, 3, colors.danger);
+      if (working && person.leaveUntil <= state.day) tween(head).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
     });
-    const label = core.OFFICES[state.office].name + ' · ' + state.staff.length + '/' + core.seats(state) + ' 工位';
-    const chip = this.box(node, 'Room', 8, 8, label.length * 12 + 16, 22, '#ffffff', 11, 220);
-    this.text(chip, label, 8, 0, label.length * 12 + 4, 22, 11, colors.ink);
-    this.clickable(node, () => this.openMenu('team'));
-    // The whiteboard and the shelf are doors too: calendar and the company's record.
-    const props = roomProps(inner, height, state.office);
-    const hotspot = (name: string, rect: any, label: string, open: () => void) => {
-      const spot = this.box(node, name, rect.x, rect.y, rect.w, rect.h + 8);
-      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, rect.h - 4, 30, 12, colors.night, 6, 170);
-      this.text(tag, label, 0, 0, 30, 12, 9, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
+    // One chip in the bottom corner: room, seats, and how many people the picture leaves out.
+    const hidden = state.staff.length - shown.length;
+    const label = core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state) + (hidden > 0 ? ' · 另 ' + hidden + ' 人' : '');
+    const chipWidth = label.length * 10 + 14;
+    const chip = this.box(node, 'Room', inner - chipWidth - 6, height - 22, chipWidth, 18, colors.night, 9, 200);
+    this.text(chip, label, 7, 0, chipWidth - 14, 18, 10, '#ffffff');
+    this.clickable(chip, () => this.openMenu('team'));
+    const hotspot = (name: string, rect: any, text: string, open: () => void) => {
+      const spot = this.box(node, name, rect.x, rect.y, rect.w, rect.h);
+      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, rect.h - 13, 30, 12, colors.night, 6, 170);
+      this.text(tag, text, 0, 0, 30, 12, 9, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
       this.clickable(spot, open);
       this.anchors.set(name, spot);
+      return spot;
     };
     hotspot('board', props.board, '日历', () => this.openMenu('industry', 'schedule'));
-    hotspot('shelf', props.shelf, '履历', () => this.openMenu('finance'));
+    const shelf = hotspot('shelf', props.shelf, '成就', () => this.openMenu('achievements'));
+    // A new achievement makes the shelf glow until the achievement page is opened.
+    if (achievements.fresh > 0) {
+      const glow = this.box(shelf, 'Glow', 0, 0, props.shelf.w, props.shelf.h);
+      new Pen(glow.addComponent(Graphics)).frame(0, 0, props.shelf.w, props.shelf.h, colors.gold, 3, 4);
+      const opacity = glow.addComponent(UIOpacity);
+      tween(opacity).to(0.6, { opacity: 60 }).to(0.6, { opacity: 255 }).union().repeatForever().start();
+    }
+    const plaque = this.box(node, 'Plaque', props.plaque.x, props.plaque.y, props.plaque.w, props.plaque.h);
+    this.clickable(plaque, () => this.openMenu('rating'));
+    this.anchors.set('tier', plaque);
+    if (rating.watch) this.text(plaque, '!', props.plaque.w - 12, 0, 10, props.plaque.h, 12, colors.danger, true);
     return height;
   }
 
@@ -687,9 +776,9 @@ export class StudioApp extends Component {
   // Six-axis radar: the solid layer is the current score, the dashed one is where today's team would
   // land if it finished the work. The gap between them is what time can still buy. On the main screen
   // it takes the left part of the row and the stats sit beside it.
-  private radar(body: Node, y: number, metrics: any, type: string, project?: any, compact = 0) {
+  private radar(body: Node, y: number, metrics: any, type: string, project?: any, compact = 0, caption = true) {
     const inner = compact || this.width - 40;
-    const height = compact ? 164 : 184;
+    const height = compact ? 164 : caption ? 184 : 168;
     const { node, pen } = this.canvasNode(body, 'Radar', 0, y, inner, height);
     this.anchors.set('radar', node);
     const center = { x: inner / 2, y: 82 };
@@ -728,16 +817,17 @@ export class StudioApp extends Component {
       pen.line(solid[index].x, solid[index].y, next.x, next.y, colors.green, 2);
     }
     core.DIM_KEYS.forEach((key: string, index: number) => {
-      const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
+      // Ability radars label the sixth axis 发现, the ability behind stability.
+      const name = metrics.labels ? metrics.labels[index] : core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
       const score = Math.round(metrics.dimensions[key] || 0);
-      const label = this.text(node, name + '\n' + (key === 'stability' && metrics.untested ? '未测' : score + ' 分'), 0, 0, 56, 32, 11, colors.muted);
+      const label = this.text(node, name + '\n' + (key === 'stability' && metrics.untested ? '未测' : score + (metrics.labels ? '' : ' 分')), 0, 0, 56, 32, 11, metrics.labels ? toneColors[content.valueTone(score)] : colors.muted);
       label.horizontalAlign = HorizontalTextAlignment.CENTER;
       // setPosition uses engine coords (y up). Center the 32px label on the radial point.
       const spot = point(index, 120);
       label.node.setPosition(spot.x - 28, -spot.y + 16);
       if (project && !project.released) this.clickable(label.node, () => this.openMenu('dimension', project.id, false, key));
     });
-    if (!compact) this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
+    if (!compact && caption) this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
     return height;
   }
 
@@ -926,7 +1016,7 @@ export class StudioApp extends Component {
     core.SCALES.forEach((scale, index) => {
       const cell = (inner - 16) / 3;
       const open = core.scaleOpen(state, index);
-      this.button(body, scale.name, index * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index, !open, !open ? 'Lock' : undefined);
+      this.button(body, scale.name, index * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index, !open);
     });
     cursor += 54;
     if (!core.scaleOpen(state, 1) || !core.scaleOpen(state, 2)) cursor += this.paragraph(body, '中型：首作发售后开放；大型：搬进正式办公室后开放。', cursor, true);
@@ -971,9 +1061,9 @@ export class StudioApp extends Component {
       }
       case 'lines': {
         if (block.title) { this.text(parent, block.title, 0, y, width, 28, 16, colors.ink, true); y += 34; }
-        for (const [name, value] of block.items) {
+        for (const [name, value, tone] of block.items) {
           this.text(parent, name, 0, y, width * 0.48, 34, 13, colors.muted);
-          this.text(parent, value, width * 0.48, y, width * 0.52, 34, 13, colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          this.text(parent, value, width * 0.48, y, width * 0.52, 34, 13, tone ? toneColors[tone] || colors.ink : colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           this.box(parent, 'RowDivider', 0, y + 38, width, 1, colors.line);
           y += 44;
         }
@@ -1004,7 +1094,8 @@ export class StudioApp extends Component {
           const line = Math.floor(index / columns);
           const left = column * (cell + gap);
           const row = y + line * 56;
-          this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, item.icon, item.anchor);
+          const icon = item.icon || (item.action === 'priority' ? (String(item.text).includes('提高') ? 'ArrowUp' : 'ArrowDown') : actionIcons[item.action] || 'ChevronRight');
+          this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, icon, item.anchor);
           if (item.help) this.button(parent, '', left + cell - 38, row + 4, 38, 38, () => {
             this.helpKey = this.helpKey === item.helpKey ? '' : item.helpKey;
             this.render();
@@ -1041,7 +1132,7 @@ export class StudioApp extends Component {
       case 'tabs': {
         const columns = Math.min(3, block.items.length);
         const cell = (width - (columns - 1) * 6) / columns;
-        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked, item.locked ? 'Lock' : undefined));
+        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked));
         return y + Math.ceil(block.items.length / columns) * 44 + 6;
       }
       case 'card': {
@@ -1050,7 +1141,7 @@ export class StudioApp extends Component {
         y += 30;
         y += this.paragraph(parent, block.text, y, true, 0, width, 13);
         const button = block.button;
-        this.button(parent, button.text, 0, y, width, 44, () => this.dispatch(button.action, button.data), true, !!button.disabled, undefined, button.anchor);
+        this.button(parent, button.text, 0, y, width, 44, () => this.dispatch(button.action, button.data), true, !!button.disabled, button.icon || actionIcons[button.action] || 'ChevronRight', button.anchor);
         if (block.group) {
           // Consecutive cards of one group share an anchor spanning from the first card's top.
           const top = this.groupTops.get(block.group) ?? start;
@@ -1062,14 +1153,10 @@ export class StudioApp extends Component {
       case 'candidates': {
         const start = y;
         block.people.forEach((person: any, index: number) => {
-          const tags = [person.fame ? '行业名人' : '', ...person.tags.map((tag: any) => core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name)].filter(Boolean);
-          const home = (core.ROLES[person.role].home || []).filter((key: string) => core.WORK_KEYS.includes(key));
-          const homeAbilities = Array.from(new Set(home.map((key: string) => core.WORKS.find(work => work.key === key)?.ability).filter(Boolean)));
-          const bestAbility = core.ABILITY_KEYS.reduce((best: any, key: string) => person.abilities[key] > person.abilities[best] ? key : best, core.ABILITY_KEYS[0]);
-          const homeText = homeAbilities.map((key: string) => core.ABILITIES.find(ability => ability.key === key)?.name + ' ' + person.abilities[key]).join(' / ');
-          const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + person.abilities[bestAbility];
-          const detail = `速度 ${person.speed} · 月薪 ${content.money(person.wage)}\n本行：${homeText}\n最高：${bestText}\n${tags.join(' · ')}`;
-          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index }) + 10;
+          const bestAbility = core.primaryAbility(person);
+          const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + Math.round(person.abilities[bestAbility]);
+          const detail = `月薪 ${content.money(person.wage)} · 速度 ${person.speed}\n最强：${bestText} · 潜力${core.potentialBand(person)}`;
+          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: person.tags.map((tag: any) => core.tagInfo(tag)) }) + 10;
         });
         this.anchors.set('candidates', this.box(parent, 'CandidatesAnchor', 0, start, width, y - start - 10));
         return y;
@@ -1078,12 +1165,48 @@ export class StudioApp extends Component {
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
         for (const person of this.state.staff) {
           // Tags stay on the card: they are how the player ties a later slowdown to overtime.
-          const tags = [...person.stressTags.map((key: string) => core.STRESS_TAGS[key].name), ...person.tags.map((tag: any) => core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name)];
-          const detail = `速度 ${person.speed} · 月薪 ${content.money(person.wage)}${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${tags.length ? '\n' + tags.join(' · ') : ''}`;
+          const chips = [...(person.boost ? [core.tagInfo(person.boost)] : []), ...person.stressTags.map((key: string) => core.tagInfo(key)), ...person.tags.map((tag: any) => core.tagInfo(tag))];
+          const bestAbility = core.primaryAbility(person);
+          const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${person.mentor ? ' · 带教中' : ''}`;
           const stress = person.stressTags.length > 0;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { tag: person.stressTags.includes('leaving') ? '想走' : stress ? '疲惫' : '', tagColor: colors.amber }) + 10;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { tag: person.stressTags.includes('leaving') ? '想走' : stress ? '疲惫' : '', tagColor: colors.amber, radar: person.abilities, chips }) + 10;
         }
         return y;
+      case 'ability-radar': {
+        const values = this.abilityValues(block.abilities);
+        const labels = core.ABILITIES.map(ability => ability.name);
+        return y + this.radar(parent, y, { dimensions: values, labels }, '', undefined, 0, false) + 6;
+      }
+      case 'tags': {
+        y = this.chips(parent, block.items, 0, y, width) + 2;
+        for (const item of block.items) if (item.text) y += this.paragraph(parent, item.name + '：' + item.text, y, true, 0, width, 12) - 4;
+        return y + 6;
+      }
+      case 'trace': return y + this.trace(parent, y, block.trace, block.history) + 10;
+      case 'achievements':
+        for (const item of block.items) {
+          const done = item.day !== null;
+          const hidden = item.group === 'hidden' && !done;
+          const progress = !done && item.progress ? '\n进度 ' + Math.round(Math.min(item.progress[0], item.progress[1])) + ' / ' + item.progress[1] : '';
+          y += this.choice(parent, y, hidden ? '???' : item.title, hidden ? '隐藏成就，达成后揭晓。' : item.text + (item.reward ? '\n奖励：' + item.reward : '') + (done ? '\n第 ' + item.day + ' 天达成' : progress), () => undefined, { icon: done ? 'Trophy' : hidden ? 'CircleHelp' : 'Lock', tag: done ? '已达成' : '', tagColor: colors.gold, highlight: done && item.group === 'milestone' }) + 8;
+        }
+        return y + 4;
+      case 'dream': {
+        const start = y;
+        const node = this.box(parent, 'Dream', 0, y, width, 40);
+        let cursor = 18;
+        for (const line of block.lines) cursor += this.paragraph(node, line, cursor, false, 18, width - 36, 14, '#e8eefc') + 4;
+        const height = cursor + 12;
+        node.getComponent(UITransform).setContentSize(width, height);
+        const sky = this.box(parent, 'DreamSky', 0, start, width, height, '#141a33', 14);
+        sky.setSiblingIndex(node.getSiblingIndex());
+        const stars = new Pen(this.box(sky, 'Stars', 0, 0, width, height).addComponent(Graphics));
+        for (let index = 0; index < 26; index++) stars.circle((index * 97) % width, (index * 53) % height, 1 + (index % 3) * 0.6, '#fff6d0', 120 + (index % 4) * 30);
+        const opacity = node.addComponent(UIOpacity);
+        opacity.opacity = 0;
+        tween(opacity).to(1.6, { opacity: 255 }).start();
+        return y + height + 14;
+      }
       case 'focus':
         for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch('focus', { focus: item.key }), { tag: item.active ? '进行中' : '', tagColor: colors.green, highlight: item.active, disabled: item.disabled, anchor: item.anchor }) + 8;
         return y + 4;
@@ -1573,6 +1696,7 @@ export class StudioApp extends Component {
     if (critical) this.routes = [];
     if (menu === 'new-project') this.draft = { name: '', type: '', scale: 0 };
     if (menu === 'book') this.markReview(id);
+    if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
     this.routes.push({ menu, id, dim });
     this.render();
   }
@@ -1684,6 +1808,13 @@ export class StudioApp extends Component {
           this.watching = data.id;
           this.routes = [{ menu: 'project', id: data.id }, { menu: 'assign', id: data.id }];
           this.apply(next, '补丁已开工，请安排人手。');
+          break;
+        }
+        case 'mentor': this.apply(core.setMentor(this.state, data.id, data.mentor || null, data.ability), data.mentor ? '带教开始。' : '带教已结束。'); if (data.mentor) { this.routes.pop(); this.render(); } break;
+        case 'poach': {
+          const before = this.state.staff.length;
+          const next = core.poach(this.state, data.id, Number(data.bid));
+          this.apply(next, next.staff.length > before ? '挖角成功！' : '对方拒绝了。');
           break;
         }
         case 'patch-crew': this.apply(core.setPatchCrew(this.state, data.id, data.person, !!data.on)); break;

@@ -9,7 +9,8 @@ fs.mkdirSync(iconDirectory, { recursive: true });
 const names = [
   'Sun', 'Play', 'Pause', 'FolderKanban', 'Users', 'FlaskConical', 'ChartNoAxesCombined', 'Building2', 'ArrowLeft', 'X', 'ChevronRight',
   'Rocket', 'Target', 'Coins', 'Trophy', 'Lock', 'Check', 'Megaphone', 'Bug', 'Sparkles', 'UserPlus', 'Palette', 'TrendingUp', 'Gift', 'Star', 'CircleHelp',
-  'CalendarDays', 'Newspaper', 'Award', 'Hammer', 'ScrollText'
+  'CalendarDays', 'Newspaper', 'Award', 'Hammer', 'ScrollText',
+  'ArrowUp', 'ArrowDown', 'Download', 'Upload', 'RotateCcw', 'Plane', 'Moon', 'UserMinus', 'GraduationCap', 'Briefcase', 'Music'
 ];
 for (const name of names) {
   const icon = lucide[name] || lucide.icons?.[name];

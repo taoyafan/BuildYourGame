@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.29';
+export const VERSION = '0.1.30';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -129,6 +129,37 @@ export const STRESS_TAGS: any = {
   tired: { name: '疲惫', text: '能力与产出下降。' },
   leaving: { name: '想走', text: '继续施压就可能离开。' }
 };
+// Very rare traits that help the people around them rather than the holder.
+export const RARE_TAGS: any = {
+  taste: { name: '审美极佳', dimension: 'picture', text: '同项目里做画面的人，作品质量 +8。' },
+  muse: { name: '灵感源泉', dimension: 'creativity', text: '同项目里做创意的人，作品质量 +8。' },
+  following: { name: '自带粉丝', text: '参与的新作立项时自带一批关注。' }
+};
+// Team boosts come with time in the company. Each one helps everyone on the holder's project.
+export const BOOST_TAGS: any = {
+  unity: { name: '凝聚人心', from: 'social', text: '同项目全组速度 +8%。' },
+  gate: { name: '把关严格', from: 'careful', text: '同项目全组新增缺陷 -15%。' },
+  anchor: { name: '定海神针', from: 'iron', text: '同项目全组加班累积负面标签的概率 -30%。' },
+  coach: { name: '传帮带', from: 'growth', text: '同项目全组成长与带教 +30%。' }
+};
+// One lookup for every tag kind, with the rarity tone the UI colours it by (green → blue → red → gold).
+export function tagInfo(tag: any) {
+  const key = typeof tag === 'string' ? tag : tag?.key;
+  if (has(ABILITY_TAGS, key)) return { ...ABILITY_TAGS[key], tone: 'ability' };
+  if (has(PERSONALITY_TAGS, key)) return { ...PERSONALITY_TAGS[key], tone: 'personality' };
+  if (has(BOOST_TAGS, key)) return { ...BOOST_TAGS[key], tone: 'boost' };
+  if (has(RARE_TAGS, key)) return { ...RARE_TAGS[key], tone: 'rare' };
+  if (has(STRESS_TAGS, key)) return { ...STRESS_TAGS[key], tone: 'stress' };
+  return { name: String(key || ''), text: '', tone: 'ability' };
+}
+// Potential is the ceiling practice can reach; candidates only show a band, never the number.
+export function potentialBand(person: any) {
+  const value = person.potential ?? 80;
+  return value >= 90 ? '高' : value >= 78 ? '中' : '低';
+}
+export function primaryAbility(person: any) {
+  return ABILITY_KEYS.reduce((best, key) => person.abilities[key] > person.abilities[best] ? key : best, ABILITY_KEYS[0]);
+}
 
 export const CHANNELS: any = {
   friends: { name: '熟人介绍', fee: 0.2, text: '朋友和同学推荐，花费少，能力参差，工资较低。', skill: [25, 55], speed: [60, 95], wage: [1, 0.02, 0.01, 0.4] },
@@ -171,7 +202,6 @@ const TRIAL = 0.55;
 // Months of wage a layoff costs per year of service, plus one (N+1).
 const OVERTIME_BOOST = 1.45;
 const OVERTIME_DEFECT = 1.45;
-const GROWTH_PER_WORK = 0.02;
 const FAMILY_NAMES = ['林', '陈', '周', '许', '沈', '叶', '宋', '程', '顾', '苏', '陆', '江', '王', '李', '张', '刘', '赵', '吴', '郑', '孙', '马', '朱', '胡', '郭', '何', '高', '罗', '梁', '谢', '韩', '唐', '冯', '董', '萧', '曹', '袁', '邓', '傅', '彭', '曾', '温', '白', '秦', '姚', '崔', '段', '谭', '姜'];
 const GIVEN_NAMES = ['知夏', '明远', '可宁', '星河', '亦舟', '思齐', '安然', '予墨', '嘉禾', '清和', '一帆', '若溪', '子谦', '雨桐', '景行', '晨曦', '沐白', '少庭', '书瑶', '云起', '桓宁', '绍光', '慕初', '敬之', '听澜', '尚文', '江来', '观潮', '嘉树', '知意', '青竹', '南乔', '一诺', '闻舒', '立夏', '山月', '昭宁', '启航', '书翼', '时雨', '远山', '顺之', '守一', '晴川', '彦庭', '念安', '海宁', '修远', '云舒', '霜降', '春和', '鸿门', '北辰', '小满', '黎明', '文欣', '晨阳', '仲庭', '雨生', '林溪'];
 
@@ -217,14 +247,14 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 5, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 6, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
     office: 0, goals: { firstRelease: null, breakEven: null, moved: null, topTen: null, award: null, expanded: null }, fans: 0, feed: [],
     overtime: {}, lastOuting: null, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
-    eventNext: 60, eventSeen: {}, schedule: [], celebs: [],
+    eventNext: 60, eventSeen: {}, schedule: [], talents: [], flags: {}, achievements: {}, playSeconds: 0,
     rating: { score: 0, watch: false, promotedAt: 0, history: [] }
   };
   seedIndustry(state);
@@ -281,11 +311,12 @@ export function nameCompany(state: any, name: string, founder?: string) {
       const [low, high] = ROLES[next.founder].prior[key];
       abilities[key] = Math.round(low + random(next) * (high - low));
     }
-    next.staff.push({
-      id: `founder-${next.seed}`, name: '创始人', role: next.founder, abilities, speed: 95, tags: [], wage: 0,
-      hired: true, work: 0, growth: 0, level: 0, stressTags: [], stressChance: 0, overtimeDays: 0,
-      leaveUntil: 0, outingPity: 0, fame: false, rampup: 0, joined: next.day, home: homeWork({ role: next.founder, home: '' }), founder: true
-    });
+    next.staff.push(freshPerson(next, {
+      id: `founder-${next.seed}`, name: '创始人', role: next.founder, abilities, speed: 95, wage: 0,
+      hired: true, joined: next.day, home: homeWork({ role: next.founder, home: '' }), founder: true, snap: { ...abilities },
+      potential: Math.round(Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 8 + random(next) * 10))
+    }));
+    personNote(next, next.staff[0], `创办${value}`);
   }
   studioLog(next, '工作室成立', `${value}在一间小屋里起步，先做出第一款游戏。`);
   return next;
@@ -302,28 +333,40 @@ export function roleOpen(state: any, role: string) {
   return state.goals.firstRelease !== null;
 }
 
+// Candidates are specialists: one trade stands out (sometimes two), the rest stay low. Even the best
+// channel tops out well short of 100 — about where practice, mentoring and training can take a hire.
+const CHANNEL_PEAK: any = { friends: [42, 62], web: [54, 74], headhunt: [64, 82] };
+const POTENTIAL_ROOM: any = { friends: 32, web: 24, headhunt: 16 };
+const RARE_CHANCE: any = { friends: 0.02, web: 0.04, headhunt: 0.07 };
+
 function pickAbilities(state: any, role: string, channel: any) {
   const prior = ROLES[role].prior;
-  const source = CHANNELS[channel];
+  const [low, high] = CHANNEL_PEAK[channel];
   const abilities: any = {};
-  for (const key of ABILITY_KEYS) {
-    const [low, high] = prior[key];
-    const experience = (source.skill[0] + random(state) * (source.skill[1] - source.skill[0])) / 100;
-    abilities[key] = Math.round(clamp(low * 0.35 + high * experience * 0.75, 5, 95));
-  }
-  if (random(state) < 0.15) {
-    const outside = ABILITY_KEYS.filter(key => !ROLES[role].home.includes(key));
-    const key = outside[Math.floor(random(state) * outside.length)];
-    abilities[key] = Math.round(clamp(40 + source.skill[0] * 0.35 + random(state) * source.skill[1] * 0.45, 5, 95));
+  for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.55 + random(state) * 14, 5, 45));
+  const ranked = [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1]);
+  // A small share specialise outside their trade, like a programmer with an ear for music.
+  const primary = random(state) < 0.12 ? pick(state, ranked.slice(2)) : ranked[0];
+  const peak = Math.round(low + random(state) * (high - low));
+  abilities[primary] = peak;
+  if (random(state) < 0.4) {
+    const second = ranked.find(key => key !== primary);
+    abilities[second] = Math.max(abilities[second], Math.round(peak - 8 - random(state) * 10));
   }
   return abilities;
 }
 
-function rollTags(state: any, abilities: any) {
+function potentialFor(state: any, abilities: any, channel: string) {
+  const peak = Math.max(...ABILITY_KEYS.map(key => abilities[key]));
+  return Math.round(clamp(peak + 4 + random(state) * (POTENTIAL_ROOM[channel] || 20), peak + 4, 98));
+}
+
+function rollTags(state: any, abilities: any, channel = 'friends') {
   const count = random(state) < 0.45 ? 1 : random(state) < 0.7 ? 2 : 3;
-  let abilityKeys = Object.keys(ABILITY_TAGS).filter(key => ABILITY_KEYS.includes(ABILITY_TAGS[key].ability) && abilities[ABILITY_TAGS[key].ability] >= 60);
+  let abilityKeys = Object.keys(ABILITY_TAGS).filter(key => ABILITY_KEYS.includes(ABILITY_TAGS[key].ability) && abilities[ABILITY_TAGS[key].ability] >= 55);
   const personalityKeys = Object.keys(PERSONALITY_TAGS);
   const tags: any[] = [];
+  if (random(state) < (RARE_CHANCE[channel] || 0.02)) tags.push({ kind: 'rare', key: pick(state, Object.keys(RARE_TAGS)) });
   while (abilityKeys.length && tags.length < count && random(state) < 0.65) {
     const key = abilityKeys[Math.floor(random(state) * abilityKeys.length)];
     const ability = ABILITY_TAGS[key].ability;
@@ -337,10 +380,39 @@ function rollTags(state: any, abilities: any) {
   return tags;
 }
 
+// The monthly wage the market would ask today for someone this good, priced on their best ability.
+export function marketWage(person: any) {
+  const peak = Math.max(...ABILITY_KEYS.map(key => person.abilities[key]));
+  const source = CHANNELS[peak >= 64 ? 'headhunt' : peak >= 54 ? 'web' : 'friends'];
+  return round(source.wage[0] + peak * source.wage[1] + Math.max(0, person.speed - source.speed[0]) * source.wage[2] + source.wage[3] / 2);
+}
+
+// Notes on a person's own record: joining, releases, mentoring, labels and the events they lived through.
+function personNote(state: any, person: any, text: string) {
+  person.history = [...(person.history || []), { day: state.day, text }].slice(-40);
+}
+
+function freshPerson(state: any, base: any) {
+  return {
+    work: 0, growth: 0, level: 0, stressTags: [], stressChance: 0, overtimeDays: 0, leaveUntil: 0, fame: false, rampup: 0,
+    tags: [], boost: null, mentor: null, history: [], trace: [], ...base
+  };
+}
+
 // Each layoff leaves a mark: recruiting gets pricier as word gets around, up to double.
 export function recruitFee(state: any, channel: string) {
   const layoffs = state.notices.layout || 0;
   return round(CHANNELS[channel].fee * (1 + Math.min(1, layoffs * 0.25)));
+}
+
+// A star is a specialist at the top of one trade, not good at everything.
+function starFrom(state: any, role: string, talent: any = null) {
+  const prior = ROLES[role].prior;
+  const abilities: any = {};
+  for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.6 + random(state) * 16, 5, 55));
+  const primary = talent?.primary || [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1])[0];
+  abilities[primary] = Math.round(90 + random(state) * 7);
+  return talent ? { ...talent.abilities } : abilities;
 }
 
 export function publishRecruitment(state: any, role: string, channel = 'friends') {
@@ -355,12 +427,12 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   spend(next, recruitFee(next, channel), `${source.name}招聘${ROLES[role].name}`);
   const people = Array.from({ length: 3 }, (_, index) => {
     const abilities = pickAbilities(next, role, channel);
-    const tags = rollTags(next, abilities);
+    const tags = rollTags(next, abilities, channel);
     const speed = Math.round(source.speed[0] + random(next) * (source.speed[1] - source.speed[0]));
     const strongest = ABILITY_KEYS.reduce((best, item) => abilities[item] > abilities[best] ? item : best, ABILITY_KEYS[0]);
     const name = FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)];
     const wage = round(source.wage[0] + abilities[strongest] * source.wage[1] + (speed - source.speed[0]) * source.wage[2] + random(next) * source.wage[3]);
-    return { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, abilities, speed, tags, wage, hired: false, work: 0, growth: 0, level: 0, stressTags: [], stressChance: 0, overtimeDays: 0, leaveUntil: 0, outingPity: 0, fame: false, rampup: 0 };
+    return freshPerson(next, { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, abilities, speed, tags, wage, hired: false, potential: potentialFor(next, abilities, channel) });
   });
   // A name in the industry shows up only where word of mouth is worth something: a strong record draws
   // them out, they want their own people and they take a while to settle in.
@@ -368,15 +440,16 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   if (next.notices.fameNext && channel === 'headhunt' || fameChance > 0 && random(next) < fameChance) {
     if (channel === 'headhunt') delete next.notices.fameNext;
     const star = people[Math.floor(random(next) * people.length)];
-    // A name the player has already read about in the news is the one who turns up.
-    const known = (next.celebs || []).find((celeb: any) => !celeb.taken && celeb.role === role && next.day - celeb.day >= 20);
-    if (known) { known.taken = true; star.name = known.name; star.story = `第 ${known.day} 天新闻：${known.title}`; }
-    for (const key of ABILITY_KEYS) star.abilities[key] = Math.min(100, star.abilities[key] + 14 + Math.round(random(next) * 10));
-    star.speed = Math.min(140, star.speed + 16);
+    // A free agent the player has read about in the news is the one who turns up.
+    const talent = (next.talents || []).find((item: any) => item.status === 'free' && item.role === role);
+    star.abilities = starFrom(next, role, talent);
+    if (talent) { star.name = talent.name; star.talent = talent.id; star.story = `第 ${talent.since} 天新闻：${talent.title}`; }
+    star.potential = Math.max(...ABILITY_KEYS.map(item => star.abilities[item])) + 2;
+    star.speed = Math.min(140, star.speed + 12);
     star.wage = round(star.wage * 1.6);
     star.fame = true;
     star.rampup = 30;
-    star.tags = [...star.tags.slice(0, 2), { kind: 'personality', key: 'eager' }];
+    star.tags = [...star.tags.filter((tag: any) => tag.kind !== 'ability').slice(0, 2), { kind: 'personality', key: 'eager' }];
     // A name comes with terms: half of them insist on bringing an old crewmate, the rest only take
     // the genre they are known for.
     star.condition = random(next) < 0.5 ? 'crew' : 'type:' + Object.keys(TYPES)[Math.floor(random(next) * Object.keys(TYPES).length)];
@@ -401,6 +474,8 @@ export function hireReasons(state: any, id: string): string[] {
   const person: any = Object.values(state.candidates).flatMap((pool: any) => pool.people).find((item: any) => item.id === id);
   if (!person || person.hired) return [person?.hired ? '这位候选人已录用。' : '候选人已不可录用。'];
   const reasons: string[] = [];
+  const talent = person.talent ? (state.talents || []).find((item: any) => item.id === person.talent) : null;
+  if (talent && talent.status !== 'free') reasons.push(`${person.name}已经加入了${talent.studioName}。`);
   if (state.staff.length >= seats(state)) reasons.push(`${OFFICES[state.office].name}只有 ${seats(state)} 个工位，当前已满。`);
   if (state.cash - state.accrued < monthlyCost(state) + person.wage) reasons.push('扣除应付工资后，资金不够支付录用后的近期工资。');
   return reasons;
@@ -412,7 +487,11 @@ export function hire(state: any, id: string) {
   const next = studioAction(state);
   const person: any = Object.values(next.candidates).flatMap((pool: any) => pool.people).find((item: any) => item.id === id);
   person.hired = true;
-  next.staff.push({ ...person, joined: next.day, home: homeWork(person) });
+  const joined = { ...person, joined: next.day, home: homeWork(person), snap: { ...person.abilities } };
+  next.staff.push(joined);
+  personNote(next, joined, `入职，月薪 ${person.wage.toFixed(2)} 万`);
+  const talent = person.talent ? (next.talents || []).find((item: any) => item.id === person.talent) : null;
+  if (talent) talent.status = 'hired';
   studioLog(next, `${person.name} 加入`, `${ROLES[person.role].name}，月薪 ${person.wage.toFixed(2)} 万。`);
   if (person.fame) news(next, next.focus || 0, true, `${person.name}加入${next.company}`, person.story ? `此前的动向：${person.story}` : '业内知名开发者换了新东家。', null, true);
   if (person.story) announce(next, { kind: 'record', title: `${person.name}加入了`, text: '曾在新闻里见过的名字，现在是你的同事', amount: 0 });
@@ -424,13 +503,12 @@ export function hire(state: any, id: string) {
       const [low, high] = ROLES[role].prior[key];
       abilities[key] = Math.round((low + high) / 2 + (random(next) - 0.5) * 20);
     }
-    const mate = {
+    const mate = freshPerson(next, {
       id: `crew-${next.seed}-${next.staff.length}`,
       name: FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)],
-      role, abilities, speed: 95, tags: [], wage: round(1.4 + random(next)), hired: true,
-      work: 0, growth: 0, level: 0, stressTags: [], stressChance: 0, overtimeDays: 0,
-      leaveUntil: 0, outingPity: 0, fame: false, rampup: 0, joined: next.day, home: homeWork({ role, home: '' })
-    };
+      role, abilities, speed: 95, wage: round(1.4 + random(next)), hired: true, joined: next.day, home: homeWork({ role, home: '' }),
+      potential: Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 10)
+    });
     next.staff.push(mate);
     studioLog(next, `${mate.name} 一同入职`, `${person.name}的旧部，${ROLES[role].name}，月薪 ${mate.wage.toFixed(2)} 万。`);
   }
@@ -449,10 +527,12 @@ export function dismiss(state: any, id: string) {
   next.cash = round(next.cash - severance);
   next.ledger.expense = round(next.ledger.expense + severance);
   next.staff = next.staff.filter((item: any) => item.id !== id);
-  // People who stay see it: the layoff lowers hiring appeal and leaves a mark on morale.
+  // People who stay see it: the layoff lowers hiring appeal and leaves a mark on morale, more so when
+  // the person held the team together.
   next.notices.layout = (next.notices.layout || 0) + 1;
+  departed(next, person);
   for (const other of next.staff) {
-    if (!other.stressTags.includes('tired') && random(next) < 0.35) other.stressTags.push('tired');
+    if (!other.stressTags.includes('tired') && random(next) < (person.boost ? 0.6 : 0.35)) other.stressTags.push('tired');
   }
   if (next.event?.person === id) next.event = null;
   studioLog(next, `${person.name} 被裁`, `支付 N+1 遣散费 ${severance.toFixed(2)} 万，在职同事仍留有心结。`);
@@ -467,6 +547,60 @@ function able(person: any, ability: string) {
   return person.abilities[ability] * penalty;
 }
 
+// Whoever leaves takes their mentoring and overtime with them.
+function departed(state: any, person: any) {
+  delete state.overtime[person.id];
+  for (const other of state.staff) if (other.mentor?.by === person.id) other.mentor = null;
+}
+
+export function projectOf(state: any, person: any) {
+  return state.projects.find((project: any) => (!project.released || project.patch) && belongsTo(state, project, person)) || null;
+}
+
+// A mentoring pair only counts while both sit on the same live project.
+export function mentorActive(state: any, person: any) {
+  if (!person?.mentor) return null;
+  const mentor = state.staff.find((item: any) => item.id === person.mentor.by);
+  if (!mentor) return null;
+  const project = projectOf(state, person);
+  if (!project || projectOf(state, mentor)?.id !== project.id) return null;
+  return { mentor, project, ability: person.mentor.ability };
+}
+
+// The team boosts working on a project: one per kind, at most two kinds, none from stressed holders.
+export function projectBoosts(state: any, project: any) {
+  const keys: string[] = [];
+  for (const person of state.staff) {
+    if (!person.boost || person.stressTags.length || !belongsTo(state, project, person)) continue;
+    if (!keys.includes(person.boost)) keys.push(person.boost);
+  }
+  return keys.slice(0, 2);
+}
+
+export const MENTOR_SLOW = 0.7;
+export const MENTEE_SLOW = 0.8;
+const PRACTICE = 0.1;
+
+// Practice raises only the ability the work used, slowing as it nears the person's potential.
+function practice(person: any, ability: string, amount: number, bonus = 1) {
+  const value = person.abilities[ability];
+  const cap = person.potential ?? 100;
+  if (amount <= 0 || value >= cap) return;
+  const rate = PRACTICE * bonus * (person.tags.some((tag: any) => tag.key === 'growth') ? 1.5 : 1);
+  person.abilities[ability] = round(Math.min(cap, value + amount * rate * clamp((cap - value) / 30, 0.1, 1)));
+}
+
+// Daily mentoring gain: towards the mentor's level, half speed above the mentee's own potential.
+export function mentorGain(state: any, person: any) {
+  const pair = mentorActive(state, person);
+  if (!pair) return 0;
+  const target = pair.mentor.abilities[pair.ability];
+  const value = person.abilities[pair.ability];
+  if (value >= target - 1) return 0;
+  const coach = projectBoosts(state, pair.project).includes('coach') ? 1.3 : 1;
+  return round(clamp((target - value) * 0.01, 0.03, 0.4) * (value >= (person.potential ?? 100) ? 0.5 : 1) * coach * 1000) / 1000;
+}
+
 function speedOf(state: any, person: any, workKey: string) {
   if ((person.leaveUntil || 0) > state.day) return 0;
   let value = person.speed / 100;
@@ -477,6 +611,8 @@ function speedOf(state: any, person: any, workKey: string) {
   if (person.stressTags.includes('leaving')) value *= 0.7;
   // An industry name needs time to fit in with the existing team.
   if (person.fame && state.day - (person.joined || 0) < 30) value *= 0.8;
+  if (person.mentor && mentorActive(state, person)) value *= MENTEE_SLOW;
+  if (state.staff.some((other: any) => other.mentor?.by === person.id && mentorActive(state, other))) value *= MENTOR_SLOW;
   return value;
 }
 
@@ -730,6 +866,7 @@ export function setOvertime(state: any, id: string, enabled: boolean) {
   if (typeof enabled !== 'boolean') throw new Error('加班安排无效。');
   const person = next.staff.find((item: any) => item.id === id);
   if (!person) throw new Error('员工不存在。');
+  if (enabled && person.noOvertime) throw new Error('他答应过你，不再加班了。');
   if (enabled) next.overtime[id] = true;
   else delete next.overtime[id];
   studioLog(next, `${person.name}${enabled ? '开始加班' : '结束加班'}`, enabled ? '产出 +45%，缺陷更多，并会累积负面标签。' : '恢复正常工作。');
@@ -739,6 +876,68 @@ export function setOvertime(state: any, id: string, enabled: boolean) {
 export function setSound(state: any, enabled: boolean) {
   if (typeof enabled !== 'boolean') throw new Error('音效设置无效。');
   return { ...state, sound: enabled };
+}
+
+// Mentoring: a stronger colleague on the same project brings one ability of a weaker one up towards
+// their own level. Both work slower while it lasts; it ends by itself when the gap closes.
+export function mentorOptions(state: any, person: any) {
+  const project = projectOf(state, person);
+  return ABILITY_KEYS.map(ability => ({
+    ability,
+    mentors: state.staff.filter((other: any) => other.id !== person.id && other.abilities[ability] >= person.abilities[ability] + 6 && project && projectOf(state, other)?.id === project.id)
+      .sort((left: any, right: any) => right.abilities[ability] - left.abilities[ability])
+  }));
+}
+
+export function setMentor(state: any, personId: string, mentorId: string | null, ability?: string) {
+  const next = studioAction(state);
+  const person = next.staff.find((item: any) => item.id === personId);
+  if (!person) throw new Error('员工不存在。');
+  if (!mentorId) {
+    if (person.mentor) personNote(next, person, '结束带教');
+    person.mentor = null;
+    studioLog(next, `${person.name} 结束带教`, '两人恢复原来的产出。');
+    return next;
+  }
+  const mentor = next.staff.find((item: any) => item.id === mentorId);
+  if (!mentor || !ability || !ABILITY_KEYS.includes(ability)) throw new Error('带教安排无效。');
+  if (mentor.abilities[ability] < person.abilities[ability] + 6) throw new Error('带人的一方需要在这一项明显更强。');
+  const project = projectOf(next, person);
+  if (!project || projectOf(next, mentor)?.id !== project.id) throw new Error('两人需要在同一个项目里。');
+  person.mentor = { by: mentor.id, ability, since: next.day };
+  const name = ABILITIES.find(item => item.key === ability)?.name;
+  personNote(next, person, `由${mentor.name}带教${name}`);
+  personNote(next, mentor, `开始带${person.name}的${name}`);
+  studioLog(next, `${mentor.name} 带 ${person.name}`, `${name}：${Math.round(person.abilities[ability])} → 目标 ${Math.round(mentor.abilities[ability])}。带人一方产出 ×${MENTOR_SLOW}，被带一方 ×${MENTEE_SLOW}。`);
+  return next;
+}
+
+// Daily people upkeep: mentoring gains, the monthly ability trace and team-boost rolls.
+function staffDay(state: any) {
+  for (const person of state.staff) {
+    const gain = mentorGain(state, person);
+    if (gain > 0) {
+      const key = person.mentor.ability;
+      person.abilities[key] = round(Math.min(100, person.abilities[key] + gain));
+    } else if (person.mentor && mentorActive(state, person)) {
+      const mentor = state.staff.find((item: any) => item.id === person.mentor.by);
+      const name = ABILITIES.find(item => item.key === person.mentor.ability)?.name;
+      personNote(state, person, `出师：${name}追上了${mentor.name}`);
+      announce(state, { kind: 'record', title: `${person.name} 出师了`, text: `${name}追上了${mentor.name}`, amount: 0 });
+      state.flags = { ...(state.flags || {}), mentored: state.day };
+      person.mentor = null;
+    }
+    if (state.day % 30 === 0) {
+      person.trace = [...(person.trace || []), { day: state.day, a: { ...person.abilities } }].slice(-48);
+      const tenure = state.day - (person.joined || 0);
+      if (!person.boost && tenure >= 90 && random(state) < clamp((tenure - 90) / 360 * 0.06, 0, 0.1)) {
+        const leaning = Object.keys(BOOST_TAGS).find(key => person.tags.some((tag: any) => tag.key === BOOST_TAGS[key].from));
+        person.boost = leaning && random(state) < 0.6 ? leaning : pick(state, Object.keys(BOOST_TAGS));
+        personNote(state, person, `获得团队增益「${BOOST_TAGS[person.boost].name}」`);
+        announce(state, { kind: 'record', title: `${person.name}：「${BOOST_TAGS[person.boost].name}」`, text: BOOST_TAGS[person.boost].text, amount: 0 });
+      }
+    }
+  }
 }
 
 export function takeLeave(state: any, id: string) {
@@ -755,23 +954,15 @@ export function takeLeave(state: any, id: string) {
   return next;
 }
 
-// Team building takes working days and pays wages anyway, and trades that for clearing a stress label.
-// No cap on how often it runs, but each run in quick succession helps less: the chance falls with recent
-// use and recovers when it has been a while. A pity counter guarantees a result within a few runs, and
-// both the chance and the counter are shown so the player can plan without knowing this run's outcome.
-export const OUTING_PITY = 4;
-
+// Team building takes working days and pays wages anyway. Each person has a shown chance of a lasting
+// growth that also clears a stress label; the chance falls when outings come back to back and
+// recovers when it has been a while.
 export function outingChance(state: any, person: any, days = 2) {
   const length = [1, 2, 3].includes(days) ? days : 2;
   const since = state.lastOuting === null || state.lastOuting === undefined ? 99 : state.day - state.lastOuting;
-  // Back-to-back runs decay to a floor; a gap restores the base chance.
   const decay = clamp(since / 30, 0, 1);
   const social = person.tags.some((tag: any) => tag.key === 'social') ? 0.12 : 0;
   return clamp(0.2 + (length - 1) * 0.18 + social + decay * 0.25, 0.08, 0.85);
-}
-
-export function outingPity(state: any, person: any) {
-  return person.outingPity || 0;
 }
 
 export function teamOuting(state: any, days = 2) {
@@ -781,33 +972,29 @@ export function teamOuting(state: any, days = 2) {
   spend(next, round(next.staff.length * 0.4 * length), '团队团建');
   let cleared = 0;
   let gained = 0;
-  const pity = OUTING_PITY;
   for (const person of next.staff) {
     person.leaveUntil = Math.max(person.leaveUntil, next.day + length);
     delete next.overtime[person.id];
-    const chance = outingChance(next, person, length);
-    person.outingPity = (person.outingPity || 0) + 1;
-    // The counter guarantees a result by the last run: planning is possible, this run still is not.
-    if (person.outingPity >= pity || random(next) < chance) {
-      if (person.stressTags.length) { person.stressTags = person.stressTags.slice(1); cleared += 1; }
-      const key = ABILITY_KEYS[Math.floor(random(next) * ABILITY_KEYS.length)];
-      const before = person.abilities[key];
-      person.abilities[key] = round(Math.min(100, person.abilities[key] + length * 0.5));
-      studioLog(next, `${person.name} 团建成长`, `${ABILITIES.find(item => item.key === key)?.name} ${before} → ${person.abilities[key]}，永久保留。`);
-      const available = Object.keys(PERSONALITY_TAGS).filter(tag => !person.tags.some((item: any) => item.key === tag));
-      if (available.length && random(next) < 0.2 * length) {
-        const tag = available[Math.floor(random(next) * available.length)];
-        person.tags.push({ kind: 'personality', key: tag });
-        studioLog(next, `${person.name} 觉醒「${PERSONALITY_TAGS[tag].name}」`, PERSONALITY_TAGS[tag].text);
-      }
-      person.stressChance *= 0.5;
-      person.overtimeDays = Math.floor(person.overtimeDays / 2);
-      person.outingPity = 0;
-      gained += 1;
+    if (random(next) >= outingChance(next, person, length)) continue;
+    if (person.stressTags.length) { person.stressTags = person.stressTags.slice(1); cleared += 1; }
+    const key = ABILITY_KEYS[Math.floor(random(next) * ABILITY_KEYS.length)];
+    const before = person.abilities[key];
+    person.abilities[key] = round(Math.min(100, person.abilities[key] + length * 0.5));
+    personNote(next, person, `团建：${ABILITIES.find(item => item.key === key)?.name} +${length * 0.5}`);
+    const available = Object.keys(PERSONALITY_TAGS).filter(tag => !person.tags.some((item: any) => item.key === tag));
+    if (available.length && random(next) < 0.2 * length) {
+      const tag = available[Math.floor(random(next) * available.length)];
+      person.tags.push({ kind: 'personality', key: tag });
+      personNote(next, person, `团建中觉醒「${PERSONALITY_TAGS[tag].name}」`);
+      studioLog(next, `${person.name} 觉醒「${PERSONALITY_TAGS[tag].name}」`, PERSONALITY_TAGS[tag].text);
     }
+    studioLog(next, `${person.name} 团建有收获`, `${ABILITIES.find(item => item.key === key)?.name} ${before} → ${person.abilities[key]}。`);
+    person.stressChance *= 0.5;
+    person.overtimeDays = Math.floor(person.overtimeDays / 2);
+    gained += 1;
   }
   next.lastOuting = next.day;
-  studioLog(next, '团队团建', `占用 ${length} 天，${gained} 人获得长期能力成长，清除 ${cleared} 个负面标签；性格觉醒会单独记录。`);
+  studioLog(next, '团队团建', `停工 ${length} 天，${gained} 人有收获，清掉 ${cleared} 个负面标签。`);
   return next;
 }
 
@@ -828,6 +1015,7 @@ export function startProject(state: any, plan: any, priority = -1) {
   // Known names bring their own audience to whatever they work on.
   const stars = next.staff.filter((person: any) => person.fame).length;
   if (stars) project.followers += stars * 260;
+  project.followers += next.staff.filter((person: any) => person.tags.some((tag: any) => tag.key === 'following')).length * 200;
   if (original) project.followers += Math.round(original.followers * 0.3 + original.units * 0.1);
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
@@ -978,6 +1166,7 @@ function finishPatch(state: any, project: any) {
   }
   project.patch = null;
   project.assignments = {};
+  state.flags = { ...(state.flags || {}), patched: state.day };
   const text = `修复 ${progress.fixed}/${progress.targets} 项${rework ? `，返工${rework}` : ''}，综合 ${record.overallBefore.toFixed(0)} → ${metrics.overall.toFixed(0)}`;
   announce(state, { kind: 'record', title: `《${project.name}》补丁上线`, text, amount: 0 });
   news(state, state.focus || 0, false, `《${project.name}》发布补丁`, text + '。', null, true);
@@ -1056,9 +1245,16 @@ export function projectOrder(state: any) {
   return state.projects.filter((project: any) => !project.released || project.patch).sort((left: any, right: any) => (left.priority || 0) - (right.priority || 0));
 }
 
+// Also carries the 凝聚人心 boost, so every forecast and every day use the same project speed.
 function priorityFactor(state: any, project: any) {
   const rank = projectOrder(state).findIndex((item: any) => item.id === project.id);
-  return rank <= 0 ? 1 : Math.pow(0.85, rank);
+  const unity = projectBoosts(state, project).includes('unity') ? 1.08 : 1;
+  return (rank <= 0 ? 1 : Math.pow(0.85, rank)) * unity;
+}
+
+// Rare tags that lift everyone working on one dimension of the holder's project.
+function rareBonus(state: any, project: any, dimension: string) {
+  return state.staff.some((person: any) => person.tags.some((tag: any) => RARE_TAGS[tag.key]?.dimension === dimension) && belongsTo(state, project, person)) ? 8 : 0;
 }
 
 // A running patch: crew members fix its target defects first, then do its rework, then it ships.
@@ -1074,7 +1270,9 @@ function producePatch(state: any, project: any) {
     amount = repair(state, project, amount, person, patch.targets);
     if (amount > 0 && patch.rework && patch.reworkDone < patch.reworkTotal) {
       const used = Math.min(amount, patch.reworkTotal - patch.reworkDone);
-      rework(project, patch.rework, used, able(person, WORKS.find(work => work.dimension === patch.rework).ability));
+      const ability = WORKS.find(work => work.dimension === patch.rework).ability;
+      rework(project, patch.rework, used, Math.min(100, able(person, ability) + rareBonus(state, project, patch.rework)));
+      practice(person, ability, used);
       patch.reworkDone = round(patch.reworkDone + used);
       amount -= used;
     }
@@ -1090,6 +1288,9 @@ function produceProject(state: any, project: any) {
   const dailyCost = sum(crew.map((person: any) => (person.wage + OFFICES[state.office].rent / Math.max(1, state.staff.length)) / 30));
   project.invested += dailyCost;
   const factor = priorityFactor(state, project);
+  const boosts = projectBoosts(state, project);
+  const growth = boosts.includes('coach') ? 1.3 : 1;
+  const defects = boosts.includes('gate') ? 0.85 : 1;
   for (const person of crew) {
     const split = assignDay(state, project, person);
     const keys = Object.keys(split);
@@ -1105,17 +1306,18 @@ function produceProject(state: any, project: any) {
         project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
         person.work = round(person.work + amount);
       } else {
-        const quality = able(person, work.ability);
+        const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
         const remaining = workOf(project, work.dimension).total - workOf(project, work.dimension).done;
         const used = Math.min(amount, Math.max(0, remaining));
         if (remaining > 0) {
           recordWork(project, person, work.dimension, used, quality);
-          if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * DEFECT_RATE, state);
+          if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * DEFECT_RATE * defects, state);
+          practice(person, work.ability, used, growth);
         }
         const spare = amount - used;
         if (spare > 0) {
           if (project.defects.some((defect: any) => defect.found && !defect.fixed)) repair(state, project, spare, person);
-          else rework(project, work.dimension, spare, quality);
+          else { rework(project, work.dimension, spare, quality); practice(person, work.ability, spare, growth); }
           project.contributions[person.id] = (project.contributions[person.id] || 0) + spare;
           person.work = round(person.work + spare);
         }
@@ -1348,6 +1550,10 @@ export function companyPhase(state: any) {
 // company's tier, which can rise and fall: entering a tier asks more than keeping it, a fresh promotion
 // is safe for one period, and a watch-list warning always comes before a demotion.
 export const RATING_MEDIA = '《独立游戏观察》';
+// The company's tier reads as a star rating, so it never gets confused with the city/national/global
+// range of a chart, expo or award.
+export const STAR_NAMES = ['一星', '二星', '三星'];
+export const STAR_MARKS = ['★', '★★', '★★★'];
 export const RATING_PERIOD = 90;
 export const RATING_UP = [0, 46, 72];
 export const RATING_KEEP = [0, 38, 63];
@@ -1401,11 +1607,11 @@ function rateDay(state: any) {
     tier += 1;
     rating.promotedAt = state.day;
     rating.watch = false;
-    note = `升入${TIERS[tier].name}圈层`;
+    note = `升为${STAR_NAMES[tier]}工作室`;
   } else if (settled && score < RATING_KEEP[tier] && rating.watch) {
     tier -= 1;
     rating.watch = false;
-    note = `降回${TIERS[tier].name}圈层`;
+    note = `降为${STAR_NAMES[tier]}工作室`;
   } else if (settled && score < RATING_KEEP[tier] + RATING_WATCH) {
     rating.watch = true;
     note = '列入观察名单';
@@ -1413,7 +1619,7 @@ function rateDay(state: any) {
   rating.score = score;
   rating.history = [...(rating.history || []), { day: state.day, score, tier }].slice(-12);
   state.focus = tier;
-  const line = tier !== before ? note : note ? `${note}，下一期低于保级线 ${RATING_KEEP[tier]} 分将降级` : `维持${TIERS[tier].name}圈层`;
+  const line = tier !== before ? note : note ? `${note}，下一期低于保级线 ${RATING_KEEP[tier]} 分将降级` : `维持${STAR_NAMES[tier]}工作室`;
   news(state, tier, true, `${RATING_MEDIA}季度评级：${state.company} ${score.toFixed(0)} 分`, line + '。', null, true);
   announce(state, { kind: tier > before ? 'record' : tier < before || note ? 'warning' : 'notice', title: `季度评级 ${score.toFixed(0)} 分`, text: `${RATING_MEDIA}：${line}`, amount: 0 });
   studioLog(state, '季度媒体评级', `${RATING_MEDIA}评分 ${score.toFixed(0)}，${line}。`);
@@ -1483,7 +1689,7 @@ export function launchProject(state: any, projectId: string) {
     quotes: review.quotes,
     weekly: [receipt], paidBack: receipt >= project.invested, marks: 0, record: next.catalog.length > 0 && receipt > best,
     tutorial: next.catalog.length === 0, review,
-    sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [],
+    sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [], flawless: metrics.defects === 0, clash: clash.works.length,
     capacity, left: capacity, sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0
   };
   next.cash = round(next.cash + receipt);
@@ -1498,15 +1704,14 @@ export function launchProject(state: any, projectId: string) {
   for (const person of next.staff) {
     const contribution = project.contributions[person.id] || 0;
     if (contribution <= 0) continue;
-    const growth = (person.tags.some((tag: any) => tag.key === 'growth') ? GROWTH_PER_WORK * 1.5 : GROWTH_PER_WORK) * contribution;
-    let gained = 0;
-    for (const key of ABILITY_KEYS) {
-      const before = person.abilities[key];
-      person.abilities[key] = Math.min(100, round(before + growth));
-      if (person.abilities[key] > before) gained += 1;
-    }
-    person.speed = Math.min(140, round(person.speed + growth));
-    if (gained) { person.level = (person.level || 0) + 1; studioLog(next, `${person.name} 积累经验`, `参与《${project.name}》后多项能力小幅提高；工资在招聘时定下，不随成长上调。`); }
+    // Growth already happened day by day through practice; the release just writes it down.
+    const before = person.snap || {};
+    const gains = ABILITY_KEYS.filter(key => person.abilities[key] - (before[key] ?? person.abilities[key]) >= 1)
+      .map(key => `${ABILITIES.find(item => item.key === key)?.name} ${Math.round(before[key])}→${Math.round(person.abilities[key])}`);
+    person.snap = { ...person.abilities };
+    person.level = (person.level || 0) + 1;
+    personNote(next, person, `参与《${project.name}》发售` + (gains.length ? `：${gains.join('、')}` : ''));
+    if (gains.length) studioLog(next, `${person.name} 积累经验`, `参与《${project.name}》：${gains.join('、')}。工资在招聘时定下，不随成长上调。`);
   }
   if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首发售出 ${units} 份`, amount: receipt, book: book.id });
@@ -1516,7 +1721,7 @@ export function launchProject(state: any, projectId: string) {
   const shortBoard = metrics.unfinished.length ? `仍有 ${metrics.unfinished.length} 个维度未完成，带着短板上市换回了款，之后可以继续更新。` : '';
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
-  const media = exposure ? `${TIERS[next.focus].name}圈层的媒体报道带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
+  const media = exposure ? `${STAR_NAMES[next.focus]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广 ${promo.cost} 万带来 ${promo.followers} 位关注，按本作转化约折合首发 ${promo.receipt.toFixed(2)} 万。` : '';
   next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
@@ -1566,6 +1771,76 @@ export function goalsOf(state: any) {
   return { steps, current: current || { key: 'record', title: '打破纪录', text: `让一款作品的累计回款超过 ${best.toFixed(2)} 万。`, reward: '证明工作室越做越好', done: false } };
 }
 
+// ---- Achievements ----
+// The six growth goals are milestones (they still unlock things); everything else is for show only.
+const ownBooks = (state: any) => state.catalog;
+const flag = (state: any, key: string) => !!(state.flags && state.flags[key]);
+function cameBack(state: any) {
+  const history = state.rating?.history || [];
+  return history.some((entry: any, index: number) => index >= 2 && history[index - 1].tier < history[index - 2].tier && entry.tier >= history[index - 2].tier);
+}
+export const ACHIEVEMENT_GROUPS = [['milestone', '里程碑'], ['business', '经营'], ['works', '作品'], ['team', '团队'], ['industry', '行业'], ['hidden', '隐藏']];
+export const ACHIEVEMENTS: any[] = [
+  { key: 'firstRelease', group: 'milestone', title: '完成首作', text: '把第一款游戏做完并发售。', reward: '开放招聘网站与音频、测试岗位', check: (s: any) => s.goals.firstRelease !== null },
+  { key: 'breakEven', group: 'milestone', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '可以搬进正式办公室', check: (s: any) => s.goals.breakEven !== null },
+  { key: 'moved', group: 'milestone', title: '搬进正式办公室', text: `回本后在成就页搬家，一次性 ${OFFICES[1].cost} 万。`, reward: `${OFFICES[1].seats} 个工位，开放行业推荐与猎头`, check: (s: any) => s.goals.moved !== null },
+  { key: 'topTen', group: 'milestone', title: '全国首周榜前十', text: '作品首周销量在近一年全国新作里排进前十。', reward: '获得 200 位粉丝', check: (s: any) => s.goals.topTen !== null },
+  { key: 'award', group: 'milestone', title: '全国年度奖项', text: '获得全国或国际年度评选的任一奖项。', reward: '获奖增加粉丝，开放再次扩建', check: (s: any) => s.goals.award !== null },
+  { key: 'expanded', group: 'milestone', title: '再次扩建', text: `完成前十与获奖后，花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位`, check: (s: any) => s.goals.expanded !== null },
+  { key: 'cash100', group: 'business', title: '百万现金', text: '公司现金达到 100 万。', check: (s: any) => s.cash >= 100, progress: (s: any) => [s.cash, 100] },
+  { key: 'cash1000', group: 'business', title: '千万现金', text: '公司现金达到 1000 万。', check: (s: any) => s.cash >= 1000, progress: (s: any) => [s.cash, 1000] },
+  { key: 'team8', group: 'business', title: '八人小队', text: '同时有 8 名员工。', check: (s: any) => s.staff.length >= 8, progress: (s: any) => [s.staff.length, 8] },
+  { key: 'team16', group: 'business', title: '座无虚席', text: '16 个工位全部坐满。', check: (s: any) => s.staff.length >= 16, progress: (s: any) => [s.staff.length, 16] },
+  { key: 'year3', group: 'business', title: '三周年', text: '公司经营满三年。', check: (s: any) => s.day >= 1080, progress: (s: any) => [s.day, 1080] },
+  { key: 'books10', group: 'works', title: '十部作品', text: '发售 10 部作品。', check: (s: any) => ownBooks(s).length >= 10, progress: (s: any) => [ownBooks(s).length, 10] },
+  { key: 'units10k', group: 'works', title: '万份销量', text: '单部作品累计售出 1 万份。', check: (s: any) => ownBooks(s).some((book: any) => book.units >= 10000) },
+  { key: 'units100k', group: 'works', title: '十万份销量', text: '单部作品累计售出 10 万份。', check: (s: any) => ownBooks(s).some((book: any) => book.units >= 100000) },
+  { key: 'review85', group: 'works', title: '口碑之作', text: '一部作品的玩家口碑达到 85 分。', check: (s: any) => ownBooks(s).some((book: any) => book.reviewScore >= 85) },
+  { key: 'sequel', group: 'works', title: '系列开端', text: '发售一部续作。', check: (s: any) => ownBooks(s).some((book: any) => book.sequel) },
+  { key: 'dlc', group: 'works', title: '还有后续', text: '发售一部资料片。', check: (s: any) => ownBooks(s).some((book: any) => book.parentId) },
+  { key: 'breakout', group: 'works', title: '出圈', text: '一部作品凭创意出圈。', check: (s: any) => ownBooks(s).some((book: any) => book.breakout) },
+  { key: 'patched', group: 'works', title: '负责到底', text: '为已发售作品上线一个补丁。', check: (s: any) => flag(s, 'patched') },
+  { key: 'mentored', group: 'team', title: '出师', text: '一次带教让徒弟追上师傅。', check: (s: any) => flag(s, 'mentored') },
+  { key: 'boost', group: 'team', title: '主心骨', text: '有员工获得团队增益标签。', check: (s: any) => s.staff.some((person: any) => person.boost) },
+  { key: 'star', group: 'team', title: '名人加盟', text: '录用一位行业名人。', check: (s: any) => s.staff.some((person: any) => person.fame) },
+  { key: 'poached', group: 'team', title: '挖角成功', text: '从对手那里挖来一位名人。', check: (s: any) => flag(s, 'poached') },
+  { key: 'rare', group: 'team', title: '可遇不可求', text: '招到带稀有标签的员工。', check: (s: any) => s.staff.some((person: any) => person.tags.some((tag: any) => tag.kind === 'rare')) },
+  { key: 'grown90', group: 'team', title: '自己培养的高手', text: '一位非名人员工的某项能力达到 90。', check: (s: any) => s.staff.some((person: any) => !person.fame && ABILITY_KEYS.some(key => person.abilities[key] >= 90)) },
+  { key: 'star2', group: 'industry', title: '二星工作室', text: `${RATING_MEDIA}评为二星。`, check: (s: any) => (s.focus || 0) >= 1 },
+  { key: 'star3', group: 'industry', title: '三星工作室', text: `${RATING_MEDIA}评为三星。`, check: (s: any) => (s.focus || 0) >= 2 },
+  { key: 'globalTop10', group: 'industry', title: '走向世界', text: '一部作品进入国际首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.firstRanks && book.firstRanks[2] <= 10) },
+  { key: 'expoWin', group: 'industry', title: '展会第一', text: '在任一展会拿到第一名。', check: (s: any) => s.exhibitions.some((entry: any) => entry.result?.rank === 1) },
+  { key: 'awardGlobal', group: 'industry', title: '国际年度作品', text: '获得国际年度作品。', check: (s: any) => s.awards.some((award: any) => award.own && award.tier === 2) },
+  { key: 'dream', group: 'hidden', title: '屏幕外的人', text: '创始人过劳后被托梦救回。', check: (s: any) => flag(s, 'dream') },
+  { key: 'flawless', group: 'hidden', title: '零缺陷', text: '一部作品发售时没有任何未修缺陷。', check: (s: any) => ownBooks(s).some((book: any) => book.flawless) },
+  { key: 'clashWin', group: 'hidden', title: '硬碰硬', text: '和两部以上对手作品同周发售，仍拿到全国首周第一。', check: (s: any) => ownBooks(s).some((book: any) => (book.clash || 0) >= 2 && book.firstRanks && book.firstRanks[1] === 1) },
+  { key: 'comeback', group: 'hidden', title: '卷土重来', text: '降级后的下一期评级立刻回到原来的星级。', check: (s: any) => cameBack(s) },
+  { key: 'smallPromo', group: 'hidden', title: '小钱办大事', text: '只投最小一档推广的作品进入全国首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.promo && book.promo.cost === PROMOTE_TIERS[0] && book.firstRanks && book.firstRanks[1] <= 10) },
+  { key: 'familiar', group: 'hidden', title: '新闻里的那个人', text: '录用一位曾在新闻里出现过的名人。', check: (s: any) => s.staff.some((person: any) => person.story) }
+];
+
+function checkAchievements(state: any, quiet = false) {
+  state.achievements = state.achievements || {};
+  for (const item of ACHIEVEMENTS) {
+    if (state.achievements[item.key] !== undefined || !item.check(state)) continue;
+    state.achievements[item.key] = state.day;
+    if (!quiet) announce(state, { kind: 'record', title: (item.group === 'hidden' ? '隐藏成就：' : '成就：') + item.title, text: item.text, amount: 0 });
+  }
+}
+
+export function achievementsOf(state: any) {
+  const unlocked = state.achievements || {};
+  return {
+    count: Object.keys(unlocked).length, total: ACHIEVEMENTS.length,
+    fresh: Math.max(0, Object.keys(unlocked).length - (state.notices?.achSeen || 0)),
+    items: ACHIEVEMENTS.map(item => ({ ...item, day: unlocked[item.key] ?? null, progress: item.progress ? item.progress(state) : null }))
+  };
+}
+
+export function markAchievementsSeen(state: any) {
+  return { ...state, notices: { ...state.notices, achSeen: Object.keys(state.achievements || {}).length } };
+}
+
 export function resolveStudioEvent(state: any, choice: string) {
   if (!state.event || !state.event.choices.some((item: any) => item.id === choice)) throw new Error('当前选择无效。');
   let next = studioAction(state);
@@ -1575,12 +1850,27 @@ export function resolveStudioEvent(state: any, choice: string) {
   if (choice === 'bridge') {
     if (next.bridgeUsed) throw new Error('创始人积蓄已经用过了。');
     next.bridgeUsed = true;
+    next.flags = { ...(next.flags || {}), bridge: next.day };
     next.cash = round(next.cash + BRIDGE);
     next.ledger.income = round(next.ledger.income + BRIDGE);
     return next;
   }
   if (choice === 'move') return moveOffice(next);
   if (event.id === 'random') return resolveRandomEvent(next, event, choice);
+  if (event.id === 'dream') {
+    const founder = next.staff.find((item: any) => item.id === event.person);
+    if (founder) {
+      founder.noOvertime = true;
+      founder.stressTags = [];
+      founder.stressChance = 0;
+      founder.overtimeDays = 0;
+      delete next.overtime[founder.id];
+      personNote(next, founder, '托梦之后，答应了屏幕外的人：再也不加班');
+    }
+    next.flags = { ...(next.flags || {}), dream: next.day };
+    studioLog(next, '一场梦', '创始人撕掉了解散公告。从今天起，他再也不加班。');
+    return next;
+  }
   if (event.id === 'resign') return choice === 'leave' ? takeLeave(next, event.person) : dismiss(next, event.person);
   if (event.id === 'deadline') {
     const project = next.projects.find((item: any) => item.id === event.project);
@@ -1599,9 +1889,14 @@ export function resolveStudioEvent(state: any, choice: string) {
 function resignOrContinue(state: any) {
   for (const person of state.staff) {
     if (state.event) return;
-    // The founder cannot resign from their own studio; stress still slows them, leave and outings
-    // still clear it.
-    if (person.founder) continue;
+    // The founder cannot resign from their own studio — except once, in a dream (see below).
+    if (person.founder) {
+      if (person.stressTags.includes('leaving') && state.overtime[person.id] && !state.flags?.dream && random(state) < 0.03) {
+        state.event = { id: 'dream', person: person.id, title: '解散公告', text: '', choices: [{ id: 'promise', title: '答应他：不再让他加班' }] };
+        return;
+      }
+      continue;
+    }
     if (person.stressTags.includes('leaving') && random(state) < 0.02) {
       const years = Math.max(0, Math.floor((state.day - person.joined) / 360));
       const compensation = round(person.wage * (years + 1));
@@ -1618,7 +1913,9 @@ function stressDay(state: any) {
     if (overtime) {
       person.overtimeDays += 1;
       const resist = person.tags.some((tag: any) => tag.key === 'iron') ? 0.35 : person.tags.some((tag: any) => tag.key === 'eager') ? 1.5 : person.tags.some((tag: any) => tag.key === 'grumbler') ? 1.6 : 1;
-      person.stressChance = clamp(person.overtimeDays / 40 * resist, 0, 0.6);
+      const project = projectOf(state, person);
+      const anchor = project && projectBoosts(state, project).includes('anchor') ? 0.7 : 1;
+      person.stressChance = clamp(person.overtimeDays / 40 * resist * anchor, 0, 0.6);
       if (person.stressTags.length < 2 && random(state) < person.stressChance) {
         const label = person.stressTags.includes('tired') ? 'leaving' : 'tired';
         person.stressTags.push(label);
@@ -1648,11 +1945,13 @@ export function stepDay(state: any) {
   salesDay(next);
   playerReports(next);
   stressDay(next);
+  staffDay(next);
   resignOrContinue(next);
   calendarDay(next);
   industryDay(next);
   scheduledCash(next);
   if (!next.event) rollRandomEvent(next);
+  checkAchievements(next);
   if (next.day % 30 === 0) {
     const payroll = round(next.accrued);
     next.cash = round(next.cash - payroll);
@@ -1827,7 +2126,7 @@ export function setDeadline(state: any, projectId: string, days: number) {
   project.deadline = next.day + days;
   const exposure = Math.round(project.followers * MEDIA_BONUS[next.focus || 0]);
   project.followers += 150 + exposure;
-  const extra = exposure ? `（含${TIERS[next.focus].name}圈层媒体报道 ${exposure} 人）` : '';
+  const extra = exposure ? `（含${STAR_NAMES[next.focus]}工作室的媒体曝光 ${exposure} 人）` : '';
   studioLog(next, '公布发售日', `计划第 ${project.deadline} 天发售《${project.name}》，新增 ${150 + exposure} 人关注${extra}；延期会损失关注。`);
   const near = scheduleOf(next).filter((item: any) => !item.own && Math.abs(item.day - project.deadline) <= 3);
   if (near.length) announce(next, { kind: 'notice', title: '档期提醒', text: `同周已有${near.map((item: any) => item.name).join('、')}定档，首发可能被分流。`, amount: 0 });
@@ -1839,7 +2138,7 @@ export function setDeadline(state: any, projectId: string, days: number) {
 // giants. Every title sells into the same market; the level only says which chart, expo and award a
 // title belongs to, and how much of it the player is shown.
 export const TIERS = [
-  { key: 'local', name: '本地', expo: '城市独立游戏展', expoDays: [90, 270], fee: 1, entrants: 6, sales: 320, score: 50, media: '《本地游戏圈》', awards: ['年度作品'], fans: [150], weight: 3 },
+  { key: 'local', name: '城市', expo: '城市独立游戏展', expoDays: [90, 270], fee: 1, entrants: 6, sales: 320, score: 50, media: '《城市游戏圈》', awards: ['年度作品'], fans: [150], weight: 3 },
   { key: 'national', name: '全国', expo: '全国游戏展', expoDays: [150], fee: 4, entrants: 10, sales: 1000, score: 62, media: '《独立游戏观察》', awards: ['年度作品', '创意奖', '表现奖'], fans: [800, 400, 400], weight: 10 },
   { key: 'global', name: '国际', expo: '国际游戏展', expoDays: [300], fee: 12, entrants: 12, sales: 6000, score: 74, media: '《Global Game Weekly》', awards: ['年度作品'], fans: [3000], weight: 30 }
 ];
@@ -1976,9 +2275,17 @@ function finishRivalWork(state: any, work: any, quiet: boolean) {
   if (studio.tier < 2 && studio.power >= 1.6) {
     studio.tier += 1;
     studio.power = 1;
+    if (!(state.talents || []).some((talent: any) => talent.studio === studio.id && talent.status === 'employed')) newTalent(state, studio);
     if (!quiet) news(state, studio.tier, true, `${studio.name}跻身${TIERS[studio.tier].name}一线`, `连续的好成绩让这家工作室进入${TIERS[studio.tier].name}层的竞争。`, studio.id);
   } else if (studio.tier < 2 && studio.power <= 0.5) {
     studio.closed = state.day;
+    for (const talent of state.talents || []) {
+      if (talent.studio !== studio.id || talent.status !== 'employed') continue;
+      talent.work = talentWork(state, talent);
+      talent.status = 'free';
+      talent.since = state.day;
+      talent.title = `${studio.name}解散，${talent.name}寻找新去处`;
+    }
     if (!quiet) news(state, studio.tier, true, `${studio.name}宣布解散`, '几部作品成绩不佳，团队各奔东西。', studio.id);
     newStudio(state, 0, state.day);
   }
@@ -1999,23 +2306,105 @@ function industryTick(state: any, quiet: boolean) {
     }
   }
   TIERS.forEach((_, tier) => { if (random(state) < FILLER_PER_YEAR[tier] / 360) state.works.push(rivalWork(state, tier, null, day)); });
-  if (!quiet && day % 30 === 15 && random(state) < 0.4) celebNews(state);
+  if (!quiet && day % 30 === 15) talentMonth(state);
   for (const work of state.works) if (work.released === day - 7) finishRivalWork(state, work, quiet);
 }
 
-// Industry people move between studios in the news; the same names later turn up as star candidates,
-// so a player who reads the headlines recognises who just walked in.
-function celebNews(state: any) {
-  const studios = state.rivals.filter((studio: any) => studio.closed === null && studio.tier >= 1);
-  if (!studios.length) return;
-  const studio = pick(state, studios);
-  const work = state.works.filter((item: any) => item.studio === studio.id && item.released <= state.day).sort((left: any, right: any) => right.released - left.released)[0];
-  const role = pick(state, ['code', 'design', 'art', 'audio']);
-  const name = pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES);
-  const title = `${studio.name}${ROLES[role].name}${name}离职`;
-  const text = work ? `曾参与《${work.name}》，据说在考虑新的去处。` : '据说在考虑新的去处。';
-  news(state, studio.tier, true, title, text, studio.id);
-  state.celebs = [...(state.celebs || []).filter((celeb: any) => !celeb.taken), { name, role, studio: studio.name, day: state.day, title, taken: false }].slice(-10);
+// ---- Industry people ----
+// National and global studios each have a named lead. They change jobs in the news: a free agent can
+// turn up as a star candidate, signs with a rival if nobody hires them within two months, and a lead
+// still at a rival can be poached at a price.
+const TALENT_ROLES = ['code', 'design', 'art', 'audio'];
+export const TALENT_FREE_DAYS = 60;
+export const POACH_BIDS = [1.3, 1.6, 2];
+export const POACH_FEE = 3;
+
+function newTalent(state: any, studio: any) {
+  const role = pick(state, TALENT_ROLES);
+  const prior = ROLES[role].prior;
+  const primary = [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1])[0];
+  const abilities: any = {};
+  for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.6 + random(state) * 16, 5, 55));
+  abilities[primary] = Math.round(clamp(87 + random(state) * 8 + studio.tier * 2, 85, 99));
+  state.talentSeq = (state.talentSeq || 0) + 1;
+  const talent = { id: `talent-${state.talentSeq}`, name: pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES), role, primary, abilities, speed: Math.round(100 + random(state) * 15), studio: studio.id, studioName: studio.name, status: 'employed', since: state.day, title: '', work: '', cooldown: 0 };
+  state.talents = [...(state.talents || []), talent];
+  return talent;
+}
+
+export function talentWork(state: any, talent: any) {
+  const work = state.works.filter((item: any) => item.studio === talent.studio && item.released <= state.day).sort((left: any, right: any) => right.released - left.released)[0];
+  return work ? work.name : talent.work;
+}
+
+function talentMonth(state: any) {
+  const employed = (state.talents || []).filter((talent: any) => talent.status === 'employed');
+  if (employed.length && random(state) < 0.4) {
+    const talent = pick(state, employed);
+    const studio = state.rivals.find((item: any) => item.id === talent.studio);
+    talent.work = talentWork(state, talent);
+    talent.status = 'free';
+    talent.since = state.day;
+    talent.title = `${talent.studioName}${ROLES[talent.role].name}${talent.name}离职`;
+    news(state, studio ? studio.tier : 1, true, talent.title, talent.work ? `代表作《${talent.work}》，据说在考虑新的去处。` : '据说在考虑新的去处。', talent.studio);
+    if (studio && studio.closed === null) { studio.power = round(Math.max(0.3, studio.power - 0.05)); newTalent(state, studio); }
+  }
+  for (const talent of state.talents || []) {
+    if (talent.status !== 'free' || state.day - talent.since < TALENT_FREE_DAYS) continue;
+    const homes = state.rivals.filter((studio: any) => studio.closed === null && studio.tier >= 1 && studio.id !== talent.studio);
+    if (!homes.length) continue;
+    const studio = pick(state, homes);
+    talent.status = 'employed';
+    talent.studio = studio.id;
+    talent.studioName = studio.name;
+    talent.since = state.day;
+    studio.power = round(Math.min(2.5, studio.power + 0.1));
+    news(state, studio.tier, true, `${talent.name}加入${studio.name}`, `${ROLES[talent.role].name}名人${talent.work ? `（代表作《${talent.work}》）` : ''}有了新东家。`, studio.id);
+  }
+  state.talents = (state.talents || []).filter((talent: any) => talent.status !== 'hired' || state.day - talent.since < 720).slice(-40);
+}
+
+export function poachOffer(state: any, talentId: string, bid: number) {
+  const talent = (state.talents || []).find((item: any) => item.id === talentId);
+  if (!talent) return null;
+  const studio = state.rivals.find((item: any) => item.id === talent.studio);
+  const base = marketWage({ abilities: talent.abilities, speed: talent.speed });
+  const wage = round(base * POACH_BIDS[bid]);
+  const trend = studio ? rivalProfile(state, studio.id)?.trend : '平稳';
+  const chance = round(clamp(0.2 + [0, 0.15, 0.3][bid] + ((state.focus || 0) - (studio?.tier ?? 1)) * 0.15 + (trend === '下滑' ? 0.1 : trend === '上升' ? -0.1 : 0), 0.05, 0.85));
+  const reason = talent.status !== 'employed' ? '此人现在不在对手那里' : state.office < 1 ? '搬进正式办公室后才能找猎头' : (talent.cooldown || 0) > state.day ? `被拒后要到第 ${talent.cooldown} 天才肯再谈` : state.staff.length >= seats(state) ? '工位已满' : state.cash < POACH_FEE ? `猎头费需要 ${POACH_FEE} 万` : '';
+  return { talent, studio, wage, chance, fee: POACH_FEE, reason, available: !reason };
+}
+
+export function poach(state: any, talentId: string, bid: number) {
+  if (![0, 1, 2].includes(bid)) throw new Error('出价无效。');
+  const offer = poachOffer(state, talentId, bid);
+  if (!offer) throw new Error('这个人不存在。');
+  if (!offer.available) throw new Error(offer.reason);
+  const next = studioAction(state);
+  const talent = next.talents.find((item: any) => item.id === talentId);
+  const studio = next.rivals.find((item: any) => item.id === talent.studio);
+  spend(next, POACH_FEE, `猎头接触${talent.name}`);
+  if (random(next) >= offer.chance) {
+    talent.cooldown = next.day + 180;
+    studioLog(next, `${talent.name} 拒绝了邀请`, `${talent.studioName}留住了人，180 天内不会再谈。`);
+    announce(next, { kind: 'notice', title: `${talent.name} 拒绝了邀请`, text: '猎头费不退，半年内不会再谈', amount: 0 });
+    return next;
+  }
+  const person = freshPerson(next, {
+    id: `star-${talent.id}`, name: talent.name, role: talent.role, abilities: { ...talent.abilities }, speed: talent.speed, wage: offer.wage,
+    hired: true, fame: true, rampup: 30, joined: next.day, home: homeWork({ role: talent.role, home: '' }), snap: { ...talent.abilities },
+    potential: Math.min(100, talent.abilities[talent.primary] + 2), tags: [{ kind: 'personality', key: 'eager' }], story: `从${talent.studioName}挖来`
+  });
+  next.staff.push(person);
+  personNote(next, person, `从${talent.studioName}挖来，月薪 ${offer.wage.toFixed(2)} 万`);
+  talent.status = 'hired';
+  talent.since = next.day;
+  if (studio) studio.power = round(Math.max(0.3, studio.power - 0.15));
+  next.flags = { ...(next.flags || {}), poached: next.day };
+  news(next, studio ? studio.tier : 1, true, `${talent.name}离开${talent.studioName}，加盟${next.company}`, `月薪 ${offer.wage.toFixed(2)} 万。`, talent.studio, true);
+  announce(next, { kind: 'record', title: `挖来了${talent.name}`, text: `${ROLES[talent.role].name}名人，月薪 ${offer.wage.toFixed(2)} 万`, amount: 0 });
+  return next;
 }
 
 // What the home-screen bulletin plays: the company's own news first, then the current tier, then the
@@ -2038,8 +2427,8 @@ export function calendarOf(state: any, span = 180) {
     const entry = state.exhibitions.find((item: any) => item.day === day && (item.tier ?? 0) === level);
     items.push({ day, kind: 'expo', title: tier.expo, detail: entry ? `已报名《${entry.name}》` : `报名截止第 ${day - 7} 天 · 报名费 ${tier.fee} 万`, tier: level, own: !!entry, route: { menu: 'market' } });
   })));
-  for (let day = (year + 1) * 360; day <= end; day += 360) items.push({ day, kind: 'awards', title: '年度评选', detail: '本地、全国、国际三级', own: false, route: { menu: 'industry', id: 'awards:first:' + (state.focus || 0) } });
-  for (let day = (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD; day <= end; day += RATING_PERIOD) items.push({ day, kind: 'rating', title: `${RATING_MEDIA}季度评级`, detail: '决定公司圈层', own: true, route: { menu: 'rating' } });
+  for (let day = (year + 1) * 360; day <= end; day += 360) items.push({ day, kind: 'awards', title: '年度评选', detail: '城市、全国、国际三级', own: false, route: { menu: 'industry', id: 'awards:first:' + (state.focus || 0) } });
+  for (let day = (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD; day <= end; day += RATING_PERIOD) items.push({ day, kind: 'rating', title: `${RATING_MEDIA}季度评级`, detail: '决定公司星级', own: true, route: { menu: 'rating' } });
   for (const item of scheduleOf(state)) {
     if (item.day > end) continue;
     items.push({ day: item.day, kind: 'release', title: item.name + ' 发售', detail: item.own ? '本社承诺的发售日' : item.studio + ' · ' + TIERS[item.tier].name, own: item.own, route: item.own ? { menu: 'project', id: item.projectId } : item.studioId ? { menu: 'rival', id: item.studioId } : null });
@@ -2056,6 +2445,8 @@ function seedIndustry(state: any) {
   // Old saves need rival history as far back as their first release, or its chart would be empty.
   const start = Math.min(today, ...state.catalog.map((book: any) => book.released)) - 360;
   [3, 3, 2].forEach((count, tier) => { for (let index = 0; index < count; index += 1) newStudio(state, tier, start); });
+  state.talents = [];
+  for (const studio of state.rivals) if (studio.tier >= 1) newTalent(state, studio);
   for (let day = start; day < today; day += 1) {
     state.day = day;
     industryTick(state, true);
@@ -2069,7 +2460,7 @@ function industryDay(state: any) {
     if (book.firstRanks || state.day - book.released < 7) continue;
     book.firstRanks = firstWeekRanks(state, book.firstWeek || 0, book.released, book.id);
     const [local, national, global] = book.firstRanks;
-    news(state, state.focus, false, `《${book.name}》首周售出 ${Math.round(book.firstWeek || 0).toLocaleString('zh-CN')} 份`, `本地第 ${local} 名 · 全国第 ${national} 名 · 国际第 ${global} 名。`, null, true);
+    news(state, state.focus, false, `《${book.name}》首周售出 ${Math.round(book.firstWeek || 0).toLocaleString('zh-CN')} 份`, `城市第 ${local} 名 · 全国第 ${national} 名 · 国际第 ${global} 名。`, null, true);
     announce(state, { kind: 'record', title: `《${book.name}》首周成绩`, text: `全国首周榜第 ${national} 名`, amount: 0 });
     if (national <= 10 && state.goals.topTen === null) {
       state.goals.topTen = state.day;
@@ -2289,6 +2680,40 @@ const RANDOM_EVENTS: any[] = [
     { id: 'localize', title: '花 4 万做本地化', outcomes: [{ p: 0.6, text: '海外反响不错，日销量 ×1.6', effects: { cash: -4, boost: 1.6 } }, { p: 0.4, text: '水土不服，日销量 ×1.1', effects: { cash: -4, boost: 1.1 } }] },
     safe('婉拒', '先专注国内')
   ] }) },
+  { key: 'conference', stage: 'mid', when: (state: any) => {
+    if (state.cash < 3 || state.staff.length < 2) return null;
+    const person = [...state.staff].sort((left: any, right: any) => ((right.potential ?? 80) - Math.max(...ABILITY_KEYS.map(key => right.abilities[key]))) - ((left.potential ?? 80) - Math.max(...ABILITY_KEYS.map(key => left.abilities[key]))))[0];
+    return { person: person.id };
+  }, make: (state: any, ctx: any) => {
+    const person = state.staff.find((item: any) => item.id === ctx.person);
+    const name = ABILITIES.find(item => item.key === primaryAbility(person))?.name;
+    return { title: '行业大会开幕', text: `全国开发者大会有一场${name}专场，${person.name}很想去听。`, choices: [
+      { id: 'go', title: '花 3 万派他去', outcomes: [{ p: 1, text: `${person.name}离开 5 天，${name} +4`, effects: { cash: -3, busy: { who: 'person', days: 5 }, train: { who: 'person', amount: 4 } } }] },
+      { id: 'stream', title: '只看线上直播', outcomes: [{ p: 0.6, text: `${person.name}占用 2 天，${name} +2`, effects: { busy: { who: 'person', days: 2 }, train: { who: 'person', amount: 2 } } }, { p: 0.4, text: '直播卡得厉害，白看了 2 天', effects: { busy: { who: 'person', days: 2 } } }] },
+      safe('不去', '手头的工作更要紧')
+    ] };
+  } },
+  { key: 'course', stage: 'any', when: (state: any) => {
+    if (state.staff.length < 3 || state.cash < 1) return null;
+    const pool = [...state.staff].sort(() => random(state) - 0.5);
+    return { a: pool[0].id, b: pool[1].id };
+  }, make: (state: any, ctx: any) => {
+    const a = state.staff.find((item: any) => item.id === ctx.a);
+    const b = state.staff.find((item: any) => item.id === ctx.b);
+    const skill = (person: any) => ABILITIES.find(item => item.key === primaryAbility(person))?.name;
+    return { title: '只有一个培训名额', text: `合作的大学开了一期进阶课，只给一个名额，学费 1 万，上课 7 天。${a.name}和${b.name}都想去。`, choices: [
+      { id: 'a', title: `让${a.name}去`, outcomes: [{ p: 1, text: `${a.name}离开 7 天，${skill(a)} +5`, effects: { cash: -1, busy: { who: 'a', days: 7 }, train: { who: 'a', amount: 5 } } }] },
+      { id: 'b', title: `让${b.name}去`, outcomes: [{ p: 1, text: `${b.name}离开 7 天，${skill(b)} +5`, effects: { cash: -1, busy: { who: 'b', days: 7 }, train: { who: 'b', amount: 5 } } }] },
+      safe('名额让给别人', '这次不去')
+    ] };
+  } },
+  { key: 'workshop', stage: 'early', when: (state: any) => state.staff.length ? { person: pick(state, state.staff).id } : null, make: (state: any, ctx: any) => {
+    const person = state.staff.find((item: any) => item.id === ctx.person);
+    return { title: '前辈的周末工作坊', text: `一位退休的老制作人开了个周末工作坊，免费，但要占 3 天。${person.name}想去。`, choices: [
+      { id: 'go', title: `让${person.name}去`, outcomes: [{ p: 0.5, text: '和前辈聊得很投机，觉醒了新的性格', effects: { busy: { who: 'person', days: 3 }, awaken: 'person' } }, { p: 0.5, text: '学到不少，本行能力 +2', effects: { busy: { who: 'person', days: 3 }, train: { who: 'person', amount: 2 } } }] },
+      safe('下次再说', '先把手上的活干完')
+    ] };
+  } },
   { key: 'streamer', stage: 'any', when: (state: any) => { const project = openProject(state, item => item.checkpoints?.demo); return project ? { project: project.id } : null; }, make: (state: any, ctx: any) => {
     const project = state.projects.find((item: any) => item.id === ctx.project);
     const metrics = visibleMetrics(project);
@@ -2341,11 +2766,11 @@ function makeJunior(state: any, role: string, skill: number) {
   const abilities: any = {};
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp((ROLES[role].home.includes(key) ? skill : skill * 0.6) + (random(state) - 0.5) * 10, 5, 95));
   if (role === 'test') abilities.discover = Math.round(clamp(skill + (random(state) - 0.5) * 10, 5, 95));
-  return {
+  return freshPerson(state, {
     id: `junior-${state.seed}-${state.day}-${state.staff.length}`, name: pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES), role, abilities,
-    speed: 85, tags: [{ kind: 'personality', key: 'growth' }], wage: 0.8, hired: true, work: 0, growth: 0, level: 0, stressTags: [], stressChance: 0,
-    overtimeDays: 0, leaveUntil: 0, outingPity: 0, fame: false, rampup: 0, joined: state.day, home: homeWork({ role, home: '' })
-  };
+    speed: 85, tags: [{ kind: 'personality', key: 'growth' }], wage: 0.8, hired: true, joined: state.day, home: homeWork({ role, home: '' }),
+    snap: { ...abilities }, potential: Math.round(clamp(skill + 30 + random(state) * 10, 70, 96)), history: [{ day: state.day, text: '应届生上门，入职' }]
+  });
 }
 
 function applyEffects(state: any, effects: any, ctx: any) {
@@ -2367,14 +2792,32 @@ function applyEffects(state: any, effects: any, ctx: any) {
     project.progress = projectMetrics(project).progress;
   }
   if (effects.busy) {
-    const people = effects.busy.who === 'all' ? state.staff : state.staff.filter((person: any) => person.founder);
+    const people = effects.busy.who === 'all' ? state.staff : effects.busy.who === 'founder' ? state.staff.filter((person: any) => person.founder) : state.staff.filter((person: any) => person.id === ctx[effects.busy.who]);
     for (const person of people) person.leaveUntil = Math.max(person.leaveUntil || 0, state.day) + effects.busy.days;
+  }
+  if (effects.train) {
+    const learner = state.staff.find((item: any) => item.id === ctx[effects.train.who]);
+    if (learner) {
+      const key = effects.train.ability || primaryAbility(learner);
+      learner.abilities[key] = round(Math.min(100, learner.abilities[key] + effects.train.amount));
+      personNote(state, learner, `培训：${ABILITIES.find(item => item.key === key)?.name} +${effects.train.amount}`);
+    }
+  }
+  if (effects.awaken) {
+    const learner = state.staff.find((item: any) => item.id === ctx[effects.awaken]);
+    const available = learner ? Object.keys(PERSONALITY_TAGS).filter(tag => !learner.tags.some((item: any) => item.key === tag)) : [];
+    if (available.length) {
+      const tag = pick(state, available);
+      learner.tags.push({ kind: 'personality', key: tag });
+      personNote(state, learner, `工作坊里觉醒「${PERSONALITY_TAGS[tag].name}」`);
+    }
   }
   const person = ctx.person ? state.staff.find((item: any) => item.id === ctx.person) : null;
   if (person && effects.ability) for (const key of ABILITY_KEYS) person.abilities[key] = Math.min(100, person.abilities[key] + effects.ability);
   if (person && effects.leave) {
     state.staff = state.staff.filter((item: any) => item.id !== person.id);
-    delete state.overtime[person.id];
+    departed(state, person);
+    if (person.boost) for (const other of state.staff) if (!other.stressTags.includes('tired') && random(state) < 0.4) other.stressTags.push('tired');
     studioLog(state, `${person.name} 离职`, '已交付的成果保留。');
   }
   if (effects.junior && state.staff.length < seats(state)) {
@@ -2535,6 +2978,27 @@ export function restoreStudio(saved: any) {
     next.rating = { score, watch: false, promotedAt: next.day - RATING_PERIOD - 1, history: [{ day: next.day, score, tier: next.focus }] };
     next.rulesRevision = 5;
   }
+  if (next.rulesRevision < 6) {
+    // People grow by practice towards a potential, can mentor each other and earn team boosts; rival
+    // studios have named leads; the six goals became milestone achievements.
+    delete next.celebs;
+    for (const person of next.staff) {
+      const peak = Math.max(...ABILITY_KEYS.map(key => person.abilities[key]));
+      Object.assign(person, { potential: person.potential ?? Math.round(clamp(peak + 8, 60, 98)), snap: { ...person.abilities }, history: person.history || [{ day: person.joined || 1, text: '入职' }], trace: person.trace || [], boost: person.boost || null, mentor: person.mentor || null });
+      delete person.outingPity;
+    }
+    for (const pool of Object.values(next.candidates) as any[]) for (const person of pool.people) person.potential = person.potential ?? Math.round(clamp(Math.max(...ABILITY_KEYS.map(key => person.abilities[key])) + 10, 60, 98));
+    if (!Array.isArray(next.talents)) {
+      next.talents = [];
+      for (const studio of next.rivals) if (studio.closed === null && studio.tier >= 1) newTalent(next, studio);
+    }
+    next.flags = next.flags || {};
+    next.playSeconds = next.playSeconds || 0;
+    next.achievements = {};
+    checkAchievements(next, true);
+    next.notices.achSeen = Object.keys(next.achievements).length;
+    next.rulesRevision = 6;
+  }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
 }
@@ -2545,7 +3009,7 @@ function validStudio(state: any) {
   const text = (value: any) => typeof value === 'string' && value.length <= 5000;
   const object = (value: any) => value && typeof value === 'object' && !Array.isArray(value);
   const abilities = (value: any) => object(value) && ABILITY_KEYS.every(key => nonnegative(value[key]) && value[key] <= 100);
-  const tags = (value: any) => Array.isArray(value) && value.every((tag: any) => tag && has(ABILITY_TAGS, tag.key) || has(PERSONALITY_TAGS, tag.key));
+  const tags = (value: any) => Array.isArray(value) && value.every((tag: any) => tag && (has(ABILITY_TAGS, tag.key) || has(PERSONALITY_TAGS, tag.key) || has(RARE_TAGS, tag.key)));
   const person = (value: any) => value && text(value.name) && has(ROLES, value.role) && abilities(value.abilities) && number(value.speed) && value.speed > 0 && value.speed <= 200 && number(value.wage) && value.wage >= 0 && Array.isArray(value.stressTags) && tags(value.tags);
   const work = (value: any) => object(value) && DIM_KEYS.every(key => value[key] && nonnegative(value[key].total) && nonnegative(value[key].done) && nonnegative(value[key].value));
   if (!state || state.version !== 6 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean') return false;

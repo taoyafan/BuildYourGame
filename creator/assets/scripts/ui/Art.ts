@@ -53,7 +53,7 @@ export const palette = {
   desk: '#a7774c', deskTop: '#c4925f', screenOn: '#cfeee0', screenArt: '#f6e2b8', screenOff: '#5c6a66'
 };
 
-// Fixed seat layout so desks stay put as people join.
+// Fixed seat layout so desks stay put as people join. Desks sit on the floor, below the wall props.
 export function seatLayout(seats: number, w: number, h: number) {
   const rows = seats > 4 ? 2 : 1;
   const perRow = Math.ceil(seats / rows);
@@ -62,67 +62,82 @@ export function seatLayout(seats: number, w: number, h: number) {
     const row = Math.floor(index / perRow);
     const column = index % perRow;
     const gap = w / (perRow + 0.4);
-    const scale = Math.min(rows === 2 ? (row === 0 ? 0.78 : 0.95) : 1, gap / 62);
-    result.push({ x: gap * (column + 0.7), y: rows === 2 ? (row === 0 ? h * 0.5 : h * 0.79) : h * 0.72, scale });
+    const scale = Math.min(rows === 2 ? (row === 0 ? 0.78 : 0.92) : 1, gap / 62, h / 150);
+    result.push({ x: gap * (column + 0.7), y: rows === 2 ? (row === 0 ? h * 0.72 : h * 0.93) : h * 0.88, scale });
   }
   return result;
 }
 
-// Where the clickable props sit: a whiteboard (calendar) and a shelf (the company's record).
+// Where the wall props sit: the window, the big screen with the current work, the star plaque, the
+// whiteboard (calendar) and the shelf (achievements).
 export function roomProps(w: number, h: number, office: number) {
-  const floor = office >= 1 ? h * 0.42 : h * 0.55;
-  const tall = Math.max(18, floor * 0.45);
+  const floor = h * 0.5;
+  const tall = Math.max(18, floor - 34);
   return {
     floor,
-    board: { x: w * 0.5, y: 6, w: 52, h: tall },
-    shelf: { x: office >= 1 ? w - 118 : w - 100, y: 6, w: 56, h: tall }
+    window: { x: 10, y: 10, w: w * 0.16, h: Math.max(16, floor - 22) },
+    screen: { x: w * 0.21, y: 8, w: w * 0.4, h: Math.max(30, floor - 14) },
+    plaque: { x: w * 0.65, y: 6, w: w * 0.33, h: 18 },
+    board: { x: w * 0.65, y: 28, w: w * 0.155, h: tall },
+    shelf: { x: w * 0.825, y: 28, w: w * 0.155, h: tall }
   };
 }
 
-export function drawRoom(pen: Pen, w: number, h: number, office: number, record: { awards: number; books: number } = { awards: 0, books: 0 }) {
+function star(pen: Pen, cx: number, cy: number, r: number, hex: string) {
+  const points: number[] = [];
+  for (let index = 0; index < 10; index++) {
+    const angle = -Math.PI / 2 + index * Math.PI / 5;
+    const radius = index % 2 ? r * 0.45 : r;
+    points.push(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+  }
+  pen.poly(points, hex);
+}
+
+export function drawRoom(pen: Pen, w: number, h: number, office: number, record: { cups: number; books: number; stars: number; starColor: string } = { cups: 0, books: 0, stars: 1, starColor: '#2f7d63' }) {
   const formal = office >= 1;
   const props = roomProps(w, h, office);
   pen.rect(0, 0, w, h, formal ? '#e6eee9' : '#f1e7d6', 8);
   const floor = props.floor;
   pen.rect(0, floor, w, h - floor, formal ? '#cdd8d2' : '#dcc6a3', 0);
   pen.rect(0, h - 8, w, 8, formal ? '#bccac3' : '#c9ae86', 0);
+  const win = props.window;
+  pen.rect(win.x, win.y, win.w, win.h, '#bfe0ee', 3);
+  pen.rect(win.x, win.y + win.h * 0.62, win.w, win.h * 0.38, '#d9ecf3', 0);
+  if (!formal) pen.circle(win.x + win.w * 0.7, win.y + 10, 6, '#ffe6a3');
+  pen.frame(win.x, win.y, win.w, win.h, formal ? '#9fb7bf' : '#9a8466', 2, 3);
+  pen.line(win.x + win.w / 2, win.y, win.x + win.w / 2, win.y + win.h, formal ? '#9fb7bf' : '#9a8466', 2);
   if (formal) {
-    const span = w * 0.5 - 28;
-    for (let index = 0; index < 2; index++) {
-      const x = 18 + index * span / 2;
-      const width = span / 2 - 10;
-      pen.rect(x, 12, width, floor - 24, '#bfe0ee', 3);
-      pen.rect(x, 12 + (floor - 24) * 0.62, width, (floor - 24) * 0.38, '#d9ecf3', 0);
-      pen.frame(x, 12, width, floor - 24, '#9fb7bf', 2, 3);
-      pen.line(x + width / 2, 12, x + width / 2, floor - 12, '#9fb7bf', 2);
-    }
-    pen.rect(w - 44, floor - 30, 26, 30, '#8b6a4c', 3);
-    pen.circle(w - 31, floor - 40, 16, '#5c9a6e');
-    pen.circle(w - 40, floor - 50, 10, '#6fae7f');
+    pen.rect(w - 30, floor - 26, 20, 26, '#8b6a4c', 3);
+    pen.circle(w - 20, floor - 34, 13, '#5c9a6e');
   } else {
-    pen.rect(22, 14, 72, floor - 34, '#bfe0ee', 3);
-    pen.circle(70, 30, 8, '#ffe6a3');
-    pen.frame(22, 14, 72, floor - 34, '#9a8466', 3, 3);
-    pen.line(58, 14, 58, floor - 20, '#9a8466', 2);
-    pen.rect(w - 34, floor - 24, 18, 24, '#b07b55', 3);
-    pen.circle(w - 25, floor - 34, 12, '#6fae7f');
+    pen.rect(w - 26, floor - 20, 14, 20, '#b07b55', 3);
+    pen.circle(w - 19, floor - 28, 10, '#6fae7f');
   }
+  // Big screen bezel; the work itself is drawn into it by the app.
+  const screen = props.screen;
+  pen.rect(screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 8, '#2b3532', 4);
+  pen.rect(screen.x + screen.w / 2 - 6, screen.y + screen.h + 4, 12, 4, '#2b3532', 0);
+  // Star plaque.
+  const plaque = props.plaque;
+  pen.rect(plaque.x, plaque.y, plaque.w, plaque.h, '#8b6a4c', 4);
+  pen.rect(plaque.x + 2, plaque.y + 2, plaque.w - 4, plaque.h - 4, '#f5ead2', 3);
+  for (let index = 0; index < 3; index++) star(pen, plaque.x + plaque.w / 2 + (index - 1) * 14, plaque.y + plaque.h / 2, 6, index < record.stars ? record.starColor : '#d8cdb5');
   // Whiteboard with a little month grid.
   const board = props.board;
   pen.rect(board.x, board.y, board.w, board.h, '#fbfbf7', 3);
   pen.frame(board.x, board.y, board.w, board.h, '#8e9b97', 2, 3);
   pen.rect(board.x + 4, board.y + 3, board.w - 8, 4, '#d9534f', 1);
   const cellW = (board.w - 10) / 4;
-  const rows = Math.min(3, Math.max(1, Math.floor((board.h - 12) / 6)));
+  const rows = Math.min(4, Math.max(1, Math.floor((board.h - 22) / 6)));
   for (let row = 0; row < rows; row++) for (let col = 0; col < 4; col++) pen.rect(board.x + 5 + col * cellW, board.y + 10 + row * 6, cellW - 2, 4, row === 1 && col === 2 ? '#e6a85c' : '#dfe4e2', 1);
-  // Shelf: one spine per released title, one cup per award.
+  // Shelf: one spine per released title, cups grow with unlocked achievements.
   const shelf = props.shelf;
-  const plankY = shelf.y + shelf.h - 4;
+  const plankY = shelf.y + shelf.h - 16;
   pen.rect(shelf.x, plankY, shelf.w, 4, '#8b6a4c', 1);
-  const spines = Math.min(6, record.books);
+  const spines = Math.min(5, record.books);
   const spineColors = ['#c8574f', '#497899', '#e0a526', '#2f7d63', '#9b6fb0', '#d9814f'];
   for (let index = 0; index < spines; index++) pen.rect(shelf.x + 3 + index * 5, plankY - 13, 4, 13, spineColors[index % spineColors.length], 1);
-  const cups = Math.min(3, record.awards);
+  const cups = Math.min(3, record.cups);
   for (let index = 0; index < cups; index++) {
     const x = shelf.x + shelf.w - 10 - index * 9;
     pen.rect(x - 1, plankY - 3, 6, 3, '#b07b2a', 1);
