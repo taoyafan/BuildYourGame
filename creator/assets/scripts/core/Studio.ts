@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.28';
+export const VERSION = '0.1.29';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -140,24 +140,6 @@ export const OFFICES = [
   { name: '正式办公室', seats: 10, rent: 3, cost: 8 },
   { name: '独立工作室', seats: 16, rent: 5, cost: 30 }
 ];
-export const STUDIO_TOOLS: any = {
-  creativity: { name: '创意工作台', cost: 5, text: '做创意工作时速度 +20%。' },
-  depth: { name: '设计工具', cost: 6, text: '做深度工作时速度 +20%。' },
-  fluidity: { name: '性能分析器', cost: 6, text: '做流畅工作时速度 +20%。' },
-  picture: { name: '绘画软件', cost: 5, text: '做画面工作时速度 +20%。' },
-  sound: { name: '音频工作站', cost: 4, text: '做声音工作时速度 +20%。' },
-  discover: { name: '自动化测试', cost: 6, text: '发现与修复缺陷的速度 +20%。' }
-};
-// Do not open the whole tool shop on day one: three core development tools are enough while the
-// first project is still taking shape. Visual, audio and defect tooling appears once a prototype
-// exists, when the player can actually see which dimension is lagging.
-const EARLY_TOOLS = ['creativity', 'depth', 'fluidity'];
-export function toolOpen(state: any, key: string) {
-  if (!has(STUDIO_TOOLS, key)) return false;
-  if (EARLY_TOOLS.includes(key)) return true;
-  return state.catalog.length > 0 || state.projects.some((project: any) => project.checkpoints?.prototype || project.released);
-}
-
 // Sound can be bought instead of hired: a one-off purchase finishes part of the sound dimension at a
 // modest quality, which is how a small team ships sound at all before it can afford an audio hire.
 export const SOUND_OUTSOURCE = [
@@ -165,12 +147,11 @@ export const SOUND_OUTSOURCE = [
   { name: '委托音频制作', cost: 6, share: 1, quality: 65, text: '一次性做完声音工作，质量中规中矩。' }
 ];
 
-// Promotion is one budget control, not a channel pick. It costs money and buyers only: no time is lost.
-// The budget is counted in buyers (budget / price), which asks the real question: what is one more buyer worth?
-export const PROMOTE_HALF = 2.8;
-export const PROMOTE_BUYERS = 420;
-export const PROMOTE_CAP = 8;
-export const PROMOTE_TIERS = [2, 4, 6];
+// Promotion is one campaign per title, picked once after the trial build. Tiers differ by orders of
+// magnitude and each yuan buys fewer followers as the budget grows, so the right tier depends on what
+// one follower is worth for this title (price, trial reception) and how far its launch can reach.
+export const PROMOTE_TIERS = [0.5, 3, 15, 60];
+const PROMOTE_SCALE = 400;
 // Minimum discount a title may go to. The system decides when to run a sale and how deep within the floor.
 export const DISCOUNTS = [0.75];
 export const RELEASE_LEAD_DAYS = 30;
@@ -236,14 +217,15 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 4, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
-    staff: [], projects: [], catalog: [], tools: [], candidates: {},
+    version: 6, rulesRevision: 5, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    staff: [], projects: [], catalog: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
     office: 0, goals: { firstRelease: null, breakEven: null, moved: null, topTen: null, award: null, expanded: null }, fans: 0, feed: [],
     overtime: {}, lastOuting: null, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
-    eventNext: 60, eventSeen: {}, schedule: []
+    eventNext: 60, eventSeen: {}, schedule: [], celebs: [],
+    rating: { score: 0, watch: false, promotedAt: 0, history: [] }
   };
   seedIndustry(state);
   return state;
@@ -253,8 +235,8 @@ export const tutorialActive = (state: any) => !!state.company && state.catalog.l
 export const seats = (state: any) => OFFICES[state.office].seats;
 export const projectOpen = (state: any) => state.projects.filter((project: any) => !project.released);
 export const activeProject = (state: any, id?: string) => id ? state.projects.find((project: any) => project.id === id) || null : projectOpen(state)[0] || null;
-// Projects that have shipped but still take people: patches, reworks and DLC all happen here.
-export const afterSaleProjects = (state: any) => state.projects.filter((project: any) => project.released);
+// Everything the team is working on: titles in development plus shipped titles with a patch running.
+export const liveProjects = (state: any) => state.projects.filter((project: any) => !project.released || project.patch);
 
 function studioLog(state: any, title: string, text: string) {
   state.history.unshift({ day: state.day, title, text });
@@ -382,10 +364,13 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   });
   // A name in the industry shows up only where word of mouth is worth something: a strong record draws
   // them out, they want their own people and they take a while to settle in.
-  const fameChance = next.goals.award !== null ? 0.35 : industryVoice(next) >= FOCUS_AT[1] ? 0.18 : 0;
+  const fameChance = [0, 0.15, 0.35][next.focus || 0];
   if (next.notices.fameNext && channel === 'headhunt' || fameChance > 0 && random(next) < fameChance) {
     if (channel === 'headhunt') delete next.notices.fameNext;
     const star = people[Math.floor(random(next) * people.length)];
+    // A name the player has already read about in the news is the one who turns up.
+    const known = (next.celebs || []).find((celeb: any) => !celeb.taken && celeb.role === role && next.day - celeb.day >= 20);
+    if (known) { known.taken = true; star.name = known.name; star.story = `第 ${known.day} 天新闻：${known.title}`; }
     for (const key of ABILITY_KEYS) star.abilities[key] = Math.min(100, star.abilities[key] + 14 + Math.round(random(next) * 10));
     star.speed = Math.min(140, star.speed + 16);
     star.wage = round(star.wage * 1.6);
@@ -429,6 +414,8 @@ export function hire(state: any, id: string) {
   person.hired = true;
   next.staff.push({ ...person, joined: next.day, home: homeWork(person) });
   studioLog(next, `${person.name} 加入`, `${ROLES[person.role].name}，月薪 ${person.wage.toFixed(2)} 万。`);
+  if (person.fame) news(next, next.focus || 0, true, `${person.name}加入${next.company}`, person.story ? `此前的动向：${person.story}` : '业内知名开发者换了新东家。', null, true);
+  if (person.story) announce(next, { kind: 'record', title: `${person.name}加入了`, text: '曾在新闻里见过的名字，现在是你的同事', amount: 0 });
   // A star who insisted on bringing their old crew takes one along when a seat is free for them.
   if (person.fame && person.condition === 'crew' && next.staff.length < seats(next)) {
     const role = ['code', 'design', 'art'][Math.floor(random(next) * 3)];
@@ -484,7 +471,6 @@ function speedOf(state: any, person: any, workKey: string) {
   if ((person.leaveUntil || 0) > state.day) return 0;
   let value = person.speed / 100;
   if (person.tags.some((tag: any) => tag.key === 'speedy')) value *= 1.12;
-  if (state.tools.includes(workKey === 'repair' ? 'discover' : WORKS.find(work => work.key === workKey)?.ability || workKey)) value *= 1.2;
   const overtime = !!state.overtime[person.id];
   if (overtime) value *= OVERTIME_BOOST;
   if (person.stressTags.includes('tired')) value *= 0.8;
@@ -540,6 +526,7 @@ export function personWorks(state: any, project: any, person: any) {
 export function personActivity(state: any, project: any, person: any) {
   if (!belongsTo(state, project, person)) return '未参与本项目';
   if (person.leaveUntil > state.day) return '带薪休假中';
+  if (project.patch) return patchProgress(project).fixed < project.patch.targets.length ? '补丁：修复已报告缺陷' : '补丁：返工' + (DIMENSIONS.find(item => item.key === project.patch.rework)?.name || '');
   const split = assignDay(state, project, person);
   if (split.repair) return '自动修复待修缺陷（消耗工时）';
   return Object.keys(split).map(key => key === 'discover' ? (remainingOf(project, key) > 0.0001 ? '测试' : '复测') : `${DIMENSIONS.find(item => item.key === key)?.name}${remainingOf(project, key) > 0.0001 ? '制作' : '返工'}`).join('、');
@@ -854,6 +841,7 @@ export function assign(state: any, projectId: string, personId: string, works: s
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId);
   if (!project) throw new Error('项目不存在。');
+  if (project.released) throw new Error('已发售作品请开补丁，再安排补丁人手。');
   const person = next.staff.find((item: any) => item.id === personId);
   if (!person) throw new Error('员工不存在。');
   // Array.from, not [...new Set(...)]: Cocos' build transpiler turns the latter into
@@ -901,13 +889,107 @@ export function setPriority(state: any, projectId: string, priority: number) {
   return next;
 }
 
-export function buyTool(state: any, key: string) {
-  if (!has(STUDIO_TOOLS, key)) throw new Error('工具不存在。');
-  if (!toolOpen(state, key)) throw new Error('这类工具要等首个作品完成原型后开放。');
+// A patch is its own small project on a shipped title: the scope is fixed when it starts (the defects
+// players have reported so far, plus an optional rework of one dimension), it has its own crew and
+// priority, and it ships by itself once the scope is done.
+export const PATCH_REWORK = 0.3;
+
+export function patchPlan(state: any, project: any, rework: string | null) {
+  const targets = project.defects.filter((defect: any) => defect.found && !defect.fixed);
+  const reworkTotal = rework ? round(workOf(project, rework).total * PATCH_REWORK) : 0;
+  const repairWork = sum(targets.map((defect: any) => (REPAIR_WORK - (defect.repairWork || 0)) / 0.75));
+  return { targets: targets.length, reworkTotal, work: round(repairWork + reworkTotal) };
+}
+
+export function startPatch(state: any, projectId: string, rework: string | null = null) {
   const next = studioAction(state);
-  if (next.tools.includes(key)) throw new Error('该工具已购置。');
-  spend(next, STUDIO_TOOLS[key].cost, `购置${STUDIO_TOOLS[key].name}`);
-  next.tools.push(key);
+  const project = next.projects.find((item: any) => item.id === projectId && item.released);
+  if (!project) throw new Error('作品不存在。');
+  if (project.patch) throw new Error('这部作品已有补丁在制作。');
+  if (rework && !CONTENT_KEYS.includes(rework)) throw new Error('返工项目无效。');
+  const targets = project.defects.filter((defect: any) => defect.found && !defect.fixed).map((defect: any) => defect.id);
+  if (!targets.length && !rework) throw new Error('目前没有玩家报告的缺陷；选一项返工才能开更新。');
+  const book = next.catalog.find((item: any) => item.id === projectId);
+  const metrics = projectMetrics(project);
+  project.patch = {
+    started: next.day, rework, targets, reworkTotal: rework ? round(workOf(project, rework).total * PATCH_REWORK) : 0, reworkDone: 0,
+    before: { overall: metrics.overall, review: book ? book.reviewScore : null, daily: book ? book.lastDayUnits : 0 }
+  };
+  project.assignments = {};
+  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
+  const scope = (targets.length ? `修复 ${targets.length} 项已报告缺陷` : '') + (rework ? `${targets.length ? '，' : ''}返工${DIMENSIONS.find(item => item.key === rework)?.name}` : '');
+  studioLog(next, `《${project.name}》开补丁`, `${scope}。安排人手后开始制作，做完自动上线。`);
+  return next;
+}
+
+export function patchProgress(project: any) {
+  const patch = project.patch;
+  if (!patch) return null;
+  const targets = project.defects.filter((defect: any) => patch.targets.includes(defect.id));
+  const fixed = targets.filter((defect: any) => defect.fixed).length;
+  const repairLeft = sum(targets.filter((defect: any) => !defect.fixed).map((defect: any) => (REPAIR_WORK - (defect.repairWork || 0)) / 0.75));
+  const reworkLeft = Math.max(0, patch.reworkTotal - patch.reworkDone);
+  const total = sum(targets.map(() => REPAIR_WORK / 0.75)) + patch.reworkTotal;
+  const left = repairLeft + reworkLeft;
+  return { fixed, targets: targets.length, reworkDone: round(patch.reworkDone), reworkTotal: patch.reworkTotal, left: round(left), share: total > 0 ? clamp(1 - left / total, 0, 1) : 1, done: left <= 0.0001 };
+}
+
+export function patchForecast(state: any, project: any) {
+  const progress = patchProgress(project);
+  if (!progress) return null;
+  const factor = priorityFactor(state, project);
+  const rate = sum(state.staff.filter((person: any) => belongsTo(state, project, person)).map((person: any) => speedOf(state, person, 'repair') * factor * conditionFactor(person, project)));
+  const days = progress.done ? 0 : rate > 0.0001 ? Math.ceil(progress.left / rate) : null;
+  return { ...progress, rate: round(rate), days, eta: days === null ? null : state.day + days };
+}
+
+// The patch crew is a plain in or out: a patch has one job list, so there is nothing to split.
+export function setPatchCrew(state: any, projectId: string, personId: string, on: boolean) {
+  const next = studioAction(state);
+  const project = next.projects.find((item: any) => item.id === projectId && item.patch);
+  if (!project) throw new Error('补丁不存在。');
+  const person = next.staff.find((item: any) => item.id === personId);
+  if (!person) throw new Error('员工不存在。');
+  if (!project.assignments) project.assignments = {};
+  if (on) {
+    for (const other of next.projects) if (other.assignments && other.id !== projectId) delete other.assignments[personId];
+    project.assignments[personId] = [homeWork(person)];
+  } else delete project.assignments[personId];
+  studioLog(next, '调整补丁人手', `${person.name}${on ? '加入' : '离开'}《${project.name}》补丁。`);
+  return next;
+}
+
+function finishPatch(state: any, project: any) {
+  const patch = project.patch;
+  const progress = patchProgress(project);
+  const book = state.catalog.find((item: any) => item.id === project.id);
+  const metrics = projectMetrics(project);
+  const rework = patch.rework ? DIMENSIONS.find(item => item.key === patch.rework)?.name : '';
+  const record = {
+    day: state.day, started: patch.started, fixed: progress.fixed, targets: progress.targets, rework: patch.rework,
+    reworkShare: patch.reworkTotal > 0 ? round(patch.reworkDone / patch.reworkTotal) : 0,
+    overallBefore: patch.before.overall, overallAfter: metrics.overall, reviewBefore: patch.before.review, dailyBefore: patch.before.daily,
+    reviewAt: book ? book.reviewScore : null, dailyAt: book ? book.lastDayUnits : 0
+  };
+  if (book) {
+    book.patches = [...(book.patches || []), record].slice(-12);
+    book.updates = (book.updates || 0) + 1;
+    book.metrics = metrics;
+  }
+  project.patch = null;
+  project.assignments = {};
+  const text = `修复 ${progress.fixed}/${progress.targets} 项${rework ? `，返工${rework}` : ''}，综合 ${record.overallBefore.toFixed(0)} → ${metrics.overall.toFixed(0)}`;
+  announce(state, { kind: 'record', title: `《${project.name}》补丁上线`, text, amount: 0 });
+  news(state, state.focus || 0, false, `《${project.name}》发布补丁`, text + '。', null, true);
+  studioLog(state, `《${project.name}》补丁上线`, text + '；口碑与销量会随后续玩家评价逐步变化。');
+}
+
+// Ship whatever the patch has done so far; untouched targets stay on the to-fix list.
+export function releasePatch(state: any, projectId: string) {
+  const next = studioAction(state);
+  const project = next.projects.find((item: any) => item.id === projectId && item.patch);
+  if (!project) throw new Error('补丁不存在。');
+  finishPatch(next, project);
   return next;
 }
 
@@ -971,7 +1053,7 @@ function addDefect(project: any, person: any, dimension: string, chance: number,
 export const PRIORITY_EFFICIENCY = [1, 0.85, 0.72];
 
 export function projectOrder(state: any) {
-  return state.projects.filter((project: any) => !project.released || state.staff.some((person: any) => chosenWorks(project, person).length)).sort((left: any, right: any) => (left.priority || 0) - (right.priority || 0));
+  return state.projects.filter((project: any) => !project.released || project.patch).sort((left: any, right: any) => (left.priority || 0) - (right.priority || 0));
 }
 
 function priorityFactor(state: any, project: any) {
@@ -979,7 +1061,31 @@ function priorityFactor(state: any, project: any) {
   return rank <= 0 ? 1 : Math.pow(0.85, rank);
 }
 
+// A running patch: crew members fix its target defects first, then do its rework, then it ships.
+function producePatch(state: any, project: any) {
+  const patch = project.patch;
+  const crew = state.staff.filter((person: any) => belongsTo(state, project, person));
+  project.invested += sum(crew.map((person: any) => (person.wage + OFFICES[state.office].rent / Math.max(1, state.staff.length)) / 30));
+  const factor = priorityFactor(state, project);
+  for (const person of crew) {
+    let amount = speedOf(state, person, 'repair') * factor * conditionFactor(person, project);
+    if (amount <= 0) continue;
+    const before = amount;
+    amount = repair(state, project, amount, person, patch.targets);
+    if (amount > 0 && patch.rework && patch.reworkDone < patch.reworkTotal) {
+      const used = Math.min(amount, patch.reworkTotal - patch.reworkDone);
+      rework(project, patch.rework, used, able(person, WORKS.find(work => work.dimension === patch.rework).ability));
+      patch.reworkDone = round(patch.reworkDone + used);
+      amount -= used;
+    }
+    project.contributions[person.id] = (project.contributions[person.id] || 0) + before - amount;
+    person.work = round(person.work + before - amount);
+  }
+  if (patchProgress(project).done && crew.length) finishPatch(state, project);
+}
+
 function produceProject(state: any, project: any) {
+  if (project.released) { if (project.patch) producePatch(state, project); return; }
   const crew = state.staff.filter((person: any) => belongsTo(state, project, person));
   const dailyCost = sum(crew.map((person: any) => (person.wage + OFFICES[state.office].rent / Math.max(1, state.staff.length)) / 30));
   project.invested += dailyCost;
@@ -1035,10 +1141,10 @@ function produceProject(state: any, project: any) {
 }
 
 // Repair only touches found defects, and is settled by the ability of the dimension that left it: a
-// weaker hand still fixes it, just slower. No attempt is ever wasted.
-function repair(state: any, project: any, amount: number, person: any) {
-  const known = project.defects.filter((defect: any) => defect.found && !defect.fixed);
-  if (!known.length) return;
+// weaker hand still fixes it, just slower. No attempt is ever wasted. Returns the time left over.
+function repair(state: any, project: any, amount: number, person: any, only?: string[]) {
+  const known = project.defects.filter((defect: any) => defect.found && !defect.fixed && (!only || only.includes(defect.id)));
+  if (!known.length) return amount;
   for (const target of known) {
     if (amount <= 0) break;
     const skill = 0.5 + able(person, target.dimension) / 200;
@@ -1050,6 +1156,7 @@ function repair(state: any, project: any, amount: number, person: any) {
     target.fixed = true;
     project.found = Math.max(0, project.found - 1);
   }
+  return Math.max(0, amount);
 }
 
 export function projectScore(project: any) {
@@ -1057,33 +1164,46 @@ export function projectScore(project: any) {
   return round(clamp(metrics.overall - project.expectation, 0, 100));
 }
 
-export function promoteBuyers(cost: number, promoted: number) {
-  const budget = clamp(cost, 0, PROMOTE_CAP);
-  return Math.round(PROMOTE_BUYERS * budget / (1 + budget / PROMOTE_HALF) * (1 - clamp(promoted / PROMOTE_CAP, 0, 0.85)));
+export function promoteBuyers(cost: number) {
+  return Math.round(PROMOTE_SCALE * Math.pow(Math.max(0, cost), 0.8));
 }
 
 export function promoteRange(state: any, project: any, cost: number) {
   if (!project) return null;
-  const value = promoteBuyers(cost, project.promoted);
-  const spread = 0.1 + 0.12 * (1 - clamp(project.followers / 1500, 0, 1));
-  return { low: Math.round(value * (1 - spread)), high: Math.round(value * (1 + spread)), cost: clamp(cost, 0, PROMOTE_CAP) };
+  const value = promoteBuyers(cost);
+  return { low: Math.round(value * 0.88), high: Math.round(value * 1.12), cost };
+}
+
+// What one follower is worth at launch for this title, and how many followers its launch can absorb
+// before the scale's market ceiling stops extra buyers. Uses the latest trial score when there is one.
+export function followerValue(state: any, project: any) {
+  const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : 0.5;
+  const conversion = 0.2 + fit * 0.5;
+  const price = TYPES[project.type].price * SCALES[project.scale].price * (project.parentId ? 0.35 : 1);
+  const ceiling = MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1) * 0.6;
+  const last = state.catalog.find((book: any) => !book.parentId && book.openingFollowers > 0);
+  return {
+    yuan: Math.round(price * conversion * 10000), tested: !!project.test, ceiling: Math.round(ceiling / conversion),
+    last: last ? { name: last.name, yuan: Math.round(last.openingReceipt * 10000 / last.openingFollowers) } : null
+  };
 }
 
 export function promote(state: any, projectId: string, cost: number) {
   const value = Number(cost);
-  if (!Number.isFinite(value) || value <= 0) throw new Error('推广预算无效。');
+  if (!PROMOTE_TIERS.includes(value)) throw new Error('推广档位无效。');
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后才能推广。');
-  const budget = round(clamp(value, 0, PROMOTE_CAP));
-  const range = promoteRange(next, project, budget);
-  spend(next, budget, '推广预算');
+  if (project.promoted > 0) throw new Error('每部作品只能推广一次。');
+  const range = promoteRange(next, project, value);
+  spend(next, value, '推广预算');
   const buyers = Math.round((range.low + range.high) / 2 * (0.94 + random(next) * 0.12));
   project.followers += buyers;
-  project.promoted = round(project.promoted + budget);
-  project.invested = round(project.invested + budget);
-  studioLog(next, '推广结果', `《${project.name}》投放 ${budget.toFixed(2)} 万，新增 ${buyers} 位关注者；关注不等于购买。`);
+  project.promoted = value;
+  project.promoFollowers = buyers;
+  project.invested = round(project.invested + value);
+  studioLog(next, '推广结果', `《${project.name}》投放 ${value.toFixed(2)} 万，新增 ${buyers} 位关注者；关注不等于购买。`);
   return next;
 }
 
@@ -1202,23 +1322,13 @@ function reviewOf(state: any, project: any, metrics: any) {
   return { reasons, quotes };
 }
 
-// A released project keeps its catalogue entry live: patching defects and reworking dimensions slowly
-// move the review score and the daily sales the same way a fresh release would, but only by degrees.
+// A released project keeps its catalogue entry live: a patch's fixes and rework move the review score
+// and the daily sales the same way a fresh release would, but only by degrees.
 function syncReleased(state: any, project: any) {
   const book = state.catalog.find((item: any) => item.id === project.id);
   if (!book) return;
-  const metrics = projectMetrics(project);
-  const previous = book.metrics.overall;
-  const previousKnown = book.metrics.known || 0;
-  book.metrics = metrics;
+  book.metrics = projectMetrics(project);
   book.invested = round(project.invested);
-  if (metrics.overall > previous + 0.001 || metrics.known < previousKnown) {
-    if (state.day - (book.patchedAt || 0) >= 7) {
-      book.updates = (book.updates || 0) + 1;
-      studioLog(state, `《${project.name}》补丁 / 更新`, `实际修复与返工已交付，当前已知问题 ${metrics.known} 项，后续玩家评价将逐步反映变化。`);
-      book.patchedAt = state.day;
-    }
-  }
 }
 
 // Each stage of the company is limited by a different scarce thing. The stage is read from company
@@ -1233,19 +1343,84 @@ export function companyPhase(state: any) {
   return { key: 'late', name: '后期', scarce: '缺资格', text: '现金不再是约束。限制你的是日历窗口、由作品挣来的资格，以及公司名望。' };
 }
 
-// Industry voice is how loud the company is: fans, what its last three titles sold in their first week,
-// the awards it won (weighted by level) and its size. Cash is left out on purpose: hoarding is not fame.
-export const FOCUS_AT = [0, 30, 120];
-export function industryVoice(state: any) {
-  const recent = state.catalog.slice(0, 3);
-  const opening = recent.length ? sum(recent.map((book: any) => book.firstWeek || book.openingUnits || 0)) / recent.length : 0;
-  const awards = sum(state.awards.filter((award: any) => award.own).map((award: any) => [3, 10, 30][award.tier ?? 1]));
-  return round(state.fans / 100 + opening / 100 + awards + state.staff.length + state.office * 5);
+// ---- Media rating ----
+// A fictional outlet rates the studio every quarter from its last three titles. The rating decides the
+// company's tier, which can rise and fall: entering a tier asks more than keeping it, a fresh promotion
+// is safe for one period, and a watch-list warning always comes before a demotion.
+export const RATING_MEDIA = '《独立游戏观察》';
+export const RATING_PERIOD = 90;
+export const RATING_UP = [0, 46, 72];
+export const RATING_KEEP = [0, 38, 63];
+const RATING_WATCH = 4;
+const RATING_WEIGHTS = [0.5, 0.3, 0.2];
+// Attention a tier's coverage adds when a release date is announced and at launch.
+export const MEDIA_BONUS = [0, 0.1, 0.2];
+// A first-week rank is worth most on the highest chart the title reaches.
+const RANK_TOP = [40, 70, 100];
+const AWARD_POINTS = [3, 8, 15];
+
+function rankPoints(ranks: any) {
+  if (!Array.isArray(ranks)) return 0;
+  return Math.max(0, ...ranks.map((rank: number, level: number) => RANK_TOP[level] * clamp(1.15 - 0.5 * Math.log10(Math.max(1, rank)), 0, 1)));
+}
+
+export function ratingOf(state: any) {
+  const ranked = state.catalog.filter((book: any) => !book.parentId && book.firstRanks).slice(0, 3);
+  const used = RATING_WEIGHTS.slice(0, ranked.length);
+  const weightSum = sum(used) || 1;
+  const books = ranked.map((book: any, index: number) => {
+    const awards = state.awards.filter((award: any) => award.own && (award.book === book.id || award.winner === `《${book.name}》`));
+    const rank = round(rankPoints(book.firstRanks));
+    const award = Math.min(15, sum(awards.map((item: any) => AWARD_POINTS[item.tier ?? 1])));
+    const score = round(rank * 0.55 + book.reviewScore * 0.45 + award);
+    return { id: book.id, name: book.name, rank, review: round(book.reviewScore), award, score, weight: round(used[index] / weightSum) };
+  });
+  const latest = Math.max(-Infinity, ...state.catalog.filter((book: any) => !book.parentId).map((book: any) => book.released));
+  const idle = Number.isFinite(latest) ? state.day - latest : 0;
+  const decay = idle >= 720 ? (Math.floor((idle - 720) / RATING_PERIOD) + 1) * 4 : 0;
+  const score = round(Math.max(0, sum(books.map((book: any) => book.score * book.weight)) - decay));
+  const tier = state.focus || 0;
+  const rating = state.rating || {};
+  return {
+    score, books, decay, tier, watch: !!rating.watch, published: rating.score ?? 0, history: rating.history || [],
+    up: tier < 2 ? RATING_UP[tier + 1] : null, keep: tier > 0 ? RATING_KEEP[tier] : null,
+    next: (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD, safe: tier > 0 && state.day - (rating.promotedAt || 0) < RATING_PERIOD
+  };
+}
+
+function rateDay(state: any) {
+  if (state.day % RATING_PERIOD !== 0 || !state.company) return;
+  const view = ratingOf(state);
+  const rating = state.rating;
+  const before = state.focus || 0;
+  const score = view.score;
+  let tier = before;
+  let note = '';
+  const settled = tier > 0 && state.day - (rating.promotedAt || 0) > RATING_PERIOD;
+  if (tier < 2 && score >= RATING_UP[tier + 1]) {
+    tier += 1;
+    rating.promotedAt = state.day;
+    rating.watch = false;
+    note = `升入${TIERS[tier].name}圈层`;
+  } else if (settled && score < RATING_KEEP[tier] && rating.watch) {
+    tier -= 1;
+    rating.watch = false;
+    note = `降回${TIERS[tier].name}圈层`;
+  } else if (settled && score < RATING_KEEP[tier] + RATING_WATCH) {
+    rating.watch = true;
+    note = '列入观察名单';
+  } else rating.watch = false;
+  rating.score = score;
+  rating.history = [...(rating.history || []), { day: state.day, score, tier }].slice(-12);
+  state.focus = tier;
+  const line = tier !== before ? note : note ? `${note}，下一期低于保级线 ${RATING_KEEP[tier]} 分将降级` : `维持${TIERS[tier].name}圈层`;
+  news(state, tier, true, `${RATING_MEDIA}季度评级：${state.company} ${score.toFixed(0)} 分`, line + '。', null, true);
+  announce(state, { kind: tier > before ? 'record' : tier < before || note ? 'warning' : 'notice', title: `季度评级 ${score.toFixed(0)} 分`, text: `${RATING_MEDIA}：${line}`, amount: 0 });
+  studioLog(state, '季度媒体评级', `${RATING_MEDIA}评分 ${score.toFixed(0)}，${line}。`);
 }
 
 export function companyArchive(state: any) {
   return {
-    voice: industryVoice(state),
     wins: state.awards.filter((award: any) => award.own).length,
     books: state.catalog.map((book: any) => {
       // Shares come from the recorded per-person contributions of the live project, falling back to
@@ -1254,9 +1429,7 @@ export function companyArchive(state: any) {
       const shares: any = project ? project.contributions || {} : {};
       const total = sum(Object.values(shares));
       return {
-        id: book.id, name: book.name, type: book.type, scale: book.scale, released: book.released,
-        review: book.reviewScore, units: book.units, received: book.received, firstRanks: book.firstRanks || null,
-        breakout: !!book.breakout, team: book.team || [],
+        id: book.id, name: book.name,
         contributions: (book.team || []).map((person: any) => ({ name: person.name, role: person.role, share: total > 0 && shares[person.id] ? round(shares[person.id] / total) : round(1 / Math.max(1, (book.team || []).length)) }))
       };
     })
@@ -1289,8 +1462,12 @@ export function launchProject(state: any, projectId: string) {
   const breakoutChance = clamp((metrics.dimensions.creativity - 55) / 100 * 0.45, 0, 0.32);
   const breakout = breakoutChance > 0 && random(next) < breakoutChance;
   if (breakout) project.followers = Math.round(project.followers * (1.6 + random(next) * 0.9));
+  const exposure = MEDIA_BONUS[next.focus || 0];
+  if (exposure) project.followers = Math.round(project.followers * (1 + exposure));
   const clash = clashOf(next, next.day, project.followers);
   const { units, price, receipt } = openingSales(project, trend.multiplier * clash.factor, score);
+  // The campaign's share of the launch, counted in its share of the launch audience.
+  const promo = project.promoted > 0 ? { cost: project.promoted, followers: project.promoFollowers || 0, receipt: round(receipt * clamp((project.promoFollowers || 0) / Math.max(1, project.followers), 0, 1)) } : null;
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
   const capacity = Math.round(MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1) * (1 + Math.max(0, score - 70) / 25 * 4) * 0.5);
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
@@ -1306,7 +1483,7 @@ export function launchProject(state: any, projectId: string) {
     quotes: review.quotes,
     weekly: [receipt], paidBack: receipt >= project.invested, marks: 0, record: next.catalog.length > 0 && receipt > best,
     tutorial: next.catalog.length === 0, review,
-    sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout,
+    sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [],
     capacity, left: capacity, sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0
   };
   next.cash = round(next.cash + receipt);
@@ -1339,7 +1516,9 @@ export function launchProject(state: any, projectId: string) {
   const shortBoard = metrics.unfinished.length ? `仍有 ${metrics.unfinished.length} 个维度未完成，带着短板上市换回了款，之后可以继续更新。` : '';
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
-  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  const media = exposure ? `${TIERS[next.focus].name}圈层的媒体报道带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
+  const promoText = promo ? `推广 ${promo.cost} 万带来 ${promo.followers} 位关注，按本作转化约折合首发 ${promo.receipt.toFixed(2)} 万。` : '';
+  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -1646,8 +1825,10 @@ export function setDeadline(state: any, projectId: string, days: number) {
   if (!project || project.deadline) throw new Error('当前无法公布发售日。');
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后再公布发售日。');
   project.deadline = next.day + days;
-  project.followers += 150;
-  studioLog(next, '公布发售日', `计划第 ${project.deadline} 天发售《${project.name}》，新增 150 人关注；延期会损失关注。`);
+  const exposure = Math.round(project.followers * MEDIA_BONUS[next.focus || 0]);
+  project.followers += 150 + exposure;
+  const extra = exposure ? `（含${TIERS[next.focus].name}圈层媒体报道 ${exposure} 人）` : '';
+  studioLog(next, '公布发售日', `计划第 ${project.deadline} 天发售《${project.name}》，新增 ${150 + exposure} 人关注${extra}；延期会损失关注。`);
   const near = scheduleOf(next).filter((item: any) => !item.own && Math.abs(item.day - project.deadline) <= 3);
   if (near.length) announce(next, { kind: 'notice', title: '档期提醒', text: `同周已有${near.map((item: any) => item.name).join('、')}定档，首发可能被分流。`, amount: 0 });
   return next;
@@ -1725,7 +1906,7 @@ export function newsFor(state: any) {
 // Announced rival releases and the player's own promised dates, soonest first.
 export function scheduleOf(state: any) {
   const rivals = (state.works || []).filter((work: any) => work.announced !== null && work.released > state.day).map((work: any) => ({ day: work.released, name: `《${work.name}》`, studio: work.studioName, studioId: work.studio, tier: work.tier, own: false }));
-  const own = state.projects.filter((project: any) => !project.released && project.deadline).map((project: any) => ({ day: project.deadline, name: `《${project.name}》`, studio: state.company, studioId: null, tier: null, own: true }));
+  const own = state.projects.filter((project: any) => !project.released && project.deadline).map((project: any) => ({ day: project.deadline, name: `《${project.name}》`, studio: state.company, studioId: null, projectId: project.id, tier: null, own: true }));
   return [...rivals, ...own].sort((left, right) => left.day - right.day);
 }
 
@@ -1818,7 +1999,52 @@ function industryTick(state: any, quiet: boolean) {
     }
   }
   TIERS.forEach((_, tier) => { if (random(state) < FILLER_PER_YEAR[tier] / 360) state.works.push(rivalWork(state, tier, null, day)); });
+  if (!quiet && day % 30 === 15 && random(state) < 0.4) celebNews(state);
   for (const work of state.works) if (work.released === day - 7) finishRivalWork(state, work, quiet);
+}
+
+// Industry people move between studios in the news; the same names later turn up as star candidates,
+// so a player who reads the headlines recognises who just walked in.
+function celebNews(state: any) {
+  const studios = state.rivals.filter((studio: any) => studio.closed === null && studio.tier >= 1);
+  if (!studios.length) return;
+  const studio = pick(state, studios);
+  const work = state.works.filter((item: any) => item.studio === studio.id && item.released <= state.day).sort((left: any, right: any) => right.released - left.released)[0];
+  const role = pick(state, ['code', 'design', 'art', 'audio']);
+  const name = pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES);
+  const title = `${studio.name}${ROLES[role].name}${name}离职`;
+  const text = work ? `曾参与《${work.name}》，据说在考虑新的去处。` : '据说在考虑新的去处。';
+  news(state, studio.tier, true, title, text, studio.id);
+  state.celebs = [...(state.celebs || []).filter((celeb: any) => !celeb.taken), { name, role, studio: studio.name, day: state.day, title, taken: false }].slice(-10);
+}
+
+// What the home-screen bulletin plays: the company's own news first, then the current tier, then the
+// headlines above it. Reading it is optional; important moments still get a banner.
+export function bulletinOf(state: any) {
+  const list = newsFor(state).filter((item: any) => state.day - item.day <= 60);
+  const own = list.filter((item: any) => item.own);
+  const rest = list.filter((item: any) => !item.own);
+  return [...own.slice(0, 3), ...rest].slice(0, 6);
+}
+
+// Everything dated in the next half year: expos, the awards, the media rating, announced releases.
+export function calendarOf(state: any, span = 180) {
+  const end = state.day + span;
+  const year = Math.floor((state.day - 1) / 360);
+  const items: any[] = [];
+  TIERS.forEach((tier, level) => [year, year + 1].forEach(index => tier.expoDays.forEach(at => {
+    const day = index * 360 + at;
+    if (day < state.day || day > end) return;
+    const entry = state.exhibitions.find((item: any) => item.day === day && (item.tier ?? 0) === level);
+    items.push({ day, kind: 'expo', title: tier.expo, detail: entry ? `已报名《${entry.name}》` : `报名截止第 ${day - 7} 天 · 报名费 ${tier.fee} 万`, tier: level, own: !!entry, route: { menu: 'market' } });
+  })));
+  for (let day = (year + 1) * 360; day <= end; day += 360) items.push({ day, kind: 'awards', title: '年度评选', detail: '本地、全国、国际三级', own: false, route: { menu: 'industry', id: 'awards:first:' + (state.focus || 0) } });
+  for (let day = (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD; day <= end; day += RATING_PERIOD) items.push({ day, kind: 'rating', title: `${RATING_MEDIA}季度评级`, detail: '决定公司圈层', own: true, route: { menu: 'rating' } });
+  for (const item of scheduleOf(state)) {
+    if (item.day > end) continue;
+    items.push({ day: item.day, kind: 'release', title: item.name + ' 发售', detail: item.own ? '本社承诺的发售日' : item.studio + ' · ' + TIERS[item.tier].name, own: item.own, route: item.own ? { menu: 'project', id: item.projectId } : item.studioId ? { menu: 'rival', id: item.studioId } : null });
+  }
+  return items.sort((left, right) => left.day - right.day);
 }
 
 function seedIndustry(state: any) {
@@ -1851,16 +2077,8 @@ function industryDay(state: any) {
       announce(state, { kind: 'record', title: `《${book.name}》进入全国前十`, text: `全国首周榜第 ${national} 名`, amount: 0 });
     }
   }
-  if (state.day % 30 === 0) {
-    for (const book of state.catalog) book.totalRanks = totalRanks(state, book);
-    const voice = industryVoice(state);
-    const focus = FOCUS_AT.reduce((level, at, index) => voice >= at ? index : level, 0);
-    if (focus > state.focus) {
-      state.focus = focus;
-      news(state, focus, true, `${state.company}进入${TIERS[focus].name}视野`, `行业声量 ${voice}，新闻与榜单默认关注${TIERS[focus].name}层。`, null, true);
-      announce(state, { kind: 'record', title: `进入${TIERS[focus].name}视野`, text: '行业新闻与榜单默认切换到新的层级', amount: 0 });
-    }
-  }
+  if (state.day % 30 === 0) for (const book of state.catalog) book.totalRanks = totalRanks(state, book);
+  rateDay(state);
   if (state.day % 360 === 0) {
     // Keep two years of titles plus the best-selling older ones, so lifetime charts stay meaningful.
     const recent = state.works.filter((work: any) => work.released > state.day - 720);
@@ -1939,7 +2157,7 @@ function awardsDay(state: any) {
     const winner: any = ranking[0];
     if (!winner) return;
     const title = `${tier.name}${category}`;
-    state.awards.push({ year, tier: level, category: title, winner: winner.name, own: winner.own, ranking: ranking.slice(0, 8) });
+    state.awards.push({ year, tier: level, category: title, winner: winner.name, book: winner.own ? winner.id : null, own: winner.own, ranking: ranking.slice(0, 8) });
     if (winner.own) {
       state.fans += tier.fans[index];
       if (level >= 1 && state.goals.award === null) state.goals.award = state.day;
@@ -2012,12 +2230,10 @@ const RANDOM_EVENTS: any[] = [
       safe('婉拒', '专心做自己的游戏')
     ] };
   } },
-  { key: 'used-gear', stage: 'early', when: (state: any) => {
-    const tool = Object.keys(STUDIO_TOOLS).find(key => toolOpen(state, key) && !state.tools.includes(key));
-    return tool && state.cash >= 2 ? { tool } : null;
-  }, make: (state: any, ctx: any) => ({ title: '二手设备转让', text: `隔壁工作室搬家，低价转让一套${STUDIO_TOOLS[ctx.tool].name}，没法试用。`, choices: [
-    { id: 'buy', title: '花 2 万买下', outcomes: [{ p: 0.65, text: `能用，相当于买到${STUDIO_TOOLS[ctx.tool].name}`, effects: { cash: -2, tool: true } }, { p: 0.35, text: '坏了，钱打了水漂', effects: { cash: -2 } }] },
-    safe('不买', '以后需要再买新的')
+  { key: 'game-jam', stage: 'early', when: (state: any) => state.staff.length >= 2 ? {} : null, make: () => ({ title: '本地 Game Jam 邀请', text: '城里的开发者聚会办 48 小时 Game Jam，问你们要不要组队参加。', choices: [
+    { id: 'founder', title: '创始人单人参加', outcomes: [{ p: 1, text: '创始人占用 3 天，粉丝 +100', effects: { busy: { who: 'founder', days: 3 }, fans: 100 } }] },
+    { id: 'team', title: '全员组队参加', outcomes: [{ p: 0.5, text: '作品拿了第一，全员占用 3 天，粉丝 +450', effects: { busy: { who: 'all', days: 3 }, fans: 450 } }, { p: 0.5, text: '玩得开心但没获奖，全员占用 3 天，粉丝 +80', effects: { busy: { who: 'all', days: 3 }, fans: 80 } }] },
+    safe('婉拒', '专心做自己的游戏')
   ] }) },
   { key: 'friend-loan', stage: 'early', when: (state: any) => shortOfCash(state) ? {} : null, make: () => ({ title: '老朋友想帮一把', text: '大学同学听说工作室缺钱，主动问要不要支持。', choices: [
     { id: 'loan', title: '借 8 万', outcomes: [{ p: 1, text: '马上到账 8 万，90 天后还 9 万', effects: { cash: 8, schedule: { days: 90, amount: -9, title: '归还朋友借款' } } }] },
@@ -2041,7 +2257,7 @@ const RANDOM_EVENTS: any[] = [
       { id: 'release', title: '祝福放人', outcomes: [{ p: 1, text: '离开，不付遣散费', effects: { leave: true } }] }
     ] };
   } },
-  { key: 'referral', stage: 'mid', when: (state: any) => industryVoice(state) >= FOCUS_AT[1] && !state.notices.fameNext ? {} : null, make: () => ({ title: '老前辈愿意引荐', text: '一位业内前辈说认识几位想换环境的名人，可以约出来聊聊。', choices: [
+  { key: 'referral', stage: 'mid', when: (state: any) => (state.focus || 0) >= 1 && !state.notices.fameNext ? {} : null, make: () => ({ title: '老前辈愿意引荐', text: '一位业内前辈说认识几位想换环境的名人，可以约出来聊聊。', choices: [
     { id: 'meet', title: '花 1 万请客见面', outcomes: [{ p: 0.6, text: '谈得投机，下一批行业推荐里必有名人', effects: { cash: -1, fame: true } }, { p: 0.4, text: '聊得愉快，但没有下文', effects: { cash: -1 } }] },
     safe('婉拒', '按现在的节奏招人')
   ] }) },
@@ -2167,7 +2383,6 @@ function applyEffects(state: any, effects: any, ctx: any) {
     studioLog(state, `${junior.name} 加入`, `${ROLES[junior.role].name}，月薪 ${junior.wage.toFixed(2)} 万。`);
   }
   if (effects.schedule) state.schedule = [...(state.schedule || []), { day: state.day + effects.schedule.days, amount: effects.schedule.amount, title: effects.schedule.title }];
-  if (effects.tool && ctx.tool && !state.tools.includes(ctx.tool)) state.tools.push(ctx.tool);
   if (effects.fame) state.notices.fameNext = true;
   const book = ctx.book ? state.catalog.find((item: any) => item.id === ctx.book) : null;
   if (book && effects.boost) book.dailyUnits *= effects.boost;
@@ -2300,6 +2515,26 @@ export function restoreStudio(saved: any) {
     }
     next.rulesRevision = 4;
   }
+  if (next.rulesRevision < 5) {
+    // Tools are gone; promotion is one campaign per title; patches are their own projects; the tier now
+    // comes from a quarterly media rating that can also fall.
+    delete next.tools;
+    next.celebs = next.celebs || [];
+    for (const project of next.projects) {
+      if (!project.released) continue;
+      const crew = next.staff.filter((person: any) => chosenWorks(project, person).length);
+      const targets = project.defects.filter((defect: any) => defect.found && !defect.fixed).map((defect: any) => defect.id);
+      if (crew.length && targets.length && !project.patch) {
+        const book = next.catalog.find((item: any) => item.id === project.id);
+        project.patch = { started: next.day, rework: null, targets, reworkTotal: 0, reworkDone: 0, before: { overall: projectMetrics(project).overall, review: book ? book.reviewScore : null, daily: book ? book.lastDayUnits : 0 } };
+      } else project.assignments = {};
+    }
+    next.rating = { score: 0, watch: false, promotedAt: 0, history: [] };
+    const score = ratingOf({ ...next, focus: 0 }).score;
+    next.focus = score >= RATING_UP[2] ? 2 : score >= RATING_UP[1] ? 1 : 0;
+    next.rating = { score, watch: false, promotedAt: next.day - RATING_PERIOD - 1, history: [{ day: next.day, score, tier: next.focus }] };
+    next.rulesRevision = 5;
+  }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
 }
@@ -2317,7 +2552,6 @@ function validStudio(state: any) {
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && tier(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && tier(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
-  if (!Array.isArray(state.tools) || !state.tools.every((key: any) => has(STUDIO_TOOLS, key))) return false;
   if (!object(state.goals) || !object(state.tutorial) || !object(state.overtime) || !Array.isArray(state.rankings) || !Array.isArray(state.exhibitions) || !Array.isArray(state.awards) || !Array.isArray(state.history) || !Array.isArray(state.reports)) return false;
   return true;
 }

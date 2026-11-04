@@ -22,12 +22,10 @@ export function guideOn(state: any) {
 }
 
 export function menuLock(state: any, menu: string) {
-  // A tool shop before the first project is just six prices with nothing to spend them on.
-  if (menu === 'tools' && !state.projects.length) return '立项后开放';
-  // Playtesting and promotion are about a build that exists. Opening them at day one let a player walk
-  // into three empty pages before the prototype was even done.
+  // The market is about a build that exists. Opening it at day one let a player walk into an empty
+  // page before the prototype was even done.
   const shown = core.projectOpen(state).some((project: any) => project.checkpoints.demo) || state.catalog.length > 0;
-  if ((menu === 'testing' || menu === 'market') && !shown) return '任一项目 体验版完成后开放';
+  if (menu === 'market' && !shown) return '任一项目 体验版完成后开放';
   return '';
 }
 
@@ -41,6 +39,8 @@ export function advice(state: any) {
   if (state.event) return { title: state.event.title, text: '需要你做个决定，时间已暂停。', menu: 'event' };
   const worker = state.staff[0];
   if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: 'code:' + bestChannel(state) };
+  const idlePatch = state.projects.find((item: any) => item.patch && !state.staff.some((person: any) => core.chosenWorks(item, person).length));
+  if (idlePatch) return { title: '补丁还没有人做', text: '《' + idlePatch.name + '》的补丁需要安排人手，做完自动上线。', menu: 'assign', id: idlePatch.id };
   if (!project) {
     if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品。', menu: 'new-project' };
     return { title: '为下一款作品立项', text: '参考上一作复盘，先补最被在意的短板。', menu: 'new-project' };
@@ -52,8 +52,8 @@ export function advice(state: any) {
   const idle = pipeline.rows.filter((row: any) => row.days === null && row.remaining > 0);
   if (idle.length) return { title: '有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '压力标签正在拉低产出，可以安排休假或团建。', menu: 'team' };
-  if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing' };
-  if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广体验版', text: '关注 ' + number(project.followers) + ' 人，推广能扩大首发。', menu: 'market' };
+  if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
+  if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
   if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.DIMENSIONS.find(d => d.key === pipeline.bottleneck.key)?.name}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
   return { title: '推进项目', text: '查看各评分项的剩余人日与预计完成日，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
@@ -111,7 +111,9 @@ export function menu(state: any, route: any) {
     case 'candidate': return candidateMenu(state, route.id);
     case 'person': return personMenu(state, route.id);
     case 'dismiss': return dismissMenu(state, route.id);
-    case 'tools': return toolsMenu(state);
+    case 'patch': return patchMenu(state, route.id);
+    case 'rating': return ratingMenu(state);
+    case 'archive':
     case 'finance': return financeMenu(state);
     case 'restart': return { title: '确认重新创业？', blocks: [
       { type: 'note', icon: 'Target', text: '重新创业会覆盖当前存档，公司、员工、作品和经营记录都会清空，且无法撤销。' },
@@ -124,11 +126,13 @@ export function menu(state: any, route: any) {
     ] };
     case 'history': return historyMenu(state);
     case 'goals': return goalsMenu(state);
-    case 'archive': return archiveMenu(state);
     case 'event': {
       if (!state.event) return { title: '没有待决事项', blocks: [{ type: 'text', text: '继续经营即可。' }] };
       const event = state.event;
       const choices = { type: 'choices', items: event.choices.map((choice: any) => ({ ...choice, action: 'decision' })) };
+      // The feedback that arrives right after a playtest is the same report the 试玩 page shows later.
+      const tested = event.id === 'feedback' ? core.activeProject(state, event.project) : null;
+      if (tested?.test) return { title: event.title, blocks: [...testReport(state, tested), choices] };
       // 发售瞬间既是决策页，也是这一作的成绩单：封面、首发到账、玩家评价和复盘入口。
       // 重构时这几块被删到只剩一行文字，发售就变成了一个没有仪式感的确认框。
       const released = event.id === 'release' ? state.catalog.find((book: any) => book.id === state.lastRelease) : null;
@@ -175,39 +179,43 @@ function newProjectMenu(state: any) {  return {
 
 function projectMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
-  if (!project) return { title: '项目', blocks: [{ type: 'buttons', items: [{ text: '新作立项', action: 'menu', data: { menu: 'new-project' } }] }] };
+  if (!project) return { title: '项目', blocks: [{ type: 'actions', items: [{ text: '新作立项', detail: '选类型与体量，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' } }] }] };
+  if (project.released) return patchProjectMenu(state, project);
   const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
-  const open = core.projectOpen(state);
+  const live = core.liveProjects(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
   const finished = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
   const idleRows = forecast.rows.filter((row: any) => row.key !== 'stability' && row.remaining > 0.0001 && row.days === null);
   const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）';
+  const order = core.projectOrder(state);
+  const rank = order.findIndex((item: any) => item.id === project.id);
+  const demo = project.checkpoints.demo;
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
-    ...(open.length > 1 ? [{ type: 'tabs', items: open.map((item: any) => ({ text: item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
+    ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
     ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
     { type: 'lines', items: [['预计内容完成', etaText], ['待修缺陷', metrics.known + ' 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
-    ...(core.projectOrder(state).length > 1 ? [
-      { type: 'text', text: '当前第 ' + (core.projectOrder(state).findIndex((item: any) => item.id === project.id) + 1) + ' 优先；其余项目按顺序承担协调成本。' },
+    ...(order.length > 1 ? [
+      { type: 'text', text: '当前第 ' + (rank + 1) + ' 优先；其余项目按顺序承担协调成本。' },
       { type: 'buttons', columns: 2, items: [
-        { text: '提高优先级', action: 'priority', data: { id: project.id, priority: core.projectOrder(state).findIndex((item: any) => item.id === project.id) - 1 }, disabled: core.projectOrder(state)[0]?.id === project.id },
-        { text: '降低优先级', action: 'priority', data: { id: project.id, priority: core.projectOrder(state).findIndex((item: any) => item.id === project.id) + 1 }, disabled: core.projectOrder(state).slice(-1)[0]?.id === project.id }
+        { text: '提高优先级', action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
+        { text: '降低优先级', action: 'priority', data: { id: project.id, priority: rank + 1 }, disabled: rank === order.length - 1 }
       ] }
     ] : []),
     { type: 'note', icon: 'Users', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) },
-    ...(project.progress >= 55 && project.deadline === null ? [{ type: 'buttons', items: [{ text: '公布 ' + core.RELEASE_LEAD_DAYS + ' 天后发售', action: 'deadline', data: { id: project.id, days: core.RELEASE_LEAD_DAYS }, anchor: 'deadline' }] }] : []),
     ...(project.deadline !== null ? [{ type: 'text', text: '已公布：第 ' + project.deadline + ' 天发售。到期未发会损失关注。', muted: true }] : []),
-    { type: 'buttons', items: [
-      { text: '调整分工', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-      { text: '招募试玩', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !project.checkpoints.demo },
-      { text: '市场与推广', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !project.checkpoints.demo },
-      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售（内容未做满）' : '正式发售') : '体验版完成后才能发售', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch' },
-      { text: '再开一个项目', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+    { type: 'actions', items: [
+      { text: '调整分工', detail: '谁做哪几项工作；做满后自动修复已发现的缺陷。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+      { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
+      { text: '市场与推广', detail: demo ? (project.promoted ? '已推广 ' + money(project.promoted) + ' · 报名展会' : '每作推广一次 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
+      ...(demo && project.deadline === null ? [{ text: '公布 ' + core.RELEASE_LEAD_DAYS + ' 天后发售', detail: '换一笔关注' + (state.focus ? '，' + core.TIERS[state.focus].name + '圈层媒体会多报道一些' : '') + '；延期或取消会损失关注。', icon: 'CalendarDays', action: 'deadline', data: { id: project.id, days: core.RELEASE_LEAD_DAYS }, anchor: 'deadline' }] : []),
+      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '' },
+      { text: '再开一个项目', detail: '多项目并行时，排在后面的项目有协调成本。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
     ] },
     ...(project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null ? [
       { type: 'section', title: '声音外包（每作一次）' },
@@ -217,6 +225,68 @@ function projectMenu(state: any, id?: string) {
     { type: 'checklist', items: core.launchChecklist(state, project) }
   ];
   return { title: '项目', blocks };
+}
+
+// A running patch is a small project of its own: its scope, crew, progress and launch date.
+function patchProjectMenu(state: any, project: any) {
+  const book = state.catalog.find((item: any) => item.id === project.id);
+  const live = core.liveProjects(state);
+  if (!project.patch) return { title: '《' + project.name + '》', blocks: [{ type: 'text', text: '这部作品已发售，没有进行中的补丁。' }, { type: 'actions', items: [{ text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }] }] };
+  const forecast = core.patchForecast(state, project);
+  const crew = state.staff.filter((person: any) => core.personWorks(state, project, person).length);
+  const rework = project.patch.rework ? core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : '';
+  const order = core.projectOrder(state);
+  const rank = order.findIndex((item: any) => item.id === project.id);
+  return {
+    title: '补丁',
+    blocks: [
+      ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
+      { type: 'lines', items: [
+        ['《' + project.name + '》补丁', '第 ' + project.patch.started + ' 天开始'],
+        ['修复', forecast.fixed + ' / ' + forecast.targets + ' 项已报告缺陷'],
+        ...(rework ? [['返工' + rework, Math.round(forecast.reworkDone / Math.max(0.001, forecast.reworkTotal) * 100) + '%']] : []),
+        ['剩余', forecast.left.toFixed(1) + ' 人日'],
+        ['预计上线', forecast.days === null ? '还没有人做' : forecast.days === 0 ? '即将上线' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）'],
+        ['人手', crew.length ? crew.map((person: any) => person.name).join('、') : '无']
+      ] },
+      { type: 'radar', metrics: core.projectMetrics(project), genre: project.type, projectId: project.id },
+      ...(book ? [{ type: 'lines', items: [['当前口碑', book.reviewScore.toFixed(1)], ['最近一日销量', book.lastDayUnits + ' 份']] }] : []),
+      { type: 'text', text: '补丁的范围在开工时定下：只修开工时已报告的缺陷' + (rework ? '，再返工' + rework : '') + '。之后新报告的问题留给下一个补丁。做完自动上线。', muted: true },
+      ...(order.length > 1 ? [{ type: 'buttons', columns: 2, items: [
+        { text: '提高优先级', action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
+        { text: '降低优先级', action: 'priority', data: { id: project.id, priority: rank + 1 }, disabled: rank === order.length - 1 }
+      ] }] : []),
+      { type: 'actions', items: [
+        { text: '安排补丁人手', detail: '补丁只有一份工作清单，人员只分参与或不参与。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+        { text: '立即上线', detail: '把已完成的部分先发出去，没修完的问题留在待修列表。', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
+        { text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }
+      ] }
+    ]
+  };
+}
+
+// Opening a patch: fix what players have reported, optionally rework one dimension as well.
+function patchMenu(state: any, id: string) {
+  const project = state.projects.find((item: any) => item.id === id && item.released);
+  if (!project) return { title: '开补丁', blocks: [{ type: 'text', text: '作品不存在。' }] };
+  if (project.patch) return patchProjectMenu(state, project);
+  const metrics = core.projectMetrics(project);
+  const fix = core.patchPlan(state, project, null);
+  const items: any[] = [];
+  if (fix.targets) items.push({ text: '只修缺陷', detail: '修复已报告的 ' + fix.targets + ' 项缺陷 · 约 ' + fix.work.toFixed(1) + ' 人日', icon: 'Bug', action: 'patch-start', data: { id, rework: null } });
+  for (const key of core.CONTENT_KEYS) {
+    const plan = core.patchPlan(state, project, key);
+    const name = core.DIMENSIONS.find(item => item.key === key)?.name;
+    items.push({ text: (fix.targets ? '修缺陷 + 返工' : '返工') + name, detail: '当前 ' + Math.round(metrics.dimensions[key]) + ' 分 · 约 ' + plan.work.toFixed(1) + ' 人日；返工只替换比返工者能力低的成果', icon: 'Hammer', action: 'patch-start', data: { id, rework: key } });
+  }
+  return {
+    title: '开补丁',
+    blocks: [
+      { type: 'text', text: '补丁像一个小项目：开工时定下范围，单独安排人手和优先级，做完自动上线。玩家报告的只是他们碰到的问题，开工后新报告的留给下一个补丁。', muted: true },
+      { type: 'lines', items: [['已报告待修', fix.targets + ' 项'], ['综合评分', metrics.overall.toFixed(0)]] },
+      { type: 'actions', items }
+    ]
+  };
 }
 
 function dimensionMenu(state: any, projectId: string, dimKey: string) {
@@ -267,6 +337,17 @@ function assignMenu(state: any, projectId: string) {
   const project = core.activeProject(state, projectId);
   if (!project) return { title: '分工', blocks: [{ type: 'text', text: '项目不存在。' }] };
   if (!state.staff.length) return { title: '分工', blocks: [{ type: 'text', text: '还没有同事，先去招聘。' }] };
+  if (project.released) {
+    if (!project.patch) return { title: '分工', blocks: [{ type: 'text', text: '这部作品没有进行中的补丁。先在作品档案里开补丁。' }] };
+    return { title: '补丁人手', blocks: [
+      { type: 'text', text: '参与的人先修开工时已报告的缺陷，再做返工；修复按缺陷所属那一项的能力计算速度。每人同时只属于一个项目，加入补丁会离开原来的项目。', muted: true },
+      { type: 'choices', anchor: 'patch-crew', items: state.staff.map((person: any) => {
+        const on = core.personWorks(state, project, person).length > 0;
+        const elsewhere = state.projects.find((item: any) => item.id !== project.id && core.chosenWorks(item, person).length);
+        return { text: person.name + ' · ' + core.ROLES[person.role].name, detail: (on ? '参与中：' + core.personActivity(state, project, person) : elsewhere ? '现在在《' + elsewhere.name + '》' : '现在做默认项目') + '\n速度 ' + person.speed + (person.leaveUntil > state.day ? ' · 休假中' : ''), action: 'patch-crew', data: { id: project.id, person: person.id, on: !on }, tag: on ? '参与' : '' };
+      }) }
+    ] };
+  }
   const blocks: any[] = [
     { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的工作做满后自动消耗工时修复测试抓到的缺陷；没有待修问题时才继续返工。', muted: false }
   ];
@@ -295,37 +376,44 @@ function assignMenu(state: any, projectId: string) {
   return { title: '分工', blocks };
 }
 
-function testingMenu(state: any, id?: string) {
-  const project = core.activeProject(state, id) || core.projectOpen(state)[0];
-  if (!project) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把体验版做出来。' }] };
-  const offer = core.playtestOffer(state, project);
+// The playtest report: score, comparison with the previous run, per-dimension findings and history.
+// Shared by the 试玩 page and the feedback popup so the two never drift apart.
+function testReport(state: any, project: any) {
   const known = core.visibleMetrics(project).known;
   const blocks: any[] = [
     { type: 'stats', tone: 'plain', items: [['已知待修', known + ' 项'], ['累计试玩', (project.testCount || 0) + ' 人次'], ['试玩轮数', (project.tests || 0) + ' 轮']] }
   ];
-  if (project.test) {
-    blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 新发现 ' + project.test.found + ' 项缺陷' });
-    // Comparing with the previous run is the whole point of a retest: a bare score cannot tell you
-    // whether the last round of work helped.
-    const history = project.testLog || [];
-    if (history.length > 1) {
-      const last = history[history.length - 1];
-      const previous = history[history.length - 2];
-      const delta = last.score - previous.score;
-      const base = '（第 ' + previous.day + ' 天 ' + previous.score.toFixed(1) + ' 分）';
-      blocks.push({ type: 'text', text: Math.abs(delta) < 0.05 ? '与上次' + base + '持平。' : '比上次' + base + (delta > 0 ? '高 ' : '低 ') + Math.abs(delta).toFixed(1) + ' 分。' });
-    }
-    blocks.push({ type: 'note', icon: 'Target', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) });
-    blocks.push({ type: 'section', title: '逐项评价' });
-    blocks.push({ type: 'feedback', items: project.test.findings });
-    blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
-  } else {
+  if (!project.test) {
     blocks.push({ type: 'text', text: '试玩玩家给出体验评价，并会碰到一部分测试漏掉的缺陷；这些缺陷修好后稳定就会提高。' });
+    return blocks;
   }
-  if ((project.testLog || []).length > 1) {
+  blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 新发现 ' + project.test.found + ' 项缺陷' });
+  // Comparing with the previous run is the whole point of a retest: a bare score cannot tell you
+  // whether the last round of work helped.
+  const history = project.testLog || [];
+  if (history.length > 1) {
+    const last = history[history.length - 1];
+    const previous = history[history.length - 2];
+    const delta = last.score - previous.score;
+    const base = '（第 ' + previous.day + ' 天 ' + previous.score.toFixed(1) + ' 分）';
+    blocks.push({ type: 'text', text: Math.abs(delta) < 0.05 ? '与上次' + base + '持平。' : '比上次' + base + (delta > 0 ? '高 ' : '低 ') + Math.abs(delta).toFixed(1) + ' 分。' });
+  }
+  blocks.push({ type: 'note', icon: 'Target', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) });
+  blocks.push({ type: 'section', title: '逐项评价' });
+  blocks.push({ type: 'feedback', items: project.test.findings });
+  blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
+  if (history.length > 1) {
     blocks.push({ type: 'section', title: '试玩历史' });
-    blocks.push({ type: 'lines', items: [...(project.testLog || [])].reverse().map((entry: any) => ['第 ' + entry.day + ' 天 · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
+    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => ['第 ' + entry.day + ' 天 · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
   }
+  return blocks;
+}
+
+function testingMenu(state: any, id?: string) {
+  const project = core.activeProject(state, id) || core.projectOpen(state)[0];
+  if (!project || project.released) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把体验版做出来。' }] };
+  const offer = core.playtestOffer(state, project);
+  const blocks: any[] = testReport(state, project);
   blocks.push({ type: 'section', title: '招募试玩' });
   blocks.push({ type: 'buttons', anchor: 'tests', columns: 2, items: [
     { text: '30 人 · 0.80 万', action: 'test', data: { id: project.id, count: 30 }, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
@@ -337,27 +425,41 @@ function testingMenu(state: any, id?: string) {
 
 function marketMenu(state: any, id?: string) {
   // Follow the project the player is actually looking at, not whichever one sorts first.
-  const project = core.activeProject(state, id) || core.projectOpen(state)[0];
+  const picked = core.activeProject(state, id);
+  const project = picked && !picked.released ? picked : core.projectOpen(state)[0];
   const blocks: any[] = [];
   const offers = core.exhibitionOffers(state);
   const currentNotReady = !!project && project.progress < 55;
   blocks.push({ type: 'lines', items: [...offers.map((offer: any) => [offer.name + ' · 报名 ' + money(offer.fee), '第 ' + offer.day + ' 天（截止还剩 ' + (offer.deadline - state.day) + ' 天）']), ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
   blocks.push({ type: 'buttons', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
-  blocks.push({ type: 'buttons', items: [{ text: '展会与媒体', action: 'menu', data: { menu: 'exhibitions' } }, { text: '行业：榜单 · 对手 · 档期 · 新闻', action: 'menu', data: { menu: 'industry' } }] });
+  blocks.push({ type: 'actions', items: [
+    { text: '日历', detail: '展会、年度评选、媒体评级与已公布的发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry', id: 'schedule' } },
+    { text: '行业', detail: '榜单、对手、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
+    { text: '展会与媒体', detail: '历届参展名次与报道。', icon: 'Award', action: 'menu', data: { menu: 'exhibitions' } }
+  ] });
   if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版后才能报名展会。', muted: true });
   else blocks.push({ type: 'text', text: '三级展会都可以报名：级别越高报名费越贵、对手越强，作品不够突出时几乎换不来关注。', muted: true });
-  if (project) {
+  if (project && !project.released) {
+    blocks.push({ type: 'section', title: '推广《' + project.name + '》' });
     blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)]] });
-    blocks.push({ type: 'text', text: '首发销量主要来自关注者。体验版完成后会自然积累关注，推广能扩大首发，但钱花出去就收不回。市场行情不预告，只能从新闻、榜单与既有作品的回款曲线里自己判断。', muted: true });
-    blocks.push({ type: 'lines', items: [['同类型小型作品通常关注', '800～1,500 人'], ['已投放推广', money(project.promoted)]] });
-    core.PROMOTE_TIERS.forEach((budget, index) => {
-      const range = core.promoteRange(state, project, budget);
-      blocks.push({ type: 'card', group: 'promotions', title: '推广预算 ' + money(budget), text: '预计新增关注 ' + number(range.low) + '～' + number(range.high) + ' 人；每多花一万元，新增的关注会变少，区间随作品当前关注收敛。', button: { text: '投放 · ' + money(budget), action: 'promote', data: { id: project.id, cost: budget }, disabled: project.progress < 55 || state.cash < budget, anchor: 'promote-' + index } });
-    });
+    if (project.promoted > 0) {
+      blocks.push({ type: 'note', icon: 'Megaphone', text: '已推广 ' + money(project.promoted) + (project.promoFollowers ? '，带来 ' + number(project.promoFollowers) + ' 位关注' : '') + '。每部作品只推广一次，发售复盘会写明这笔推广折合多少首发收入。' });
+    } else {
+      const value = core.followerValue(state, project);
+      blocks.push({ type: 'text', text: '每部作品只推广一次，投后不能追加。档位之间差几个数量级：每多花一万元换来的关注会变少，值不值取决于一位关注能为这部作品带来多少钱。', muted: true });
+      blocks.push({ type: 'lines', items: [
+        ['每位关注约带来', value.yuan + ' 元首发收入'],
+        ...(value.last ? [['上一作《' + value.last.name + '》', '实际 ' + value.last.yuan + ' 元/人']] : []),
+        ['首发能吃下的关注', '约 ' + number(value.ceiling) + ' 人']
+      ] });
+      blocks.push({ type: 'text', text: (value.tested ? '按最近一次试玩评分估计。' : '还没试玩，按一般水平估计；试玩后会更准。') + core.SCALES[project.scale].name + '作品首发有上限，关注超过上面的人数后多投也卖不出更多。', muted: true });
+      core.PROMOTE_TIERS.forEach((budget, index) => {
+        const range = core.promoteRange(state, project, budget);
+        const worth = Math.round((range.low + range.high) / 2 * value.yuan / 10000 * 100) / 100;
+        blocks.push({ type: 'card', group: 'promotions', title: ['小范围投放', '常规推广', '大规模宣发', '全面营销'][index] + ' · ' + money(budget), text: '预计新增关注 ' + number(range.low) + '～' + number(range.high) + ' 人，按上面的估计约折合首发 ' + money(worth) + '。', button: { text: '投放 · ' + money(budget), action: 'promote', data: { id: project.id, cost: budget }, disabled: project.progress < 55 || state.cash < budget, anchor: 'promote-' + index } });
+      });
+    }
   }
-  blocks.push({ type: 'section', title: '已发售作品' });
-  if (state.catalog.length) blocks.push({ type: 'catalog' });
-  else blocks.push({ type: 'text', text: '作品发售后，在这里查看销量、回款和复盘。', muted: true });
   return { title: '市场', blocks };
 }
 
@@ -368,6 +470,7 @@ function bookMenu(state: any, id: string) {
   const project = state.projects.find((item: any) => item.id === id);
   const dims = project ? core.visibleMetrics(project).dimensions : book.metrics.dimensions;
   const dlcs = state.projects.filter((item: any) => item.parentId === id);
+  const contributions = core.companyArchive(state).books.find((item: any) => item.id === id)?.contributions || [];
   return {
     title: '《' + book.name + '》',
     blocks: [
@@ -387,16 +490,19 @@ function bookMenu(state: any, id: string) {
         ['发售时市场', book.trend]
       ] },
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
-      { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['主要更新', book.updates + ' 次']] },
+      { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['补丁', (book.updates || 0) + ' 次']] },
+      ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', money(book.promo.cost)], ['带来关注', number(book.promo.followers) + ' 人'], ['按本作转化约折合首发', money(book.promo.receipt)]] }] : []),
+      ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => ['第 ' + patch.day + ' 天' + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
-      { type: 'buttons', items: [
-        { text: '派人做补丁 / 返工', action: 'menu', data: { menu: 'assign', id }, anchor: 'assign-book' },
-        { text: book.sale ? '关闭促销' : '开启促销', action: 'sale', data: { id, enabled: !book.sale }, disabled: state.day - book.released > 540, anchor: 'sale-toggle' },
-        ...(!book.parentId ? [{ text: '新项目：资料片（DLC）· ' + money(4 + book.scale * 2), action: 'dlc', data: { id }, disabled: dlcs.length >= 2 || state.cash < 4 + book.scale * 2 || state.day - book.released > 540 }] : []),
-        { text: book.reviewScore >= 70 ? '开发续作' : '好评达到 70 分可开发续作', action: 'sequel', data: { id }, disabled: book.reviewScore < 70 }
+      { type: 'actions', items: [
+        project?.patch
+          ? { text: '查看进行中的补丁', detail: '修复与返工进度、人手和预计上线日。', icon: 'Hammer', action: 'menu', data: { menu: 'project', id }, anchor: 'patch-book' }
+          : { text: '开补丁', detail: (project ? project.defects.filter((defect: any) => defect.found && !defect.fixed).length : 0) + ' 项玩家报告的缺陷待修；也可以返工某一项做更新。', icon: 'Hammer', action: 'menu', data: { menu: 'patch', id }, disabled: !project, anchor: 'patch-book' },
+        { text: book.sale ? '关闭促销' : '开启促销', detail: '统一 ' + (core.DISCOUNTS[0] * 10) + ' 折；开启后系统按剩余需求决定何时开始，关闭立即恢复原价。', icon: 'Coins', action: 'sale', data: { id, enabled: !book.sale }, disabled: state.day - book.released > 540, anchor: 'sale-toggle', tag: book.sale ? '促销中' : '' },
+        ...(!book.parentId ? [{ text: '资料片（DLC）· ' + money(4 + book.scale * 2), detail: '作为新项目立项，独立开发、核算与发售。', icon: 'Gift', action: 'dlc', data: { id }, disabled: dlcs.length >= 2 || state.cash < 4 + book.scale * 2 || state.day - book.released > 540 }] : []),
+        { text: '开发续作', detail: book.reviewScore >= 70 ? '继承部分关注，玩家期待更高。' : '好评达到 70 分才能开发续作。', icon: 'Sparkles', action: 'sequel', data: { id }, disabled: book.reviewScore < 70 }
       ] },
-      { type: 'text', text: '促销统一 ' + (core.DISCOUNTS[0] * 10) + ' 折；开启后系统按剩余需求决定何时开始，关闭立即恢复原价。补丁与更新直接来自分工中的实际修复、返工，不再单独购买。', muted: true },
-      { type: 'text', text: '团队：' + (book.team.length ? book.team.map((person: any) => person.name + '（' + core.ROLES[person.role].name + '）').join('、') : '—'), muted: true }
+      ...(contributions.length ? [{ type: 'lines', title: '参与的人', items: contributions.map((item: any) => [item.name, core.ROLES[item.role].name + ' · 贡献约 ' + Math.round(item.share * 100) + '%']) }] : [])
     ]
   };
 }
@@ -417,32 +523,32 @@ function goalsMenu(state: any) {
   };
 }
 
-// The archive is the company's record: shipped titles, their results and who worked on them. It is the
-// only place reputation is shown, and it is not a score board with bars to fill.
-function archiveMenu(state: any) {
-  const archive = core.companyArchive(state);
+// The media rating behind the tier badge: score, the lines that matter, what each recent title adds.
+function ratingMenu(state: any) {
+  const rating = core.ratingOf(state);
+  const tier = core.TIERS[rating.tier];
   const blocks: any[] = [
-    { type: 'lines', items: [['年度获奖', archive.wins + ' 次'], ['已发售作品', archive.books.length + ' 部']] }
+    { type: 'stats', tone: 'plain', items: [['当前圈层', tier.name], ['最近一期评级', Math.round(rating.published) + ' 分'], ['按现在估算', Math.round(rating.score) + ' 分']] },
+    { type: 'lines', items: [
+      ['升级线', rating.up === null ? '已在最高圈层' : core.TIERS[rating.tier + 1].name + ' ' + rating.up + ' 分'],
+      ['保级线', rating.keep === null ? '本地圈层不会降级' : tier.name + ' ' + rating.keep + ' 分'],
+      ['状态', rating.watch ? '观察名单：下一期低于保级线就降级' : rating.safe ? '刚升级，本期不评降级' : '正常'],
+      ['下次评级', '第 ' + rating.next + ' 天']
+    ] },
+    ...(rating.watch ? [{ type: 'note', icon: 'Target', text: core.RATING_MEDIA + '把公司列入了观察名单。下一期评级前发售一部成绩好的作品，可以把分数拉回保级线以上。' }] : []),
+    { type: 'text', text: core.RATING_MEDIA + '每 ' + core.RATING_PERIOD + ' 天发布一次工作室评级，只看最近三部作品（资料片不算），越新的作品权重越高：每部看首周名次（按够得着的最高一级榜单）、玩家口碑和获奖。最新一部发售满两年后，评级每季度下滑一点。', muted: true },
+    { type: 'section', title: '近三部作品的贡献' }
   ];
-  if (!archive.books.length) blocks.push({ type: 'text', text: '还没有作品。第一作发售后，这里会记下它的成绩与参与的人。' });
-  for (const book of archive.books) {
-    blocks.push({ type: 'section', title: '《' + book.name + '》' });
-    blocks.push({ type: 'lines', items: [
-      ['类型体量', core.TYPES[book.type].name + ' · ' + core.SCALES[book.scale].name],
-      ['发售', '第 ' + book.released + ' 天'],
-      ['口碑', book.review.toFixed(1) + ' 分'],
-      ['销量 / 回款', number(book.units) + ' 份 · ' + money(book.received)],
-      ['首周名次', rankText(book.firstRanks)],
-      ...(book.breakout ? [['备注', '创意出圈']] : [])
-    ] });
-    if (book.contributions.length) blocks.push({ type: 'lines', title: '参与的人', items: book.contributions.map((item: any) => [item.name, core.ROLES[item.role].name + ' · 贡献约 ' + Math.round(item.share * 100) + '%']) });
+  if (!rating.books.length) blocks.push({ type: 'text', text: '还没有首周名次已定的作品。作品发售满一周后计入评级。', muted: true });
+  else blocks.push({ type: 'lines', items: rating.books.map((book: any) => ['《' + book.name + '》 · 权重 ' + Math.round(book.weight * 100) + '%', '名次 ' + Math.round(book.rank) + ' · 口碑 ' + Math.round(book.review) + (book.award ? ' · 获奖 +' + book.award : '') + ' → ' + Math.round(book.score) + ' 分']) });
+  if (rating.decay) blocks.push({ type: 'text', text: '已经两年多没有新作，评级下滑 ' + rating.decay + ' 分。', muted: true });
+  blocks.push({ type: 'section', title: '圈层的作用' });
+  blocks.push({ type: 'lines', items: core.TIERS.map((item: any, index: number) => [item.name + (index === rating.tier ? ' · 当前' : ''), index === 0 ? '新闻与行业页关注本地' : '媒体曝光：关注 +' + Math.round(core.MEDIA_BONUS[index] * 100) + '% · 名人更常出现'] ) });
+  if (rating.history.length) {
+    blocks.push({ type: 'section', title: '历次评级' });
+    blocks.push({ type: 'lines', items: [...rating.history].reverse().map((entry: any) => ['第 ' + entry.day + ' 天', Math.round(entry.score) + ' 分 · ' + core.TIERS[entry.tier].name]) });
   }
-  const focus = state.focus || 0;
-  const nextAt = core.FOCUS_AT[focus + 1];
-  blocks.push({ type: 'section', title: '行业声量' });
-  blocks.push({ type: 'lines', items: [['行业声量', String(archive.voice)], ['当前关注层级', core.TIERS[focus].name], ['距下一层', nextAt === undefined ? '已在最高层' : String(Math.max(0, Math.ceil(nextAt - archive.voice)))]] });
-  blocks.push({ type: 'text', text: '声量由粉丝、近三作首周销量、获奖（按级别）与公司规模合成，不含现金。它决定新闻与榜单默认关注哪一层（只升不降），也影响行业名人出现的机会；所有展会与榜单始终开放。', muted: true });
-  return { title: '公司档案', blocks };
+  return { title: '媒体评级', blocks };
 }
 
 function teamMenu(state: any) {
@@ -479,7 +585,7 @@ function personMenu(state: any, id: string) {
     blocks: [
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['月薪', money(person.wage)], ['工作速度', String(person.speed)], ['单位用人日产出', (person.speed / 100).toFixed(2) + ' 人日/天'], ['累计工作量', person.work.toFixed(1)], ['成长次数', String(person.level)], ['休假', person.leaveUntil > state.day ? '至第 ' + person.leaveUntil + ' 天，工资照付' : '正常在岗']] },
       ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', Math.round((person.stressChance || 0) * 100) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
-      ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：自带粉丝，新作首发关注更高。' + (state.day - (person.joined || 0) < 30 ? '仍在磨合期，产出打八折。' : '已融入团队。') + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') }] : []),
+      ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：自带粉丝，新作首发关注更高。' + (state.day - (person.joined || 0) < 30 ? '仍在磨合期，产出打八折。' : '已融入团队。') + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' ' + person.story : '') }] : []),
       { type: 'section', title: '六项能力' },
       { type: 'lines', items: core.ABILITIES.map(ability => [ability.name, String(person.abilities[ability.key])]) },
       ...(person.stressTags.length ? [{ type: 'lines', title: '负面标签', items: person.stressTags.map((key: string) => [core.STRESS_TAGS[key].name, core.STRESS_TAGS[key].text]) }] : []),
@@ -499,7 +605,7 @@ function candidateMenu(state: any, id: string) {
     title: person.name,
     blocks: [
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['月薪', money(person.wage)], ['工作速度', String(person.speed)]] },
-      ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：自带粉丝，新作首发关注更高；入职前 30 天需要磨合，产出打八折。要价也高。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') }] : []),
+      ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：自带粉丝，新作首发关注更高；入职前 30 天需要磨合，产出打八折。要价也高。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' 还记得吗？' + person.story : '') }] : []),
       { type: 'lines', title: '六项能力', items: core.ABILITIES.map(ability => [ability.name, String(person.abilities[ability.key])]) },
       ...(person.tags.length ? [{ type: 'lines', title: '能力标签为数值摘要；性格标签有独立效果', items: person.tags.map((tag: any) => [core.ABILITY_TAGS[tag.key]?.name || core.PERSONALITY_TAGS[tag.key]?.name, core.ABILITY_TAGS[tag.key]?.text || core.PERSONALITY_TAGS[tag.key]?.text]) }] : []),
       { type: 'buttons', anchor: 'hire', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', data: { id: person.id }, disabled: reasons.length > 0, help: reasons.join('\n'), helpKey: 'hire:' + person.id }] }
@@ -521,36 +627,23 @@ function dismissMenu(state: any, id: string) {
   };
 }
 
-function toolsMenu(state: any) {
-  const keys = Object.keys(core.STUDIO_TOOLS);
-  const open = keys.filter((key: string) => core.toolOpen(state, key));
-  const locked = keys.filter((key: string) => !core.toolOpen(state, key));
-  return {
-    title: '工具',
-    blocks: [
-      { type: 'text', text: '工具属于公司，以后的作品都能用；只加速对应那类工作，不提高质量。', muted: true },
-      ...open.map((key: string) => {
-        const tool = core.STUDIO_TOOLS[key];
-        return { type: 'card', title: tool.name, text: tool.text, button: { text: state.tools.includes(key) ? '已购置' : '购置 · ' + money(tool.cost), action: 'buy-tool', data: { key }, disabled: state.tools.includes(key) || state.cash < tool.cost, anchor: 'tool-' + key } };
-      }),
-      ...(locked.length ? [{ type: 'text', text: locked.map((key: string) => core.STUDIO_TOOLS[key].name).join('、') + '在首个作品完成原型后开放。', muted: true }] : [])
-    ]
-  };
-}
-
 function financeMenu(state: any) {
   const ledger = state.ledger;
+  const rating = core.ratingOf(state);
+  const wins = state.awards.filter((award: any) => award.own).length;
   return {
     title: '公司',
     blocks: [
       { type: 'lines', items: [['现金', money(state.cash)], ['本月收入', money(ledger.income)], ['本月已开支', money(monthSpent(state))], ['已累计应付', money(state.accrued)], ['月开支（工资 + 房租）', money(core.monthlyCost(state))]] },
-      { type: 'section', title: '公司与记录' },
-      { type: 'buttons', items: [
-        { text: '成长目标与扩建', action: 'menu', data: { menu: 'goals' } },
-        { text: '公司档案与作品履历', action: 'menu', data: { menu: 'archive' } },
-        { text: '行业：榜单 · 对手 · 档期 · 新闻', action: 'menu', data: { menu: 'industry' } },
-        { text: '经营记录', action: 'menu', data: { menu: 'history' } }
+      { type: 'actions', items: [
+        { text: core.TIERS[rating.tier].name + '圈层 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · 下次第 ' + rating.next + ' 天', icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
+        { text: '成长目标与扩建', detail: core.goalsOf(state).current.title, icon: 'Target', action: 'menu', data: { menu: 'goals' } },
+        { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
+        { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
       ] },
+      { type: 'section', title: '作品履历' },
+      { type: 'lines', items: [['已发售作品', state.catalog.length + ' 部'], ['年度获奖', wins + ' 次']] },
+      ...(state.catalog.length ? [{ type: 'catalog' }] : [{ type: 'text', text: '作品发售后，在这里查看销量、回款、复盘与参与的人。', muted: true }]),
       { type: 'section', title: '存档与设置' },
       { type: 'buttons', columns: 3, items: [
         { text: '导出存档', action: 'export' },
@@ -597,7 +690,7 @@ function industryMenu(state: any, id?: string) {
   const level = levelText === undefined || levelText === '' ? focus : Number(levelText) || 0;
   const route = (nextTab: string, nextKind = kind, nextLevel = level) => ({ menu: 'industry', id: nextTab + ':' + nextKind + ':' + nextLevel });
   const blocks: any[] = [
-    { type: 'tabs', items: [['board', '榜单'], ['rivals', '对手'], ['schedule', '档期'], ['news', '新闻'], ['awards', '评选']].map(([key, text]) => ({ text, route: route(key), active: key === tab })) }
+    { type: 'tabs', items: [['board', '榜单'], ['rivals', '对手'], ['schedule', '日历'], ['news', '新闻'], ['awards', '评选']].map(([key, text]) => ({ text, route: route(key), active: key === tab })) }
   ];
   const levelTabs = { type: 'tabs', items: core.TIERS.map((tier: any, index: number) => ({ text: tier.name + (index === focus ? ' · 关注' : ''), route: route(tab, kind, index), active: index === level })) };
   const rivalChoice = (name: string, detail: string, studioId: string | null, own = false) => ({ text: name, detail, action: studioId ? 'menu' : 'none', data: studioId ? { menu: 'rival', id: studioId } : {}, tag: own ? '本社' : '' });
@@ -619,13 +712,18 @@ function industryMenu(state: any, id?: string) {
     const closed = state.rivals.filter((studio: any) => studio.closed !== null);
     if (closed.length) blocks.push({ type: 'text', text: '已解散：' + closed.map((studio: any) => studio.name).join('、'), muted: true });
   } else if (tab === 'schedule') {
-    const schedule = core.scheduleOf(state);
-    blocks.push({ type: 'text', text: '已公布的发售日。小作品通常不提前公布；同一周发售的作品会分流首发关注。', muted: true });
-    if (!schedule.length) blocks.push({ type: 'text', text: '近期没有公布的档期。' });
-    else blocks.push({ type: 'choices', items: schedule.map((item: any) => rivalChoice('第 ' + item.day + ' 天 · ' + item.name, item.own ? '本社承诺的发售日' : item.studio + ' · ' + core.TIERS[item.tier].name, item.studioId, item.own)) });
+    const calendar = core.calendarOf(state);
+    blocks.push({ type: 'text', text: '未来半年的日子：展会、年度评选、媒体评级与已公布的发售日。小作品通常不提前公布；同一周发售的作品会分流首发关注。点条目可以跳到对应页面。', muted: true });
+    if (!calendar.length) blocks.push({ type: 'text', text: '近期没有安排。' });
+    else blocks.push({ type: 'choices', items: calendar.map((item: any) => ({
+      text: '第 ' + item.day + ' 天 · ' + item.title,
+      detail: (item.day === state.day ? '今天' : '还有 ' + (item.day - state.day) + ' 天') + ' · ' + item.detail,
+      action: item.route ? 'menu' : 'none', data: item.route || {},
+      tag: item.own ? '本社' : { expo: '展会', awards: '评选', rating: '', release: '' }[item.kind as string] || ''
+    })) });
   } else if (tab === 'news') {
     const list = core.newsFor(state).slice(0, 30);
-    blocks.push({ type: 'text', text: '主要报道' + core.TIERS[focus].name + '层的动态，更高层只报头条。', muted: true });
+    blocks.push({ type: 'text', text: '主要报道' + core.TIERS[focus].name + '圈层的动态，更高层只报头条。', muted: true });
     if (!list.length) blocks.push({ type: 'text', text: '暂时没有新闻。' });
     else blocks.push({ type: 'choices', items: list.map((item: any) => rivalChoice(item.title, '第 ' + item.day + ' 天' + (item.text ? ' · ' + item.text : ''), item.studio, item.own)) });
   } else {
@@ -714,30 +812,21 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       // The radar only appears once a prototype exists, so its explanation has to wait for that moment
       // too — teaching six axes before they are on screen is a wall of words with nothing to point at.
       () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '原型出来了，六维评分也解锁：创意、深度、流畅、画面、声音、稳定。实线是现在的分数，虚线是按当前团队的水平能到哪；综合评分是六项按玩家口味加权。', ack: 'dimensions' } : null,
-      // On the main screen these two stay forced taps: opening the page is the lesson. Only the tip
-      // inside each page is a "知道了" explanation, because acting there costs money.
-      () => project?.checkpoints.prototype && !seen.navTools ? { anchor: 'nav-tools', text: '原型成形了。点「工具」看看：只提速、不提高质量，画面、声音和测试工具也已开放。', tap: 'navTools' } : null,
-      () => project?.checkpoints.demo && !seen.testing ? { anchor: 'nav-testing', text: '体验版完成：点「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
-      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投放推广。推广只换关注，不保证销量；首作可以先投一小笔，也可以不投。') : null,
+      // On the main screen these stay forced taps: opening the page is the lesson. Only the tip inside
+      // each page is a "知道了" explanation, because acting there costs money.
+      () => project?.checkpoints.prototype && !seen.scene ? explain('scene', 'scene', '办公室也是入口：点白板看日历，点奖杯架看公司与作品履历，点下方公告栏看行业新闻，点作品画面打开项目，点工位打开团队。') : null,
+      () => project?.checkpoints.demo && !seen.testing && !seen.navTesting ? { anchor: 'nav-project', text: '体验版完成：点「项目」，在里面打开「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
+      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投放推广。每部作品只推广一次，只换关注、不保证销量；首作可以投最小一档，也可以不投。') : null,
       () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '待修缺陷是测试和玩家发现、还没修的问题。员工负责的工作做满后自动消耗工时修复；没测到的缺陷会在发售后被玩家发现。') : null,
       () => complete && !project.released ? explain('launchBook', 'nav-project', '各评分项都做满了。想发售时在「项目」里正式发售，也可以继续返工提高评分。') : null,
-      () => !project && state.catalog.length === 1 ? introduce('review', 'nav-market', '首作已发售。点「市场」打开档案，看看复盘：哪里亏了，下一作怎么改。') : null
+      () => !project && state.catalog.length === 1 && !seen.navReview ? { anchor: 'nav-finance', text: '首作已发售。点「公司」，在作品履历里打开它看看复盘：哪里亏了，下一作怎么改。', tap: 'navReview' } : null
     ];
     for (const step of steps) { const result = step(); if (result) return result; }
     return null;
   }
   switch (route.menu) {
     case 'team': return hasTeammate ? null : { anchor: 'recruit-' + weakestRole(state), text: '招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '。' };
-    case 'tools': {
-      // The main screen only walks the player to this page; inside, point at a tool they can afford,
-      // so the lesson ends with something bought rather than another tip that cannot be cleared.
-      if (seen.tools || !project) return null;
-      const unowned = Object.keys(core.STUDIO_TOOLS)
-        .filter((key: string) => core.toolOpen(state, key) && !state.tools.includes(key));
-      if (!unowned.length) return null;
-      const buyable = unowned.find((key: string) => state.cash >= core.STUDIO_TOOLS[key].cost) || unowned[0];
-      return { anchor: 'tool-' + buyable, text: '工具只加速对应那类工作，不提高质量。买不起也不要紧，钱先花在招人或推广上更划算。', ack: 'tools' };
-    }
+    case 'finance': return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
     case 'recruit':
       return state.candidates[route.id] ? (hasTeammate ? null : { anchor: 'candidates', text: '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。' };
     case 'candidate': return hasTeammate ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
@@ -745,6 +834,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       if (!project) return null;
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
       if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
+      if (project.checkpoints.demo && !seen.testing && !seen.testingEntry) return { anchor: 'testing', text: '点「试玩」，招一批玩家来找缺陷、听评价。', tap: 'testingEntry' };
       // Several buttons live on this page; once the trial build exists the useful one is the release.
       if (project.checkpoints.demo && !project.released && !seen.launchBook) return { anchor: 'launch', text: '体验版已经能卖了：做好准备后点这里发售，也可以继续制作、返工提高评分。', ack: 'launchBook' };
       return null;
@@ -758,8 +848,8 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
     }
     case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：能发现大部分缺陷，也会指出这类玩家最在意的评分项。预算紧可以晚点再试。', ack: 'testing' };
     case 'market':
-      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '推广把钱换成关注：越多越贵，每多花一万元关注增长会变慢。首作预算有限，可以先投一小笔，也可以暂不推广。', ack: 'promotions' };
-      return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
+      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '每部作品只推广一次，档位差几个数量级。先看上面每位关注约值多少钱、这部作品首发能吃下多少关注，再决定投哪一档；首作预算有限，可以投最小一档，也可以不投。', ack: 'promotions' };
+      return null;
     default: return null;
   }
 }

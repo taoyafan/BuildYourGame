@@ -6,7 +6,7 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawDesk, drawHead, drawWork, seatLayout } from './ui/Art';
+import { Pen, drawRoom, drawDesk, drawHead, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
 
 const { ccclass } = _decorator;
@@ -17,9 +17,9 @@ const colors = {
 };
 const navigation = [
   ['project', '项目', 'FolderKanban'], ['team', '团队', 'Users'],
-  ['tools', '工具', 'Wrench'], ['testing', '试玩', 'FlaskConical'],
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
 ];
+const tierColors = ['#2f7d63', '#3b6ea5', '#d39a1e'];
 
 @ccclass('StudioApp')
 export class StudioApp extends Component {
@@ -442,7 +442,18 @@ export class StudioApp extends Component {
     // last speed chip touch the capsule on devices whose capsule is wider than reported.
     const controlsRight = headerRight - (platform.mini ? 22 : 8);
     const controlsLeft = controlsRight - 4 * 40;
-    this.text(this.stage, state.company || '日光工作室', 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
+    const companyName = state.company || '日光工作室';
+    const nameRoom = controlsLeft - 32 - 50;
+    // Rough glyph width so the tier badge can sit right after the name without measuring the label.
+    const nameWidth = Math.min(nameRoom, Array.from(companyName).reduce((total: number, char: string) => total + (char.charCodeAt(0) > 255 ? 17 : 9.5), 0));
+    this.text(this.stage, companyName, 20, top, nameRoom, 24, 17, colors.ink, true);
+    if (state.company) {
+      const rating = core.ratingOf(state);
+      const badge = this.box(this.stage, 'TierBadge', 20 + nameWidth + 6, top + 3, 44, 19, tierColors[rating.tier], 9);
+      this.text(badge, core.TIERS[rating.tier].name + (rating.watch ? ' !' : ''), 0, 0, 44, 19, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.clickable(badge, () => this.openMenu('rating'));
+      this.anchors.set('tier', badge);
+    }
     this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
     [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
@@ -457,13 +468,13 @@ export class StudioApp extends Component {
     const navY = this.height - this.bottom - 58;
     this.box(this.stage, 'NavigationBackground', 0, navY - 8, width, 66 + this.bottom, colors.paper);
     navigation.forEach(([menu, title, icon], index) => {
-      const cellWidth = width / 6;
+      const cellWidth = width / navigation.length;
       const lock = content.menuLock(state, menu);
       const node = this.box(this.stage, title, index * cellWidth, navY, cellWidth, 54);
       this.clickable(node, () => {
         if (lock) { this.notify(title + '：' + lock + '。'); return; }
-        const target = menu === 'project' && !core.projectOpen(state).length ? 'new-project' : menu;
-        const id = ['project', 'testing', 'market'].includes(menu) ? this.watching : undefined;
+        const target = menu === 'project' && !core.liveProjects(state).length ? 'new-project' : menu;
+        const id = ['project', 'market'].includes(menu) ? this.watching : undefined;
         this.openMenu(target, id);
       });
       this.navIcon(node, lock ? 'Lock' : icon, (cellWidth - 22) / 2, 5, 22, lock ? colors.line : colors.green);
@@ -471,8 +482,7 @@ export class StudioApp extends Component {
       this.anchors.set('nav-' + menu, node);
     });
     const contentY = financesY + 50;
-    const viewHeight = navY - contentY - 10;
-    const open = core.projectOpen(state);
+    const open = core.liveProjects(state);
     // Several projects at once: a tab strip picks which one the main screen speaks for.
     const shown = open.find((item: any) => item.id === this.watching) || open[0];
     if (shown) this.watching = shown.id;
@@ -486,20 +496,22 @@ export class StudioApp extends Component {
       const next = this.box(strip, 'NextProject', inner - 36, 0, 36, 34, colors.soft, 8);
       this.navIcon(next, 'ChevronRight', 8, 7, 20, colors.green);
       this.clickable(next, () => { this.watching = open[(index + 1) % open.length].id; this.render(); });
-      this.text(strip, `${shown.name} · ${index + 1}/${open.length}`, 44, 0, inner - 88, 34, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.text(strip, `${shown.name}${shown.released ? ' · 补丁' : ''} · ${index + 1}/${open.length}`, 44, 0, inner - 88, 34, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
       contentTop = contentY + 44;
     }
     const project = shown;
     // Fixed rows below and above the scene; the scene absorbs any shortage on short screens.
-    const shrink = Math.max(0, Math.min(80, (project ? 504 : 372) - (navY - contentTop - 10)));
+    const shrink = Math.max(0, Math.min(80, (project ? 468 : 410) - (navY - contentTop - 10)));
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
     let y = this.goalCard(body, 0) + 8;
     const sceneTop = y;
-    y += this.office(body, y, 116 - Math.round(shrink / 2)) + 6;
-    const metrics = project ? core.visibleMetrics(project) : null;
+    y += this.office(body, y, 116 - Math.round(shrink / 2)) + 4;
+    y += this.bulletin(body, y) + 4;
+    const workTop = y;
+    const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
     const workHeight = 96 - Math.round(shrink / 2);
     const { node: work, pen } = this.canvasNode(body, 'Work', 0, y, inner, workHeight);
-    if (project) drawWork(pen, inner, workHeight, project.type, metrics.progress / 100, metrics.dimensions.picture, project.started);
+    if (project) drawWork(pen, inner, workHeight, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
     else if (state.catalog.length) drawWork(pen, inner, workHeight, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
     else { pen.rect(0, 0, inner, workHeight, colors.pale, 6); this.text(work, '立项后，作品会在这里一点点成形', 0, 0, inner, workHeight, 13, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER; }
     if (!project && state.catalog.length) {
@@ -508,10 +520,12 @@ export class StudioApp extends Component {
       const chip = this.box(work, 'Caption', 8, workHeight - 28, chipWidth, 22, colors.night, 11, 190);
       this.text(chip, caption, 10, 0, chipWidth - 20, 22, 11, '#ffffff');
     }
+    this.clickable(work, () => project ? this.openMenu('project', project.id) : this.openMenu(state.catalog.length ? 'finance' : 'new-project'));
     this.anchors.set('work', work);
-    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, sceneTop, inner, y + workHeight - sceneTop));
+    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, sceneTop, inner, workTop + workHeight - sceneTop));
     y += workHeight + 10;
-    if (project) y = this.projectPanel(body, y, metrics);
+    if (project?.released) y = this.patchPanel(body, y, project);
+    else if (project) y = this.projectPanel(body, y, metrics);
     else {
       this.text(body, state.catalog.length ? '下一部作品，继续创造。' : '从一间小屋，到第一部作品。', 0, y, inner, 28, 17, colors.ink, true);
       y += 36;
@@ -541,8 +555,9 @@ export class StudioApp extends Component {
     const state = this.state;
     const inner = this.width - 40;
     const { node, pen } = this.canvasNode(body, 'Office', 0, y, inner, height);
-    drawRoom(pen, inner, height, state.office);
-    const working = this.playing && core.projectOpen(state).length > 0;
+    const wins = state.awards.filter((award: any) => award.own).length;
+    drawRoom(pen, inner, height, state.office, { awards: wins, books: state.catalog.length });
+    const working = this.playing && core.liveProjects(state).length > 0;
     const layout = seatLayout(core.seats(state), inner, height);
     const desks = new Pen(this.box(node, 'Desks', 0, 0, inner, height).addComponent(Graphics));
     layout.forEach((seat, index) => {
@@ -557,13 +572,87 @@ export class StudioApp extends Component {
     const chip = this.box(node, 'Room', 8, 8, label.length * 12 + 16, 22, '#ffffff', 11, 220);
     this.text(chip, label, 8, 0, label.length * 12 + 4, 22, 11, colors.ink);
     this.clickable(node, () => this.openMenu('team'));
+    // The whiteboard and the shelf are doors too: calendar and the company's record.
+    const props = roomProps(inner, height, state.office);
+    const hotspot = (name: string, rect: any, label: string, open: () => void) => {
+      const spot = this.box(node, name, rect.x, rect.y, rect.w, rect.h + 8);
+      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, rect.h - 4, 30, 12, colors.night, 6, 170);
+      this.text(tag, label, 0, 0, 30, 12, 9, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.clickable(spot, open);
+      this.anchors.set(name, spot);
+    };
+    hotspot('board', props.board, '日历', () => this.openMenu('industry', 'schedule'));
+    hotspot('shelf', props.shelf, '履历', () => this.openMenu('finance'));
     return height;
+  }
+
+  // One or two lines of industry news under the office, like a TV in the corner. Reading it is
+  // optional; anything the player must act on still gets its own banner.
+  private bulletin(body: Node, y: number) {
+    const inner = this.width - 40;
+    const items = core.bulletinOf(this.state);
+    const node = this.box(body, 'Bulletin', 0, y, inner, 34, colors.night, 8);
+    this.navIcon(node, 'Newspaper', 8, 8, 18, '#ffd166');
+    const item = items.length ? items[Math.floor(this.state.day / 3) % items.length] : null;
+    const line = item ? (item.own ? '【本社】' : '') + item.title + (item.text ? ' · ' + item.text : '') : core.RATING_MEDIA + '：圈子里暂时没有新消息。';
+    const label = this.text(node, line, 32, 2, inner - 40, 30, 10, item?.own ? '#ffd166' : '#e8f3ed');
+    label.lineHeight = 14;
+    label.overflow = Label.Overflow.CLAMP;
+    this.clickable(node, () => this.openMenu('industry', 'news'));
+    this.anchors.set('bulletin', node);
+    return 34;
+  }
+
+  // Four stats beside the radar instead of under it, so the scoring block costs no extra row.
+  private statColumn(body: Node, x: number, y: number, width: number, cells: any[]) {
+    const cellHeight = 41;
+    cells.forEach(([title, value, color, bar, anchor], index) => {
+      const node = this.box(body, title, x, y + index * cellHeight, width, cellHeight - 4, colors.paper, 8);
+      this.text(node, title, 10, 2, width - 16, 14, 10, colors.muted);
+      const label = this.text(node, value, 10, 15, width - 16, 20, value === '—' || value === '未测' ? 13 : 16, value === '—' || value === '未测' ? colors.muted : color, true);
+      if (anchor === 'stat-followers') { this.followersLabel = label; this.rollLabel('followers', label, (n: number) => content.number(n)); }
+      if (bar >= 0) {
+        this.box(node, 'Track', 10, cellHeight - 9, width - 20, 3, colors.line);
+        this.box(node, 'Value', 10, cellHeight - 9, (width - 20) * Math.min(100, bar) / 100, 3, color);
+      }
+      this.anchors.set(anchor, node);
+    });
+    return cells.length * cellHeight;
+  }
+
+  // A running patch on the main screen: what it fixes, how far along it is, who is on it.
+  private patchPanel(body: Node, y: number, project: any) {
+    const inner = this.width - 40;
+    const forecast = core.patchForecast(this.state, project);
+    const book = this.state.catalog.find((item: any) => item.id === project.id);
+    this.text(body, '《' + project.name + '》补丁', 0, y, inner - 150, 24, 16, colors.ink, true);
+    this.text(body, '修复 ' + forecast.fixed + '/' + forecast.targets + (project.patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : ''), inner - 150, y, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    y += 28;
+    const track = this.box(body, 'Track', 0, y, inner, 40);
+    this.anchors.set('track', track);
+    this.box(track, 'Rail', 0, 22, inner, 4, colors.line);
+    this.box(track, 'Fill', 0, 22, inner * forecast.share, 4, colors.green);
+    this.text(track, forecast.days === null ? '还没有人做 · 点开安排补丁人手' : forecast.days === 0 ? '即将上线' : '约 ' + forecast.days + ' 天上线 · 剩余 ' + forecast.left.toFixed(1) + ' 人日', 0, 0, inner, 18, 11, forecast.days === null ? colors.amber : colors.green, true);
+    this.clickable(track, () => this.openMenu('project', project.id));
+    y += 46;
+    const metrics = core.projectMetrics(project);
+    const radarWidth = Math.round(inner * 0.58);
+    const height = this.radar(body, y, metrics, project.type, project, radarWidth);
+    this.statColumn(body, radarWidth + 6, y, inner - radarWidth - 6, [
+      ['综合', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
+      ['待修', Math.max(0, forecast.targets - forecast.fixed) + ' 项', colors.blue, -1, 'stat-defects'],
+      ['口碑', book ? book.reviewScore.toFixed(1) : '—', colors.amber, -1, 'stat-review'],
+      ['日销', book ? book.lastDayUnits + ' 份' : '—', colors.ink, -1, 'stat-daily']
+    ]);
+    y += Math.max(height, 164) + 6;
+    this.text(body, '补丁做完自动上线；口碑与销量随之后的玩家评价逐步变化。', 0, y, inner, 18, 11, colors.muted);
+    return y + 26;
   }
 
   private projectPanel(body: Node, y: number, metrics: any) {
     const state = this.state;
     // Must follow the tab the player picked, not whichever project happens to be first.
-    const open = core.projectOpen(state);
+    const open = core.liveProjects(state);
     const project = open.find((item: any) => item.id === this.watching) || open[0];
     if (!project) return y;
     const inner = this.width - 40;
@@ -579,38 +668,28 @@ export class StudioApp extends Component {
       this.text(hint, '完成 25% 原型后，这里显示六维评分、瓶颈与关注。现在先开始时间或调整分工。', 12, 2, inner - 24, 50, 12, colors.muted);
       return y + 62;
     }
-    y += this.radar(body, y, metrics, project.type, project) + 8;
+    const radarWidth = Math.round(inner * 0.58);
+    const height = this.radar(body, y, metrics, project.type, project, radarWidth);
     const bottleneck = forecast.bottleneck ? core.DIMENSIONS.find(dimension => dimension.key === forecast.bottleneck.key)?.name : '—';
-    const cells: any[] = [
+    this.anchors.set('stats', this.box(body, 'StatsAnchor', radarWidth + 6, y, inner - radarWidth - 6, 164));
+    this.statColumn(body, radarWidth + 6, y, inner - radarWidth - 6, [
       ['综合估计', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
       ['待修缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
-    ];
-    const cell = inner / 4;
-    this.anchors.set('stats', this.box(body, 'StatsAnchor', 0, y, inner, 46));
-    cells.forEach(([title, value, color, bar, anchor], index) => {
-      const node = this.box(body, title, index * cell, y, cell - 6, 46);
-      this.text(node, title, 0, 0, cell - 6, 16, 10, colors.muted);
-      const label = this.text(node, value, 0, 16, cell - 6, 24, anchor === 'stat-overall' ? 14 : value === '未测试' ? 13 : 18, value === '未测试' || value === '—' ? colors.muted : color, true);
-      if (anchor === 'stat-followers') { this.followersLabel = label; this.rollLabel('followers', label, (n: number) => content.number(n)); }
-      if (bar >= 0) {
-        this.box(node, 'Track', 0, 42, cell - 12, 3, colors.line);
-        this.box(node, 'Value', 0, 42, (cell - 12) * bar / 100, 3, color);
-      }
-      this.anchors.set(anchor, node);
-    });
-    y += 50;
+    ]);
+    y += Math.max(height, 164) + 6;
     const insight = core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type);
     this.anchors.set('insight', this.text(body, insight + (project.test ? ' · 试玩 ' + project.test.score.toFixed(1) + ' 分' : ''), 0, y, inner, 18, 11, colors.muted).node);
     return y + 26;
   }
 
   // Six-axis radar: the solid layer is the current score, the dashed one is where today's team would
-  // land if it finished the work. The gap between them is what time can still buy.
-  private radar(body: Node, y: number, metrics: any, type: string, project?: any) {
-    const inner = this.width - 40;
-    const height = 184;
+  // land if it finished the work. The gap between them is what time can still buy. On the main screen
+  // it takes the left part of the row and the stats sit beside it.
+  private radar(body: Node, y: number, metrics: any, type: string, project?: any, compact = 0) {
+    const inner = compact || this.width - 40;
+    const height = compact ? 164 : 184;
     const { node, pen } = this.canvasNode(body, 'Radar', 0, y, inner, height);
     this.anchors.set('radar', node);
     const center = { x: inner / 2, y: 82 };
@@ -658,7 +737,7 @@ export class StudioApp extends Component {
       label.node.setPosition(spot.x - 28, -spot.y + 16);
       if (project && !project.released) this.clickable(label.node, () => this.openMenu('dimension', project.id, false, key));
     });
-    this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
+    if (!compact) this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
     return height;
   }
 
@@ -712,7 +791,7 @@ export class StudioApp extends Component {
 
   // Floating "+N" hints for followers, cash and found defects; only for changes worth noticing.
   private showDeltas(cashLabel: Label) {
-    const open = core.projectOpen(this.state);
+    const open = core.liveProjects(this.state);
     const project = open.find((item: any) => item.id === this.watching) || open[0];
     const current = { id: project?.id || '', followers: project ? Math.round(project.followers) : 0, cash: this.state.cash, found: project ? project.found : 0, company: this.state.company, day: this.state.day };
     const last = this.shown;
@@ -950,6 +1029,14 @@ export class StudioApp extends Component {
         for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data || { choice: item.id }), { tag: item.tag || (item.recommended ? '推荐' : ''), highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
+      }
+      case 'actions': {
+        // Menu actions as cards: an icon, what it does and why it might be greyed out, instead of a
+        // column of identical green bars.
+        const start = y;
+        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data), { icon: item.icon || 'ChevronRight', tag: item.tag, tagColor: colors.green, disabled: item.disabled, anchor: item.anchor, compact: String(item.detail || '').length <= 24 }) + 8;
+        if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 8));
+        return y + 6;
       }
       case 'tabs': {
         const columns = Math.min(3, block.items.length);
@@ -1300,9 +1387,9 @@ export class StudioApp extends Component {
     const item = this.celebrations.shift();
     this.celebrating = true;
     const width = this.width - 40;
-    const big = ['breakeven', 'office', 'record'].includes(item.kind);
-    const banner = this.box(this.effects, 'Banner', 20, this.top + 98, width, 70, big ? colors.amber : colors.night, 14, 240);
-    this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
+    const big = ['breakeven', 'office', 'record', 'warning'].includes(item.kind);
+    const banner = this.box(this.effects, 'Banner', 20, this.top + 98, width, 70, item.kind === 'warning' ? colors.danger : big ? colors.amber : colors.night, 14, 240);
+    this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins', warning: 'Award' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
     this.text(banner, item.title, 50, 12, width - 64, 24, 16, '#ffffff', true);
     this.text(banner, item.text, 50, 36, width - 64, 20, 12, '#fff3d6');
     banner.setScale(0.9, 0.9, 1);
@@ -1539,7 +1626,7 @@ export class StudioApp extends Component {
     if (this.state.event) return;
     this.routes = [];
     this.resumeAfterMenu = false;
-    this.playing = core.projectOpen(this.state).length > 0 && event.id !== 'cash' && !this.state.over;
+    this.playing = core.liveProjects(this.state).length > 0 && event.id !== 'cash' && !this.state.over;
     this.elapsed = 0;
     this.render();
     if (this.playing) this.notify('继续经营中，随时可以暂停。');
@@ -1592,7 +1679,15 @@ export class StudioApp extends Component {
           this.render();
           break;
         }
-        case 'buy-tool': this.apply(core.buyTool(this.state, data.key), '工具已购置，对应工作更快了。'); break;
+        case 'patch-start': {
+          const next = core.startPatch(this.state, data.id, data.rework || null);
+          this.watching = data.id;
+          this.routes = [{ menu: 'project', id: data.id }, { menu: 'assign', id: data.id }];
+          this.apply(next, '补丁已开工，请安排人手。');
+          break;
+        }
+        case 'patch-crew': this.apply(core.setPatchCrew(this.state, data.id, data.person, !!data.on)); break;
+        case 'patch-release': this.apply(core.releasePatch(this.state, data.id), '补丁已上线。'); this.routes = [{ menu: 'book', id: data.id }]; this.render(); break;
         case 'outsource': this.apply(core.outsourceSound(this.state, data.id, Number(data.tier)), '声音已外包，相关评分项立即推进。'); break;
         case 'dlc': {
           const next = core.makeDLC(this.state, data.id);
@@ -1606,13 +1701,8 @@ export class StudioApp extends Component {
         case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
         case 'test': this.apply(core.testDemo(this.state, data.id, Number(data.count))); break;
         case 'promote': {
-          const project = core.activeProject(this.state, data.id);
-          const before = project ? project.followers : 0;
-          const cost = Number(data.cost);
-          this.apply(core.promote(this.state, data.id, cost));
-          const after = core.activeProject(this.state, data.id);
-          const index = core.PROMOTE_TIERS.indexOf(cost);
-          this.floatAt(this.anchors.get('promote-' + index), '+' + content.number((after ? after.followers : 0) - before) + ' 人关注', colors.green);
+          const next = core.promote(this.state, data.id, Number(data.cost));
+          this.apply(next, '推广带来 ' + content.number(core.activeProject(next, data.id)?.promoFollowers || 0) + ' 位关注。');
           break;
         }
         case 'launch': this.apply(core.launchProject(this.state, data.id)); break;

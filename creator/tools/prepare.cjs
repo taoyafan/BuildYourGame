@@ -7,8 +7,9 @@ const lucide = require(path.join(__dirname, 'vendor/lucide.min.js'));
 const iconDirectory = path.join(project, 'assets/resources/icons');
 fs.mkdirSync(iconDirectory, { recursive: true });
 const names = [
-  'Sun', 'Play', 'Pause', 'FolderKanban', 'Users', 'Wrench', 'FlaskConical', 'ChartNoAxesCombined', 'Building2', 'ArrowLeft', 'X', 'ChevronRight',
-  'Rocket', 'Target', 'Coins', 'Trophy', 'Lock', 'Check', 'Megaphone', 'Bug', 'Sparkles', 'UserPlus', 'Palette', 'TrendingUp', 'Gift', 'Star', 'CircleHelp'
+  'Sun', 'Play', 'Pause', 'FolderKanban', 'Users', 'FlaskConical', 'ChartNoAxesCombined', 'Building2', 'ArrowLeft', 'X', 'ChevronRight',
+  'Rocket', 'Target', 'Coins', 'Trophy', 'Lock', 'Check', 'Megaphone', 'Bug', 'Sparkles', 'UserPlus', 'Palette', 'TrendingUp', 'Gift', 'Star', 'CircleHelp',
+  'CalendarDays', 'Newspaper', 'Award', 'Hammer', 'ScrollText'
 ];
 for (const name of names) {
   const icon = lucide[name] || lucide.icons?.[name];
