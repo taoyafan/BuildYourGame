@@ -596,7 +596,7 @@ export class StudioApp extends Component {
       this.text(body, state.catalog.length ? '下一部作品，继续创造。' : '从一间小屋，到第一部作品。', 0, y, inner, 28, 17, colors.ink, true);
       y += 36;
     }
-    const advice = content.advice(state);
+    const advice = content.advice(state, project ? project.id : undefined);
     y += this.choice(body, y, advice.title, advice.text, () => this.openMenu(advice.menu, advice.id), { icon: 'ChevronRight', highlight: true, anchor: 'next', compact: true });
     finish(y - 20);
     this.showDeltas(cashLabel);

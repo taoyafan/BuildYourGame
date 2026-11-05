@@ -33,8 +33,11 @@ export function bestChannel(state: any) {
   return ['headhunt', 'web', 'friends'].find(channel => core.channelOpen(state, channel));
 }
 
-export function advice(state: any) {
-  const project = core.projectOpen(state)[0];
+// The main screen can look at any running title, so the bottom card has to speak for the one on
+// screen instead of always the first project in the list.
+export function advice(state: any, projectId?: string) {
+  const shown = projectId ? state.projects.find((item: any) => item.id === projectId) || null : null;
+  const project = shown && !shown.released ? shown : core.projectOpen(state)[0];
   if (state.over) return { title: '公司未能支付月底开支', text: '可在公司菜单导出或重新创业。', menu: 'finance' };
   if (state.event) return { title: state.event.title, text: '需要你做个决定，时间已暂停。', menu: 'event' };
   const worker = state.staff[0];
@@ -43,6 +46,14 @@ export function advice(state: any) {
   if (idlePatch) return { title: '补丁还没有人做', text: '《' + idlePatch.name + '》的补丁需要安排人手，做完自动上线。', menu: 'assign', id: idlePatch.id };
   if (state.goals.breakEven !== null && state.office === 0 && state.cash >= core.OFFICES[1].cost + core.monthlyCost(state) * 2) return { title: '已经回本：可以搬进正式办公室', text: core.OFFICES[1].seats + ' 个工位，开放行业推荐与猎头。点奖杯架或这里去搬家。', menu: 'achievements' };
   if (state.office === 1 && state.goals.topTen !== null && state.goals.award !== null && state.cash >= core.OFFICES[2].cost + core.monthlyCost(state) * 2) return { title: '可以再次扩建了', text: core.OFFICES[2].seats + ' 个工位。点奖杯架或这里去扩建。', menu: 'achievements' };
+  // A shipped title has no six-dimension pipeline left; only its patch is actionable.
+  if (shown && shown.released && shown.patch) {
+    const patch = core.patchForecast(state, shown);
+    const left = patch ? Number(patch.left) : NaN;
+    const days = patch ? patch.days : null;
+    const text = !Number.isFinite(left) ? '点开可看补丁进度与人手。' : days === null ? '还没有人做这个补丁，安排人手后才会开始修。' : days === 0 ? '即将上线。' : `还剩 ${left.toFixed(1)} 人日，约 ${days} 天上线。`;
+    return { title: '推进《' + shown.name + '》补丁', text, menu: 'project', id: shown.id };
+  }
   if (!project) {
     if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品。', menu: 'new-project' };
     return { title: '为下一款作品立项', text: '参考上一作复盘，先补最被在意的短板。', menu: 'new-project' };
@@ -51,7 +62,8 @@ export function advice(state: any) {
     return { title: '还没有人做这份工作', text: '在「项目」里给同事分配要做的工作。', menu: 'project', id: project.id };
   }
   const pipeline = core.dimensionPipeline(state, project);
-  const idle = pipeline.rows.filter((row: any) => row.days === null && row.remaining > 0);
+  // Stability is not a work item; it follows the defects that testing finds, so it is never "unstaffed".
+  const idle = pipeline.rows.filter((row: any) => row.key !== 'stability' && row.days === null && row.remaining > 0);
   if (idle.length) return { title: '有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
   if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
