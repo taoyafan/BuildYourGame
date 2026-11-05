@@ -53,7 +53,7 @@ export function advice(state: any) {
   const pipeline = core.dimensionPipeline(state, project);
   const idle = pipeline.rows.filter((row: any) => row.days === null && row.remaining > 0);
   if (idle.length) return { title: '有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
-  if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '压力标签正在拉低产出，可以安排休假或团建。', menu: 'team' };
+  if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
   if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
   if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
   if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.DIMENSIONS.find(d => d.key === pipeline.bottleneck.key)?.name}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
@@ -351,7 +351,7 @@ function assignMenu(state: any, projectId: string) {
       { type: 'choices', anchor: 'patch-crew', items: state.staff.map((person: any) => {
         const on = core.personWorks(state, project, person).length > 0;
         const elsewhere = state.projects.find((item: any) => item.id !== project.id && core.chosenWorks(item, person).length);
-        return { text: person.name + ' · ' + core.ROLES[person.role].name, detail: (on ? '参与中：' + core.personActivity(state, project, person) : elsewhere ? '现在在《' + elsewhere.name + '》' : '现在做默认项目') + '\n速度 ' + person.speed + (person.leaveUntil > state.day ? ' · 休假中' : ''), action: 'patch-crew', data: { id: project.id, person: person.id, on: !on }, tag: on ? '参与' : '' };
+        return { text: person.name + ' · ' + core.ROLES[person.role].name, detail: (on ? '参与中：' + core.personActivity(state, project, person) : elsewhere ? '现在在《' + elsewhere.name + '》' : '现在做默认项目') + '\n速度 ' + person.speed + (person.leaveUntil > state.day ? ' · 外出中' : ''), action: 'patch-crew', data: { id: project.id, person: person.id, on: !on }, tag: on ? '参与' : '' };
       }) }
     ] };
   }
@@ -532,17 +532,13 @@ function bookMenu(state: any, id: string) {
   };
 }
 
-// Value tones follow the shared rarity ramp: green → blue → red → gold.
+// Value tones follow the shared rarity ramp: green → blue → purple → gold.
 export function valueTone(value: number) {
-  return value >= 90 ? 'gold' : value >= 75 ? 'red' : value >= 60 ? 'blue' : value >= 45 ? 'green' : 'muted';
+  const rank = core.valueRank(value);
+  return rank < 0 ? 'muted' : core.RARITY_TONES[rank];
 }
 const potentialTone = (band: string) => band === '高' ? 'gold' : band === '中' ? 'blue' : 'muted';
 const abilityLines = (person: any) => core.ABILITIES.map(ability => [ability.name, String(Math.round(person.abilities[ability.key])), valueTone(person.abilities[ability.key])]);
-const tagChips = (person: any) => [
-  ...(person.boost ? [{ ...core.tagInfo(person.boost) }] : []),
-  ...person.tags.map((tag: any) => core.tagInfo(tag)),
-  ...(person.stressTags || []).map((key: string) => core.tagInfo(key))
-];
 
 // Milestones first (they unlock things), then the rest; hidden ones stay "???" until earned.
 function achievementsMenu(state: any) {
@@ -593,7 +589,9 @@ function teamMenu(state: any) {
   const openRoles = Object.keys(core.ROLES).filter((role: string) => core.roleOpen(state, role));
   const lockedRoles = Object.keys(core.ROLES).filter((role: string) => !core.roleOpen(state, role));
   const sample = state.staff.find((person: any) => !person.tags.some((tag: any) => tag.key === 'social')) || state.staff[0];
-  const chances = [1, 2, 3].map(days => sample ? Math.round(core.outingChance(state, sample, days) * 100) : 0);
+  const offers = core.OUTING_DAYS.map((days: number) => ({ days, offer: core.outingOffer(state, days), chance: sample ? core.outingChances(sample, days) : { clear: 0, awaken: 0 } }));
+  const outing = state.outing;
+  const stressed = state.staff.filter((person: any) => person.stressTags.length).length;
   return {
     title: '团队',
     blocks: [
@@ -602,13 +600,17 @@ function teamMenu(state: any) {
       ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
       ...(state.office >= 1 ? [{ type: 'actions', items: [{ text: '猎头', detail: '向对手的名人开高薪挖人。', icon: 'Briefcase', action: 'menu', data: { menu: 'talents' } }] }] : []),
       { type: 'staff' },
-      ...(hasTeammate ? [
-        { type: 'section', title: '团建' },
-        { type: 'text', text: '全员停工几天出去团建，工资照付，另花一笔费用。每个人都有一定概率：某项能力长期提高一点、清掉一个负面标签，时间越长还越可能觉醒新的性格。刚团建过再去，概率会变低，隔一个月恢复。', muted: true },
-        { type: 'lines', items: [['1 天', chances[0] + '% · ' + money(state.staff.length * 0.4)], ['2 天', chances[1] + '% · ' + money(state.staff.length * 0.8)], ['3 天', chances[2] + '% · ' + money(state.staff.length * 1.2)]] },
-        { type: 'buttons', columns: 3, items: [1, 2, 3].map(value => ({ text: '团建 ' + value + ' 天', action: 'outing', icon: 'Plane', data: { days: value, value }, anchor: 'outing-' + value })) },
-        { type: 'text', text: '「合群」的人概率更高。加班按人在员工页设置：产出更高，但缺陷更多，也会累积「疲惫」「想走」。', muted: true }
-      ] : [{ type: 'text', text: '创始人也在工作。首作一个人就能做完，招人是为了补上自己干不了的那一头：程序或策划请配美术，美术请配程序。', muted: true }])
+      ...(hasTeammate ? [] : [{ type: 'text', text: '创始人也在工作。首作一个人就能做完，招人是为了补上自己干不了的那一头：程序或策划请配美术，美术请配程序。', muted: true }]),
+      { type: 'section', title: '团建' },
+      { type: 'text', text: '团建是清掉「疲惫」「想走」的唯一办法：全队停工，工资照付，另付费用。每个负面标签按概率被清掉（先清「想走」），天数越长越可能清掉，但不保证；每人还有机会有收获：觉醒一个正面性格，或获得、提升一档团队增益，越稀有的越难出。团建期间暂停加班，回来后恢复原来的安排。', muted: true },
+      { type: 'lines', items: [
+        ['可用次数', outing.charges + ' / ' + core.OUTING_MAX + (outing.next !== null ? ' · 第 ' + outing.next + ' 天恢复 1 次' : '')],
+        ['最早可去', offers[0].offer.earliest > state.day ? '第 ' + offers[0].offer.earliest + ' 天（两次至少隔 ' + core.OUTING_GAP + ' 天）' : '现在'],
+        ['有负面标签的人', stressed + ' 人']
+      ] },
+      { type: 'lines', items: offers.map((item: any) => [item.days + ' 天 · ' + money(item.offer.cost), '清标签约 ' + Math.round(item.chance.clear * 100) + '% · 收获约 ' + Math.round(item.chance.awaken * 100) + '%']) },
+      { type: 'buttons', columns: 3, items: offers.map((item: any) => ({ text: '团建 ' + item.days + ' 天', action: 'outing', icon: 'Plane', data: { days: item.days }, disabled: !item.offer.available, anchor: 'outing-' + item.days })) },
+      { type: 'text', text: (offers[0].offer.available ? '' : offers[0].offer.reason + ' ') + '「合群」的人概率更高。加班按人在员工页设置：产出更高，但缺陷更多，也会累积负面标签。', muted: true }
     ]
   };
 }
@@ -620,7 +622,7 @@ function personMenu(state: any, id: string) {
   const pair = core.mentorActive(state, person);
   const pupils = state.staff.filter((other: any) => other.mentor?.by === person.id);
   const project = core.projectOf(state, person);
-  const boost = person.boost ? core.BOOST_TAGS[person.boost] : null;
+  const boost = person.boost ? core.tagInfo(person.boost, person) : null;
   const boostLive = boost && project && core.projectBoosts(state, project).includes(person.boost);
   const crew = project ? state.staff.filter((other: any) => core.projectOf(state, other)?.id === project.id).length : 0;
   const books = state.catalog.filter((book: any) => (book.team || []).some((member: any) => member.id === person.id));
@@ -635,11 +637,11 @@ function personMenu(state: any, id: string) {
         ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比他的工资高 ' + money(market - person.wage) : ''), market > person.wage ? 'green' : 'muted'],
         ['入职', '第 ' + (person.joined || 1) + ' 天 · 在职 ' + Math.max(0, state.day - (person.joined || 1)) + ' 天'],
         ['工作速度', String(person.speed)],
-        ['休假', person.leaveUntil > state.day ? '至第 ' + person.leaveUntil + ' 天，工资照付' : '正常在岗']
+        ['在岗', person.leaveUntil > state.day ? '外出至第 ' + person.leaveUntil + ' 天（团建或活动），工资照付' : '正常在岗']
       ] },
       { type: 'lines', title: '六项能力', items: abilityLines(person) },
-      ...(tagChips(person).length ? [{ type: 'tags', items: tagChips(person) }] : []),
-      ...(boost ? [{ type: 'note', icon: 'Users', text: '团队增益「' + boost.name + '」：' + boost.text + (boostLive ? '当前项目 ' + crew + ' 人受益。' : person.stressTags.length ? '他现在状态不好，增益暂时失效。' : '同一项目已有同类增益或不在项目中，暂未生效。') }] : []),
+      ...(core.personTags(person).length ? [{ type: 'tags', items: core.personTags(person) }] : []),
+      ...(boost ? [{ type: 'note', icon: 'Users', text: '团队增益「' + boost.name + '」' + core.BOOST_GRADES[(person.boostLevel || 1) - 1] + '：' + boost.text + (boostLive ? '当前项目 ' + crew + ' 人受益。' : person.stressTags.length ? '他现在状态不好，增益暂时失效。' : '同一项目已有更高档的同类增益或不在项目中，暂未生效。') + (person.boostLevel < 3 ? '在职越久或团建，可能升档。' : '') }] : []),
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人。' + (state.day - (person.joined || 0) < 30 ? '仍在磨合期，产出打八折。' : '已融入团队。') + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' ' + person.story : '') }] : []),
       ...(person.noOvertime ? [{ type: 'note', icon: 'Star', text: '他答应过屏幕外的你：再也不加班。' }] : []),
       { type: 'section', title: '带教' },
@@ -648,7 +650,7 @@ function personMenu(state: any, id: string) {
       ...(person.stressTags.includes('leaving') && !person.founder ? [{ type: 'lines', title: '离职风险', items: [['每天提出离职的概率', Math.round(core.resignChance(state, person) * 100) + '%' + (state.overtime[person.id] ? '（加班中翻倍）' : ''), 'red'], ['说明', '停止加班可降到 ' + Math.round(core.RESIGN_CHANCE * 100) + '%。']] }] : []),
       ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', Math.round((person.stressChance || 0) * 100) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
       { type: 'toggle', text: '让 ' + person.name + ' 加班', value: !!state.overtime[id], action: 'overtime', data: { id } },
-      { type: 'buttons', columns: person.founder ? 1 : 2, items: [{ text: '五天带薪休假', action: 'leave', icon: 'Moon', data: { id: person.id }, disabled: person.leaveUntil > state.day }, ...(person.founder ? [] : [{ text: '裁员（N+1）', action: 'menu', icon: 'UserMinus', data: { menu: 'dismiss', id: person.id } }])] },
+      ...(person.founder ? [] : [{ type: 'buttons', items: [{ text: '裁员（N+1）', action: 'menu', icon: 'UserMinus', data: { menu: 'dismiss', id: person.id } }] }]),
       { type: 'section', title: '员工档案' },
       ...((person.trace || []).length > 1 ? [{ type: 'trace', trace: person.trace, history: person.history || [] }] : [{ type: 'text', text: '每月记录一次六项能力，满两个月后在这里画出成长曲线。', muted: true }]),
       ...(books.length ? [{ type: 'lines', title: '参与的作品', items: books.map((book: any) => ['《' + book.name + '》', '第 ' + book.released + ' 天发售 · 口碑 ' + book.reviewScore.toFixed(0)]) }] : []),
@@ -725,7 +727,7 @@ function candidateMenu(state: any, id: string) {
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['潜力', core.potentialBand(person), potentialTone(core.potentialBand(person))], ['月薪', money(person.wage)], ['工作速度', String(person.speed)]] },
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：某一项接近顶尖，其余普通；入职前 30 天需要磨合，产出打八折，要价也高。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' 还记得吗？' + person.story : '') }] : []),
       { type: 'lines', title: '六项能力', items: abilityLines(person) },
-      ...(person.tags.length ? [{ type: 'tags', items: person.tags.map((tag: any) => core.tagInfo(tag)) }] : []),
+      ...(core.personTags(person).length ? [{ type: 'tags', items: core.personTags(person) }] : []),
       { type: 'buttons', anchor: 'hire', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', icon: 'UserPlus', data: { id: person.id }, disabled: reasons.length > 0, help: reasons.join('\n'), helpKey: 'hire:' + person.id }] }
     ]
   };

@@ -20,15 +20,14 @@ const navigation = [
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
 ];
 const tierColors = ['#2f7d63', '#3b6ea5', '#d39a1e'];
-// One rarity ramp for tags and values: green → blue → red → gold.
+// One rarity ramp for tags and values: green → blue → purple → gold. Red is only for warnings.
 const toneColors: any = {
-  green: '#2f7d63', blue: '#3b6ea5', red: '#c8574f', gold: '#d39a1e', muted: '#76877d',
-  ability: '#2f7d63', personality: '#3b6ea5', boost: '#c8574f', rare: '#d39a1e', stress: '#3a403d'
+  green: '#2f7d63', blue: '#3b6ea5', purple: '#7b55b8', gold: '#d39a1e', red: '#c8574f', muted: '#76877d', stress: '#3a403d'
 };
 // Grouped buttons always carry an icon; this picks one from the action when the menu gives none.
 const actionIcons: any = {
   menu: 'ChevronRight', test: 'FlaskConical', exhibition: 'Award', outsource: 'Music', recruit: 'UserPlus', hire: 'UserPlus',
-  leave: 'Moon', dismiss: 'UserMinus', outing: 'Plane', deadline: 'CalendarDays', launch: 'Rocket', review: 'ChartNoAxesCombined',
+  dismiss: 'UserMinus', outing: 'Plane', deadline: 'CalendarDays', launch: 'Rocket', review: 'ChartNoAxesCombined',
   move: 'Building2', export: 'Download', import: 'Upload', 'restart-confirm': 'RotateCcw', promote: 'Megaphone', mentor: 'GraduationCap',
   poach: 'Briefcase', sale: 'Coins', dlc: 'Gift', sequel: 'Sparkles'
 };
@@ -380,8 +379,7 @@ export class StudioApp extends Component {
     return height;
   }
 
-  // Coloured tag chips: ability green, personality blue, team boost red, rare gold; stress is dark grey,
-  // and anything harmful (stress or a bad trait) carries a "!" so it never reads as a perk.
+  // Tag chips coloured by rarity (green → blue → purple → gold); anything harmful is dark grey with a "!".
   private chips(parent: Node, items: any[], x: number, y: number, width: number) {
     let cursorX = x;
     let cursorY = y;
@@ -1158,7 +1156,7 @@ export class StudioApp extends Component {
           const bestAbility = core.primaryAbility(person);
           const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + Math.round(person.abilities[bestAbility]);
           const detail = `月薪 ${content.money(person.wage)} · 速度 ${person.speed}\n最强：${bestText} · 潜力${core.potentialBand(person)}`;
-          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: person.tags.map((tag: any) => core.tagInfo(tag)) }) + 10;
+          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person) }) + 10;
         });
         this.anchors.set('candidates', this.box(parent, 'CandidatesAnchor', 0, start, width, y - start - 10));
         return y;
@@ -1167,9 +1165,9 @@ export class StudioApp extends Component {
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
         for (const person of this.state.staff) {
           // Tags stay on the card: they are how the player ties a later slowdown to overtime.
-          const chips = [...(person.boost ? [core.tagInfo(person.boost)] : []), ...person.stressTags.map((key: string) => core.tagInfo(key)), ...person.tags.map((tag: any) => core.tagInfo(tag))];
+          const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);
-          const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${person.mentor ? ' · 带教中' : ''}`;
+          const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 外出中' : ''}${person.mentor ? ' · 带教中' : ''}`;
           y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips }) + 10;
         }
         return y;
@@ -1180,7 +1178,7 @@ export class StudioApp extends Component {
       }
       case 'tags': {
         y = this.chips(parent, block.items, 0, y, width) + 2;
-        for (const item of block.items) if (item.text) y += this.paragraph(parent, item.name + '：' + item.text, y, true, 0, width, 12) - 4;
+        for (const item of block.items) if (item.text) y += this.paragraph(parent, item.name + '（' + (item.kind || '') + (item.rarity ? ' · ' + item.rarity : '') + '）：' + item.text, y, true, 0, width, 12) - 4;
         return y + 6;
       }
       case 'trace': return y + this.trace(parent, y, block.trace, block.history) + 10;
@@ -1788,8 +1786,7 @@ export class StudioApp extends Component {
           break;
         }
         case 'dismiss': this.apply(core.dismiss(this.state, data.id)); this.routes = [{ menu: 'team' }]; this.render(); break;
-        case 'leave': this.apply(core.takeLeave(this.state, data.id), '带薪休假已安排。'); break;
-        case 'outing': this.apply(core.teamOuting(this.state, Number(data.days) || 2), '团建已安排，占用工作日。'); break;
+        case 'outing': this.apply(core.teamOuting(this.state, Number(data.days) || 3), '团建已安排，全队停工。'); break;
         case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
         case 'deadline': this.apply(core.setDeadline(this.state, data.id, Number(data.days)), '发售日期已公布。'); break;

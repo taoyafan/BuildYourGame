@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.30';
+export const VERSION = '0.1.31';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -115,13 +115,13 @@ export const ABILITY_TAGS: any = {
   steady: { name: '稳扎稳打', ability: 'stability', text: '稳扎稳打，做出来的东西很少出问题。' }
 };
 export const PERSONALITY_TAGS: any = {
-  iron: { name: '抗压', text: '加班不太会积累负面标签。' },
-  eager: { name: '拼命', text: '产出更高，但更容易积累负面标签。' },
+  iron: { name: '抗压', text: '加班不太会积累负面标签。', rarity: 2 },
+  eager: { name: '拼命', text: '产出更高，但更容易积累负面标签。', rarity: 1 },
   grumbler: { name: '爱抱怨', text: '一旦加班就很快不满。', warn: true },
-  growth: { name: '好学', text: '参与作品时成长更快。' },
-  careful: { name: '细心', text: '做的工作留下的缺陷更少。' },
-  speedy: { name: '手快', text: '工作速度更高。' },
-  social: { name: '合群', text: '团建更容易出效果。' }
+  growth: { name: '好学', text: '参与作品时成长更快。', rarity: 1 },
+  careful: { name: '细心', text: '做的工作留下的缺陷更少。', rarity: 1 },
+  speedy: { name: '手快', text: '工作速度更高。', rarity: 1 },
+  social: { name: '合群', text: '团建更容易出效果。', rarity: 1 }
 };
 // Negative labels are the only form stress takes. They lower ability and output, and only overtime
 // produces them. No fallback: the more often someone works overtime, the likelier they appear.
@@ -131,26 +131,62 @@ export const STRESS_TAGS: any = {
 };
 // Very rare traits that help the people around them rather than the holder.
 export const RARE_TAGS: any = {
-  taste: { name: '审美极佳', dimension: 'picture', text: '同项目里做画面的人，作品质量 +8。' },
-  muse: { name: '灵感源泉', dimension: 'creativity', text: '同项目里做创意的人，作品质量 +8。' },
-  following: { name: '自带粉丝', text: '参与的新作立项时自带一批关注。' }
+  taste: { name: '审美极佳', dimension: 'picture', text: '同项目里做画面的人，作品质量 +8。', rarity: 3 },
+  muse: { name: '灵感源泉', dimension: 'creativity', text: '同项目里做创意的人，作品质量 +8。', rarity: 3 },
+  following: { name: '自带粉丝', text: '参与的新作立项时自带一批关注。', rarity: 2 }
 };
-// Team boosts come with time in the company. Each one helps everyone on the holder's project.
+// Team boosts come with time in the company and help everyone on the holder's project. Each has three
+// grades (blue, purple, gold): the first is earned with tenure, later grades with more tenure or outings.
 export const BOOST_TAGS: any = {
-  unity: { name: '凝聚人心', from: 'social', text: '同项目全组速度 +8%。' },
-  gate: { name: '把关严格', from: 'careful', text: '同项目全组新增缺陷 -15%。' },
-  anchor: { name: '定海神针', from: 'iron', text: '同项目全组加班累积负面标签的概率 -30%。' },
-  coach: { name: '传帮带', from: 'growth', text: '同项目全组成长与带教 +30%。' }
+  unity: { name: '凝聚人心', from: 'social', effect: [1.04, 1.08, 1.12], text: (v: number) => `同项目全组速度 +${Math.round((v - 1) * 100)}%。` },
+  gate: { name: '把关严格', from: 'careful', effect: [0.9, 0.85, 0.78], text: (v: number) => `同项目全组新增缺陷 -${Math.round((1 - v) * 100)}%。` },
+  anchor: { name: '定海神针', from: 'iron', effect: [0.8, 0.7, 0.55], text: (v: number) => `同项目全组加班积累负面标签的概率 -${Math.round((1 - v) * 100)}%。` },
+  coach: { name: '传帮带', from: 'growth', effect: [1.15, 1.3, 1.5], text: (v: number) => `同项目全组成长与带教 +${Math.round((v - 1) * 100)}%。` }
 };
-// One lookup for every tag kind, with the rarity tone the UI colours it by (green → blue → red → gold).
-export function tagInfo(tag: any) {
+export const BOOST_GRADES = ['一档', '二档', '三档'];
+
+// Colour means rarity only: green → blue → purple → gold. Harmful labels are dark grey with a "!".
+export const RARITY_TONES = ['green', 'blue', 'purple', 'gold'];
+export const RARITY_NAMES = ['普通', '优秀', '稀有', '传说'];
+// The same bands colour ability numbers; below the first band an ability earns no tag at all.
+export function valueRank(value: number) {
+  return value >= 90 ? 3 : value >= 80 ? 2 : value >= 70 ? 1 : value >= 60 ? 0 : -1;
+}
+
+export function tagInfo(tag: any, person: any = null) {
   const key = typeof tag === 'string' ? tag : tag?.key;
-  if (has(ABILITY_TAGS, key)) return { ...ABILITY_TAGS[key], tone: 'ability' };
-  if (has(PERSONALITY_TAGS, key)) return { ...PERSONALITY_TAGS[key], tone: PERSONALITY_TAGS[key].warn ? 'stress' : 'personality' };
-  if (has(BOOST_TAGS, key)) return { ...BOOST_TAGS[key], tone: 'boost' };
-  if (has(RARE_TAGS, key)) return { ...RARE_TAGS[key], tone: 'rare' };
-  if (has(STRESS_TAGS, key)) return { ...STRESS_TAGS[key], tone: 'stress' };
-  return { name: String(key || ''), text: '', tone: 'ability' };
+  const graded = (info: any, kind: string, rank: number) => ({ ...info, kind, rank, tone: RARITY_TONES[clamp(rank, 0, 3)], rarity: RARITY_NAMES[clamp(rank, 0, 3)] });
+  if (has(STRESS_TAGS, key)) return { ...STRESS_TAGS[key], kind: '状态', rank: -1, tone: 'stress' };
+  if (has(ABILITY_TAGS, key)) {
+    const value = person ? person.abilities[ABILITY_TAGS[key].ability] : null;
+    return graded(ABILITY_TAGS[key], '能力', typeof value === 'number' ? valueRank(value) : 0);
+  }
+  if (has(PERSONALITY_TAGS, key)) {
+    const info = PERSONALITY_TAGS[key];
+    return info.warn ? { ...info, kind: '性格', rank: -1, tone: 'stress' } : graded(info, '性格', info.rarity);
+  }
+  if (has(BOOST_TAGS, key)) {
+    const level = clamp(person?.boostLevel || 1, 1, 3);
+    return graded({ ...BOOST_TAGS[key], text: BOOST_TAGS[key].text(BOOST_TAGS[key].effect[level - 1]) }, '团队增益 · ' + BOOST_GRADES[level - 1], level);
+  }
+  if (has(RARE_TAGS, key)) return graded(RARE_TAGS[key], '稀有特质', RARE_TAGS[key].rarity);
+  return { name: String(key || ''), text: '', kind: '', rank: 0, tone: 'green' };
+}
+
+// Everything shown on a person: stress first, then the rest by rarity. Ability tags follow the numbers —
+// only notable abilities show (at most two), and the colour climbs as the ability grows.
+export function personTags(person: any) {
+  const out: any[] = [];
+  if (person.boost) out.push(tagInfo(person.boost, person));
+  for (const tag of person.tags || []) if (tag.kind !== 'ability' && !has(ABILITY_TAGS, tag.key)) out.push(tagInfo(tag, person));
+  const notable = ABILITY_KEYS.filter(ability => valueRank(person.abilities[ability]) >= 0).sort((left, right) => person.abilities[right] - person.abilities[left]).slice(0, 2);
+  for (const ability of notable) {
+    const stored = (person.tags || []).find((tag: any) => has(ABILITY_TAGS, tag.key) && ABILITY_TAGS[tag.key].ability === ability);
+    const key = stored?.key || Object.keys(ABILITY_TAGS).find(item => ABILITY_TAGS[item].ability === ability);
+    if (key) out.push(tagInfo(key, person));
+  }
+  const good = out.filter(item => item.tone !== 'stress').sort((left, right) => right.rank - left.rank);
+  return [...(person.stressTags || []).map((key: string) => tagInfo(key, person)), ...out.filter(item => item.tone === 'stress'), ...good];
 }
 // Potential is the ceiling practice can reach; candidates only show a band, never the number.
 export function potentialBand(person: any) {
@@ -247,13 +283,13 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 6, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 7, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
     office: 0, goals: { firstRelease: null, breakEven: null, moved: null, topTen: null, award: null, expanded: null }, fans: 0, feed: [],
-    overtime: {}, lastOuting: null, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
+    overtime: {}, outing: { charges: 1, next: 1 + OUTING_RECHARGE, last: null, resume: null, paused: {} }, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
     eventNext: 60, eventSeen: {}, schedule: [], talents: [], flags: {}, achievements: {}, playSeconds: 0,
     rating: { score: 0, watch: false, promotedAt: 0, history: [] }
   };
@@ -567,14 +603,24 @@ export function mentorActive(state: any, person: any) {
   return { mentor, project, ability: person.mentor.ability };
 }
 
-// The team boosts working on a project: one per kind, at most two kinds, none from stressed holders.
-export function projectBoosts(state: any, project: any) {
-  const keys: string[] = [];
+// The team boosts working on a project: the best grade per kind, at most two kinds, none from stressed holders.
+export function projectBoostLevels(state: any, project: any) {
+  const levels: any = {};
   for (const person of state.staff) {
     if (!person.boost || person.stressTags.length || !belongsTo(state, project, person)) continue;
-    if (!keys.includes(person.boost)) keys.push(person.boost);
+    levels[person.boost] = Math.max(levels[person.boost] || 0, clamp(person.boostLevel || 1, 1, 3));
   }
-  return keys.slice(0, 2);
+  const kept = Object.keys(levels).sort((left, right) => levels[right] - levels[left]).slice(0, 2);
+  return Object.fromEntries(kept.map(key => [key, levels[key]]));
+}
+
+export function projectBoosts(state: any, project: any) {
+  return Object.keys(projectBoostLevels(state, project));
+}
+
+export function boostFactor(state: any, project: any, key: string) {
+  const level = projectBoostLevels(state, project)[key];
+  return level ? BOOST_TAGS[key].effect[level - 1] : 1;
 }
 
 export const MENTOR_SLOW = 0.7;
@@ -597,7 +643,7 @@ export function mentorGain(state: any, person: any) {
   const target = pair.mentor.abilities[pair.ability];
   const value = person.abilities[pair.ability];
   if (value >= target - 1) return 0;
-  const coach = projectBoosts(state, pair.project).includes('coach') ? 1.3 : 1;
+  const coach = boostFactor(state, pair.project, 'coach');
   return round(clamp((target - value) * 0.01, 0.03, 0.4) * (value >= (person.potential ?? 100) ? 0.5 : 1) * coach * 1000) / 1000;
 }
 
@@ -661,7 +707,7 @@ export function personWorks(state: any, project: any, person: any) {
 
 export function personActivity(state: any, project: any, person: any) {
   if (!belongsTo(state, project, person)) return '未参与本项目';
-  if (person.leaveUntil > state.day) return '带薪休假中';
+  if (person.leaveUntil > state.day) return '外出中（团建或活动）';
   if (project.patch) return patchProgress(project).fixed < project.patch.targets.length ? '补丁：修复已报告缺陷' : '补丁：返工' + (DIMENSIONS.find(item => item.key === project.patch.rework)?.name || '');
   const split = assignDay(state, project, person);
   if (split.repair) return '自动修复待修缺陷（消耗工时）';
@@ -868,7 +914,7 @@ export function setOvertime(state: any, id: string, enabled: boolean) {
   if (!person) throw new Error('员工不存在。');
   if (enabled && person.noOvertime) throw new Error('他答应过你，不再加班了。');
   if (enabled) next.overtime[id] = true;
-  else delete next.overtime[id];
+  else { delete next.overtime[id]; delete next.outing.paused[id]; }
   studioLog(next, `${person.name}${enabled ? '开始加班' : '结束加班'}`, enabled ? '产出 +45%，缺陷更多，并会累积负面标签。' : '恢复正常工作。');
   return next;
 }
@@ -930,72 +976,136 @@ function staffDay(state: any) {
     if (state.day % 30 === 0) {
       person.trace = [...(person.trace || []), { day: state.day, a: { ...person.abilities } }].slice(-48);
       const tenure = state.day - (person.joined || 0);
-      if (!person.boost && tenure >= 90 && random(state) < clamp((tenure - 90) / 360 * 0.06, 0, 0.1)) {
-        const leaning = Object.keys(BOOST_TAGS).find(key => person.tags.some((tag: any) => tag.key === BOOST_TAGS[key].from));
-        person.boost = leaning && random(state) < 0.6 ? leaning : pick(state, Object.keys(BOOST_TAGS));
-        personNote(state, person, `获得团队增益「${BOOST_TAGS[person.boost].name}」`);
-        announce(state, { kind: 'record', title: `${person.name}：「${BOOST_TAGS[person.boost].name}」`, text: BOOST_TAGS[person.boost].text, amount: 0 });
-      }
+      if (!person.boost && tenure >= 90 && random(state) < clamp((tenure - 90) / 360 * 0.06, 0, 0.1)) gainBoost(state, person, '');
+      else if (person.boost && (person.boostLevel || 1) < 3 && tenure >= 270 && random(state) < clamp((tenure - 270) / 360 * 0.04, 0, 0.06)) gainBoost(state, person, '');
     }
   }
 }
 
-export function takeLeave(state: any, id: string) {
-  const next = studioAction(state);
-  const person = next.staff.find((item: any) => item.id === id);
-  if (!person) throw new Error('员工不存在。');
-  // Leave either starts now or extends a leave already running: a resignation talk must never fail
-  // just because the person happens to be resting this week.
-  person.leaveUntil = Math.max(person.leaveUntil || 0, next.day + 5);
-  person.overtimeDays = 0;
-  delete next.overtime[id];
-  if (next.event?.person === id) next.event = null;
-  studioLog(next, `${person.name} 带薪休假`, '未来五天不参与研发，工资照付。');
-  return next;
+// A first boost leans towards the person's character; holding one already means the next step is a grade up.
+function gainBoost(state: any, person: any, source: string) {
+  if (person.boost) {
+    if ((person.boostLevel || 1) >= 3) return false;
+    person.boostLevel = (person.boostLevel || 1) + 1;
+  } else {
+    const leaning = Object.keys(BOOST_TAGS).find(key => person.tags.some((tag: any) => tag.key === BOOST_TAGS[key].from));
+    person.boost = leaning && random(state) < 0.6 ? leaning : pick(state, Object.keys(BOOST_TAGS));
+    person.boostLevel = 1;
+  }
+  const info = tagInfo(person.boost, person);
+  const verb = person.boostLevel > 1 ? '升到' + BOOST_GRADES[person.boostLevel - 1] : '获得';
+  personNote(state, person, `${source}${verb}团队增益「${info.name}」`);
+  announce(state, { kind: 'record', title: `${person.name}：「${info.name}」${person.boostLevel > 1 ? BOOST_GRADES[person.boostLevel - 1] : ''}`, text: info.text, amount: 0 });
+  return true;
 }
 
-// Team building takes working days and pays wages anyway. Each person has a shown chance of a lasting
-// growth that also clears a stress label; the chance falls when outings come back to back and
-// recovers when it has been a while.
-export function outingChance(state: any, person: any, days = 2) {
-  const length = [1, 2, 3].includes(days) ? days : 2;
-  const since = state.lastOuting === null || state.lastOuting === undefined ? 99 : state.day - state.lastOuting;
-  const decay = clamp(since / 30, 0, 1);
-  const social = person.tags.some((tag: any) => tag.key === 'social') ? 0.12 : 0;
-  return clamp(0.2 + (length - 1) * 0.18 + social + decay * 0.25, 0.08, 0.85);
+// Team building is the only way to clear stress labels, and it stops the whole team. Charges build up
+// slowly and outings need a gap, so the player saves them for the right moment instead of spending them
+// the day they unlock. Longer outings work better but never for sure.
+export const OUTING_DAYS = [1, 3, 5];
+const OUTING_CLEAR: any = { 1: 0.25, 3: 0.55, 5: 0.8 };
+const OUTING_AWAKEN: any = { 1: 0.05, 3: 0.15, 5: 0.3 };
+export const OUTING_RECHARGE = 180;
+export const OUTING_MAX = 2;
+export const OUTING_GAP = 90;
+
+export const outingCost = (state: any, days: number) => round(state.staff.length * 0.4 * days);
+
+export function outingChances(person: any, days: number) {
+  const social = person.tags.some((tag: any) => tag.key === 'social') ? 0.1 : 0;
+  return { clear: clamp((OUTING_CLEAR[days] || 0) + social, 0, 0.85), awaken: clamp((OUTING_AWAKEN[days] || 0) + social / 2, 0, 0.4) };
 }
 
-export function teamOuting(state: any, days = 2) {
-  const next = studioAction(state);
-  if (!next.staff.length) throw new Error('还没有员工。');
-  const length = [1, 2, 3].includes(days) ? days : 2;
-  spend(next, round(next.staff.length * 0.4 * length), '团队团建');
-  let cleared = 0;
-  let gained = 0;
-  for (const person of next.staff) {
-    person.leaveUntil = Math.max(person.leaveUntil, next.day + length);
-    delete next.overtime[person.id];
-    if (random(next) >= outingChance(next, person, length)) continue;
-    if (person.stressTags.length) { person.stressTags = person.stressTags.slice(1); cleared += 1; }
-    const key = ABILITY_KEYS[Math.floor(random(next) * ABILITY_KEYS.length)];
-    const before = person.abilities[key];
-    person.abilities[key] = round(Math.min(100, person.abilities[key] + length * 0.5));
-    personNote(next, person, `团建：${ABILITIES.find(item => item.key === key)?.name} +${length * 0.5}`);
-    const available = Object.keys(PERSONALITY_TAGS).filter(tag => !person.tags.some((item: any) => item.key === tag));
-    if (available.length && random(next) < 0.2 * length) {
-      const tag = available[Math.floor(random(next) * available.length)];
-      person.tags.push({ kind: 'personality', key: tag });
-      personNote(next, person, `团建中觉醒「${PERSONALITY_TAGS[tag].name}」`);
-      studioLog(next, `${person.name} 觉醒「${PERSONALITY_TAGS[tag].name}」`, PERSONALITY_TAGS[tag].text);
+export function outingOffer(state: any, days = 3) {
+  const outing = state.outing;
+  const earliest = outing.last === null ? state.day : outing.last + OUTING_GAP;
+  const cost = outingCost(state, days);
+  let reason = '';
+  if (!state.staff.length) reason = '还没有员工。';
+  else if (outing.charges < 1) reason = `团建次数已用完，第 ${outing.next} 天恢复 1 次。`;
+  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，第 ${earliest} 天起可以再去。`;
+  else if (state.cash < cost) reason = '资金不足。';
+  return { available: !reason, reason, cost, charges: outing.charges, next: outing.next, earliest: Math.max(state.day, earliest) };
+}
+
+// Daily: recharge outings, and give back the overtime an outing paused once everyone is back.
+function outingDay(state: any) {
+  const outing = state.outing;
+  while (outing.charges < OUTING_MAX && outing.next !== null && state.day >= outing.next) {
+    outing.charges += 1;
+    outing.next = outing.charges < OUTING_MAX ? outing.next + OUTING_RECHARGE : null;
+  }
+  if (outing.resume !== null && state.day >= outing.resume) {
+    for (const id of Object.keys(outing.paused)) {
+      const person = state.staff.find((item: any) => item.id === id);
+      if (person && !person.noOvertime) state.overtime[id] = true;
     }
-    studioLog(next, `${person.name} 团建有收获`, `${ABILITIES.find(item => item.key === key)?.name} ${before} → ${person.abilities[key]}。`);
+    outing.paused = {};
+    outing.resume = null;
+  }
+}
+
+export function teamOuting(state: any, days = 3) {
+  if (!OUTING_DAYS.includes(days)) throw new Error('团建天数无效。');
+  const offer = outingOffer(state, days);
+  if (!offer.available) throw new Error(offer.reason);
+  const next = studioAction(state);
+  spend(next, offer.cost, `团建 ${days} 天`);
+  const outing = next.outing;
+  outing.charges -= 1;
+  if (outing.next === null) outing.next = next.day + OUTING_RECHARGE;
+  outing.last = next.day;
+  outing.paused = { ...outing.paused, ...next.overtime };
+  outing.resume = next.day + days;
+  next.overtime = {};
+  let cleared = 0;
+  let raised = 0;
+  for (const person of next.staff) {
+    person.leaveUntil = Math.max(person.leaveUntil || 0, next.day + days);
+    const chance = outingChances(person, days);
+    // 「想走」 is the one that costs people, so it is tried first.
+    for (const key of ['leaving', 'tired']) {
+      if (!person.stressTags.includes(key) || random(next) >= chance.clear) continue;
+      person.stressTags = person.stressTags.filter((item: string) => item !== key);
+      personNote(next, person, `团建清掉了「${STRESS_TAGS[key].name}」`);
+      cleared += 1;
+    }
     person.stressChance *= 0.5;
     person.overtimeDays = Math.floor(person.overtimeDays / 2);
-    gained += 1;
+    if (random(next) < chance.awaken && outingGain(next, person)) raised += 1;
   }
-  next.lastOuting = next.day;
-  studioLog(next, '团队团建', `停工 ${length} 天，${gained} 人有收获，清掉 ${cleared} 个负面标签。`);
+  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，清掉 ${cleared} 个负面标签，${raised} 人觉醒新性格或获得、提升团队增益。加班安排回来后恢复。`);
   return next;
+}
+
+// What an outing can bring someone, drawn by rarity: an unowned positive trait, a first team boost, or
+// the next grade of the boost they hold. Rarer outcomes come up less often.
+const RARITY_WEIGHT = [1, 1, 0.35, 0.12];
+function outingGain(state: any, person: any) {
+  const options: any[] = Object.keys(PERSONALITY_TAGS)
+    .filter(key => !PERSONALITY_TAGS[key].warn && !person.tags.some((tag: any) => tag.key === key))
+    .map(key => ({ key, rank: PERSONALITY_TAGS[key].rarity }));
+  if (!person.boost) options.push({ boost: true, rank: 1 });
+  else if ((person.boostLevel || 1) < 3) options.push({ boost: true, rank: (person.boostLevel || 1) + 1 });
+  if (!options.length) return false;
+  const total = options.reduce((sum: number, item: any) => sum + RARITY_WEIGHT[item.rank], 0);
+  let roll = random(state) * total;
+  const choice = options.find((item: any) => (roll -= RARITY_WEIGHT[item.rank]) < 0) || options[options.length - 1];
+  if (choice.boost) return gainBoost(state, person, '团建中');
+  person.tags.push({ kind: 'personality', key: choice.key });
+  personNote(state, person, `团建中觉醒「${PERSONALITY_TAGS[choice.key].name}」`);
+  announce(state, { kind: 'record', title: `${person.name} 觉醒「${PERSONALITY_TAGS[choice.key].name}」`, text: PERSONALITY_TAGS[choice.key].text, amount: 0 });
+  return true;
+}
+
+// Talking someone out of leaving only means easing off: the label stays and so does the daily risk.
+function keepPerson(state: any, id: string) {
+  const person = state.staff.find((item: any) => item.id === id);
+  if (!person) return state;
+  delete state.overtime[id];
+  delete state.outing.paused[id];
+  personNote(state, person, '提过离职，被劝留下来，停掉了加班');
+  return state;
 }
 
 export function startProject(state: any, plan: any, priority = -1) {
@@ -1248,7 +1358,7 @@ export function projectOrder(state: any) {
 // Also carries the 凝聚人心 boost, so every forecast and every day use the same project speed.
 function priorityFactor(state: any, project: any) {
   const rank = projectOrder(state).findIndex((item: any) => item.id === project.id);
-  const unity = projectBoosts(state, project).includes('unity') ? 1.08 : 1;
+  const unity = boostFactor(state, project, 'unity');
   return (rank <= 0 ? 1 : Math.pow(0.85, rank)) * unity;
 }
 
@@ -1288,9 +1398,8 @@ function produceProject(state: any, project: any) {
   const dailyCost = sum(crew.map((person: any) => (person.wage + OFFICES[state.office].rent / Math.max(1, state.staff.length)) / 30));
   project.invested += dailyCost;
   const factor = priorityFactor(state, project);
-  const boosts = projectBoosts(state, project);
-  const growth = boosts.includes('coach') ? 1.3 : 1;
-  const defects = boosts.includes('gate') ? 0.85 : 1;
+  const growth = boostFactor(state, project, 'coach');
+  const defects = boostFactor(state, project, 'gate');
   for (const person of crew) {
     const split = assignDay(state, project, person);
     const keys = Object.keys(split);
@@ -1871,7 +1980,11 @@ export function resolveStudioEvent(state: any, choice: string) {
     studioLog(next, '一场梦', '创始人撕掉了解散公告。从今天起，他再也不加班。');
     return next;
   }
-  if (event.id === 'resign') return choice === 'leave' ? takeLeave(next, event.person) : dismiss(next, event.person);
+  if (event.id === 'resign') {
+    if (choice.startsWith('outing-')) return teamOuting(next, Number(choice.slice(7)));
+    if (choice === 'keep') return keepPerson(next, event.person);
+    return dismiss(next, event.person);
+  }
   if (event.id === 'deadline') {
     const project = next.projects.find((item: any) => item.id === event.project);
     if (project) {
@@ -1909,7 +2022,11 @@ function resignOrContinue(state: any) {
     if (random(state) < chance) {
       const years = Math.max(0, Math.floor((state.day - person.joined) / 360));
       const compensation = round(person.wage * (years + 1));
-      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: '长期加班压力已让员工想走。可以安排带薪休假；接受离职仍按 N+1 补偿，并保留裁员记录与同事影响，不能靠施压来免除遣散成本。已完成成果保留。', choices: [{ id: 'leave', title: '安排五天带薪休假', detail: '暂停该员工的工作，工资照付。' }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
+      const outings = OUTING_DAYS.map(days => {
+        const offer = outingOffer(state, days);
+        return { id: 'outing-' + days, title: `现在团建 ${days} 天 · ${offer.cost.toFixed(2)} 万`, detail: offer.available ? `全队停工 ${days} 天；每个负面标签约 ${Math.round(outingChances(person, days).clear * 100)}% 被清掉，不保证。` : offer.reason, disabled: !offer.available };
+      });
+      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: '长期压力已让他想走。团建是唯一能清掉「想走」的办法，但要全队停工；只劝留的话，标签还在。接受离职按 N+1 补偿，并保留裁员记录与同事影响。已完成成果保留。', choices: [...outings, { id: 'keep', title: '劝留：停掉他的加班', detail: `「想走」还在，每天仍有 ${Math.round(RESIGN_CHANCE * 100)}% 的概率再提离职。` }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
     }
   }
 }
@@ -1923,7 +2040,7 @@ function stressDay(state: any) {
       person.overtimeDays += 1;
       const resist = person.tags.some((tag: any) => tag.key === 'iron') ? 0.35 : person.tags.some((tag: any) => tag.key === 'eager') ? 1.5 : person.tags.some((tag: any) => tag.key === 'grumbler') ? 1.6 : 1;
       const project = projectOf(state, person);
-      const anchor = project && projectBoosts(state, project).includes('anchor') ? 0.7 : 1;
+      const anchor = project ? boostFactor(state, project, 'anchor') : 1;
       person.stressChance = clamp(person.overtimeDays / 40 * resist * anchor, 0, 0.6);
       if (person.stressTags.length < 2 && random(state) < person.stressChance) {
         const label = person.stressTags.includes('tired') ? 'leaving' : 'tired';
@@ -1945,6 +2062,7 @@ export function stepDay(state: any) {
   const warning = cashWarning(next);
   if (warning) { next.event = warning; return next; }
   next.accrued += monthlyCost(next) / 30;
+  outingDay(next);
   // Released projects keep taking people: that is the patch/update loop, and its results show up in the
   // live sales figures through syncReleased.
   for (const project of next.projects) {
@@ -3007,6 +3125,14 @@ export function restoreStudio(saved: any) {
     checkAchievements(next, true);
     next.notices.achSeen = Object.keys(next.achievements).length;
     next.rulesRevision = 6;
+  }
+  if (next.rulesRevision < 7) {
+    // Paid leave is gone: outings are the only way to clear stress, with saved-up charges. Team boosts
+    // now have grades; the ones already earned start at the first.
+    delete next.lastOuting;
+    next.outing = { charges: 1, next: next.day + OUTING_RECHARGE, last: null, resume: null, paused: {} };
+    for (const person of next.staff) if (person.boost) person.boostLevel = person.boostLevel || 1;
+    next.rulesRevision = 7;
   }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
