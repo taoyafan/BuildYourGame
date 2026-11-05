@@ -1349,18 +1349,21 @@ export class StudioApp extends Component {
         // The lesson is "everyone picks their work", so the ring has to hug the whole grid. Anchoring
         // the first cell made it look like only 创意 could be chosen.
         this.anchors.set('person-assign-' + block.index, this.box(card, 'AssignGrid', 8, header - 4, width - 16, rows * 50 + 4));
-        const person = this.state.staff.find((item: any) => item.id === block.personId);
-        const homeKey = person ? ((core.ROLES[person.role].home || []).find((key: string) => core.WORK_KEYS.includes(key)) || 'discover') : '';
-        // Three shortcuts share one row: home trade, everything, or nothing at all.
-        const chip = (width - 40) / 3;
+        // Two shortcuts share the row: the one item this person is best at, or every item. There is no
+        // "idle" button any more — turning every box off still idles them, but it is not offered as a
+        // shortcut because a normal click on the last lit box is what a player means by "stop this".
+        const chip = (width - 32) / 2;
         const chipX = (index: number) => 12 + index * (chip + 8);
-        this.button(card, '只做本行', chipX(0), header + rows * 50 + 2, chip, 36, () => {
+        this.button(card, '只做擅长', chipX(0), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
-          if (!project || !target || !homeKey) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
-          this.apply(core.assign(this.state, project.id, target.id, [homeKey]));
-          this.notify(target.name + '：只做本行。');
+          if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
+          // Best of the trade, not the first home key: coders and designers have two trades.
+          const best = core.homeWork(target);
+          const name = core.WORKS.find((entry: any) => entry.key === best)?.name || best;
+          this.apply(core.assign(this.state, project.id, target.id, [best]));
+          this.notify(target.name + '：只做擅长的一项（' + name + '）。');
         }, false);
         this.button(card, '全部都做', chipX(1), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};

@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.34';
+export const VERSION = '0.1.35';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -325,11 +325,19 @@ function spend(state: any, amount: number, label: string) {
   studioLog(state, label, `支付 ${amount.toFixed(2)} 万。`);
 }
 
-// A person's default work is their trade's first home key that is a real work key, so an old save
-// whose stored home is not a work (test used to store 'stability') still defaults to something real.
-function homeWork(person: any) {
-  if (WORK_KEYS.includes(person.home)) return person.home;
-  return (ROLES[person.role].home || []).find((key: string) => WORK_KEYS.includes(key)) || 'discover';
+// A person's default work is the item they are best at among their trade's work keys. Coders and
+// designers have two home trades, so the old "first home key" rule made half of them default to the
+// item they are weaker at — "do your trade" has to mean "do what you are good at".
+// Ties keep the trade order so the pick is stable. Old saves may store a home that is not a work key
+// (test used to store 'stability'); the trade list is always filtered through WORK_KEYS, so those
+// saves still default to something real.
+export function homeWork(person: any) {
+  const trade = (ROLES[person.role]?.home || []).filter((key: string) => WORK_KEYS.includes(key));
+  const pool = trade.length ? trade : WORK_KEYS;
+  const abilityOf = (key: string) => person.abilities?.[WORKS.find(work => work.key === key)?.ability] ?? 0;
+  let best = pool[0];
+  for (const key of pool) if (abilityOf(key) > abilityOf(best)) best = key;
+  return best;
 }
 
 export function nameCompany(state: any, name: string, founder?: string) {
@@ -349,7 +357,7 @@ export function nameCompany(state: any, name: string, founder?: string) {
     }
     next.staff.push(freshPerson(next, {
       id: `founder-${next.seed}`, name: '创始人', role: next.founder, abilities, speed: 95, wage: 0,
-      hired: true, joined: next.day, home: homeWork({ role: next.founder, home: '' }), founder: true, snap: { ...abilities },
+      hired: true, joined: next.day, home: homeWork({ role: next.founder, abilities, home: '' }), founder: true, snap: { ...abilities },
       potential: Math.round(Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 8 + random(next) * 10))
     }));
     personNote(next, next.staff[0], `创办${value}`);
@@ -553,7 +561,7 @@ export function hire(state: any, id: string) {
     const mate = freshPerson(next, {
       id: `crew-${next.seed}-${next.staff.length}`,
       name: FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)],
-      role, abilities, speed: 95, wage: round(1.4 + random(next)), hired: true, joined: next.day, home: homeWork({ role, home: '' }),
+      role, abilities, speed: 95, wage: round(1.4 + random(next)), hired: true, joined: next.day, home: homeWork({ role, abilities, home: '' }),
       potential: Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 10)
     });
     next.staff.push(mate);
@@ -2610,7 +2618,7 @@ export function poach(state: any, talentId: string, bid: number) {
   }
   const person = freshPerson(next, {
     id: `star-${talent.id}`, name: talent.name, role: talent.role, abilities: { ...talent.abilities }, speed: talent.speed, wage: offer.wage,
-    hired: true, fame: true, rampup: 30, joined: next.day, home: homeWork({ role: talent.role, home: '' }), snap: { ...talent.abilities },
+    hired: true, fame: true, rampup: 30, joined: next.day, home: homeWork({ role: talent.role, abilities: talent.abilities, home: '' }), snap: { ...talent.abilities },
     potential: Math.min(100, talent.abilities[talent.primary] + 2), tags: [{ kind: 'personality', key: 'eager' }], story: `从${talent.studioName}挖来`
   });
   next.staff.push(person);
@@ -2991,7 +2999,7 @@ function makeJunior(state: any, role: string, skill: number) {
   if (role === 'test') abilities.discover = Math.round(clamp(skill + (random(state) - 0.5) * 10, 5, 95));
   return freshPerson(state, {
     id: `junior-${state.seed}-${state.day}-${state.staff.length}`, name: pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES), role, abilities,
-    speed: 85, tags: [{ kind: 'personality', key: 'growth' }], wage: 0.8, hired: true, joined: state.day, home: homeWork({ role, home: '' }),
+    speed: 85, tags: [{ kind: 'personality', key: 'growth' }], wage: 0.8, hired: true, joined: state.day, home: homeWork({ role, abilities, home: '' }),
     snap: { ...abilities }, potential: Math.round(clamp(skill + 30 + random(state) * 10, 70, 96)), history: [{ day: state.day, text: '应届生上门，入职' }]
   });
 }

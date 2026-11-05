@@ -988,7 +988,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       () => project && project.progress >= 10 && !hasTeammate && !seen.navTeam ? { anchor: 'nav-team', text: '一个人也能做完首作，但一个人只能顾一头。点「团队」招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '，进度会快很多。', tap: 'navTeam' } : null,
       // A new hire only covers their own trade by default. Teaching the habit of re-splitting the
       // work right after the first hire is the difference between a second pair of hands and a salary.
-      () => project && seen.assign && hasTeammate && !seen.reassign && !project.released ? { anchor: 'nav-project', text: '新同事到岗了。他默认只做本行，点「项目」→「调整分工」，可以让他多担几项。', tap: 'navReassign' } : null,
+      () => project && seen.assign && hasTeammate && !seen.reassign && !project.released ? { anchor: 'nav-project', text: '新同事到岗了。他默认只做自己最擅长的一项，点「项目」→「调整分工」，可以让他多担几项。', tap: 'navReassign' } : null,
       // The radar only appears once a prototype exists, so its explanation has to wait for that moment
       // too — teaching six axes before they are on screen is a wall of words with nothing to point at.
       () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '原型出来了，六维评分也解锁：创意、深度、流畅、画面、声音、稳定。实线是现在的分数，虚线是按当前团队的水平能到哪；综合评分是六项按玩家口味加权。', ack: 'dimensions' } : null,
@@ -1022,7 +1022,7 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
       if (!seen.assign) return { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。做别的岗位的工作照样推进工期，只是评分更低、缺陷更多。', ack: 'assign' };
       if (hasTeammate && !seen.reassign) {
         const mate = state.staff.findIndex((person: any) => !person.founder);
-        return { anchor: 'person-assign-' + Math.max(0, mate), text: '新同事默认只做本行。也可以点其它工作让他多担几项，做完会自动空出手。', ack: 'reassign' };
+        return { anchor: 'person-assign-' + Math.max(0, mate), text: '新同事默认只做他最擅长的一项。也可以点其它工作让他多担几项，做完会自动空出手。', ack: 'reassign' };
       }
       return null;
     }
