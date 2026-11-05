@@ -132,6 +132,8 @@ export function menu(state: any, route: any) {
     case 'mentor': return mentorMenu(state, route.id);
     case 'talents': return talentsMenu(state);
     case 'talent': return talentMenu(state, route.id);
+    case 'outings': return outingsMenu(state);
+    case 'outing': return { title: '团建结果', blocks: outingReport(state, (state.outing.history || [])[Number(route.id) || 0]) };
     case 'event': {
       if (!state.event) return { title: '没有待决事项', blocks: [{ type: 'text', text: '继续经营即可。' }] };
       const event = state.event;
@@ -140,6 +142,7 @@ export function menu(state: any, route: any) {
       const tested = event.id === 'feedback' ? core.activeProject(state, event.project) : null;
       if (tested?.test) return { title: event.title, blocks: [...testReport(state, tested), choices] };
       if (event.id === 'dream') return { title: '那天夜里', blocks: [{ type: 'dream', lines: dreamLines(state) }, choices] };
+      if (event.id === 'outing') return { title: event.title, blocks: [...outingReport(state, (state.outing.history || [])[0]), choices] };
       // 发售瞬间既是决策页，也是这一作的成绩单：封面、首发到账、玩家评价和复盘入口。
       // 重构时这几块被删到只剩一行文字，发售就变成了一个没有仪式感的确认框。
       const released = event.id === 'release' ? state.catalog.find((book: any) => book.id === state.lastRelease) : null;
@@ -416,6 +419,34 @@ function testReport(state: any, project: any) {
   return blocks;
 }
 
+// What one outing did, person by person. The same page pops up on return and stays in the outing log.
+function outingReport(state: any, record: any) {
+  if (!record) return [{ type: 'text', text: '还没有团建记录。', muted: true }];
+  const cleared = record.results.reduce((sum: number, item: any) => sum + item.cleared.length, 0);
+  const gained = record.results.filter((item: any) => item.gain).length;
+  const gainText = (gain: any) => gain.kind === 'trait' ? '觉醒「' + core.PERSONALITY_TAGS[gain.key].name + '」' : (gain.level > 1 ? '「' + core.BOOST_TAGS[gain.key].name + '」升到' + core.BOOST_GRADES[gain.level - 1] : '获得团队增益「' + core.BOOST_TAGS[gain.key].name + '」');
+  const gainTone = (gain: any) => core.RARITY_TONES[gain.kind === 'trait' ? core.PERSONALITY_TAGS[gain.key].rarity : gain.level];
+  const rows = [...record.results].sort((left: any, right: any) => (right.cleared.length + (right.gain ? 1 : 0)) - (left.cleared.length + (left.gain ? 1 : 0)));
+  return [
+    { type: 'stats', tone: 'plain', items: [['团建', record.days + ' 天 · ' + money(record.cost)], ['清掉标签', cleared + ' 个'], ['有收获', gained + ' 人']] },
+    { type: 'text', text: '第 ' + record.day + ' 天出发，第 ' + record.back + ' 天回来。', muted: true },
+    { type: 'lines', items: rows.map((item: any) => {
+      const parts = [...item.cleared.map((key: string) => '清掉「' + core.STRESS_TAGS[key].name + '」'), ...(item.gain ? [gainText(item.gain)] : [])];
+      return [item.name, parts.length ? parts.join(' · ') : '没有变化', item.gain ? gainTone(item.gain) : parts.length ? 'green' : 'muted'];
+    }) }
+  ];
+}
+
+function outingsMenu(state: any) {
+  const history = state.outing.history || [];
+  if (!history.length) return { title: '团建记录', blocks: [{ type: 'text', text: '还没有团建过。', muted: true }] };
+  return { title: '团建记录', blocks: [{ type: 'choices', items: history.map((record: any, index: number) => {
+    const cleared = record.results.reduce((sum: number, item: any) => sum + item.cleared.length, 0);
+    const gained = record.results.filter((item: any) => item.gain).length;
+    return { text: '第 ' + record.day + ' 天 · 团建 ' + record.days + ' 天', detail: '花费 ' + money(record.cost) + ' · 清掉 ' + cleared + ' 个标签 · ' + gained + ' 人有收获', action: 'menu', data: { menu: 'outing', id: String(index) } };
+  }) }] };
+}
+
 // The founder's dream speaks to the person holding the phone, using the real clock and real play time.
 function dreamLines(state: any) {
   const now = new Date();
@@ -610,6 +641,8 @@ function teamMenu(state: any) {
       ] },
       { type: 'lines', items: offers.map((item: any) => [item.days + ' 天 · ' + money(item.offer.cost), '清标签约 ' + Math.round(item.chance.clear * 100) + '% · 收获约 ' + Math.round(item.chance.awaken * 100) + '%']) },
       { type: 'buttons', columns: 3, items: offers.map((item: any) => ({ text: '团建 ' + item.days + ' 天', action: 'outing', icon: 'Plane', data: { days: item.days }, disabled: !item.offer.available, anchor: 'outing-' + item.days })) },
+      ...(outing.pending ? [{ type: 'note', icon: 'Plane', text: '团队正在团建，第 ' + outing.resume + ' 天回来公布结果。' }] : []),
+      ...((outing.history || []).length ? [{ type: 'actions', items: [{ text: '团建记录', detail: '历次团建每个人清掉了什么、有什么收获。', icon: 'ScrollText', action: 'menu', data: { menu: 'outings' } }] }] : []),
       { type: 'text', text: (offers[0].offer.available ? '' : offers[0].offer.reason + ' ') + '「合群」的人概率更高。加班按人在员工页设置：产出更高，但缺陷更多，也会累积负面标签。', muted: true }
     ]
   };

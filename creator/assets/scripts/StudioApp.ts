@@ -614,12 +614,17 @@ export class StudioApp extends Component {
     drawRoom(pen, inner, height, state.office, { cups: Math.min(3, Math.ceil(achievements.count / 6)), books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] });
     this.clickable(node, () => this.openMenu('team'));
     const props = roomProps(inner, height, state.office);
-    // Big screen with the work the main screen is looking at, or the last release.
+    // Big screen with the work the main screen is looking at, or the last release. The work art is drawn
+    // at its design height and scaled down to the screen, and the screen clips anything at the edges.
     const screen = props.screen;
-    const { node: monitor, pen: screenPen } = this.canvasNode(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
-    if (project) drawWork(screenPen, screen.w, screen.h, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
-    else if (state.catalog.length) drawWork(screenPen, screen.w, screen.h, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
-    else { screenPen.rect(0, 0, screen.w, screen.h, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
+    const monitor = this.box(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
+    monitor.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+    const zoom = screen.h / 96;
+    const { node: art, pen: screenPen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w / zoom, 96);
+    art.setScale(zoom, zoom, 1);
+    if (project) drawWork(screenPen, screen.w / zoom, 96, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
+    else if (state.catalog.length) drawWork(screenPen, screen.w / zoom, 96, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
+    else { screenPen.rect(0, 0, screen.w / zoom, 96, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
     const caption = project ? '《' + project.name + '》' + (project.released ? ' 补丁' : '') : state.catalog.length ? '上一作《' + state.catalog[0].name + '》' : '';
     if (caption) {
       const tag = this.box(monitor, 'Caption', 4, screen.h - 16, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
@@ -693,10 +698,11 @@ export class StudioApp extends Component {
   }
 
   // Four stats beside the radar instead of under it, so the scoring block costs no extra row.
-  private statColumn(body: Node, x: number, y: number, width: number, cells: any[]) {
+  private statColumn(body: Node, x: number, y: number, width: number, cells: any[], open?: () => void) {
     const cellHeight = 41;
     cells.forEach(([title, value, color, bar, anchor], index) => {
       const node = this.box(body, title, x, y + index * cellHeight, width, cellHeight - 4, colors.paper, 8);
+      if (open) this.clickable(node, open);
       this.text(node, title, 10, 2, width - 16, 14, 10, colors.muted);
       const label = this.text(node, value, 10, 15, width - 16, 20, value === '—' || value === '未测' ? 13 : 16, value === '—' || value === '未测' ? colors.muted : color, true);
       if (anchor === 'stat-followers') { this.followersLabel = label; this.rollLabel('followers', label, (n: number) => content.number(n)); }
@@ -714,8 +720,10 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const forecast = core.patchForecast(this.state, project);
     const book = this.state.catalog.find((item: any) => item.id === project.id);
-    this.text(body, '《' + project.name + '》补丁', 0, y, inner - 150, 24, 16, colors.ink, true);
-    this.text(body, '修复 ' + forecast.fixed + '/' + forecast.targets + (project.patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : ''), inner - 150, y, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    const heading = this.box(body, 'Heading', 0, y, inner, 24);
+    this.clickable(heading, () => this.openMenu('project', project.id));
+    this.text(heading, '《' + project.name + '》补丁', 0, 0, inner - 150, 24, 16, colors.ink, true);
+    this.text(heading, '修复 ' + forecast.fixed + '/' + forecast.targets + (project.patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : ''), inner - 150, 0, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     y += 28;
     const track = this.box(body, 'Track', 0, y, inner, 40);
     this.anchors.set('track', track);
@@ -732,7 +740,7 @@ export class StudioApp extends Component {
       ['待修', Math.max(0, forecast.targets - forecast.fixed) + ' 项', colors.blue, -1, 'stat-defects'],
       ['口碑', book ? book.reviewScore.toFixed(1) : '—', colors.amber, -1, 'stat-review'],
       ['日销', book ? book.lastDayUnits + ' 份' : '—', colors.ink, -1, 'stat-daily']
-    ]);
+    ], () => this.openMenu('project', project.id));
     y += Math.max(height, 164) + 6;
     this.text(body, '补丁做完自动上线；口碑与销量随之后的玩家评价逐步变化。', 0, y, inner, 18, 11, colors.muted);
     return y + 26;
@@ -746,8 +754,10 @@ export class StudioApp extends Component {
     if (!project) return y;
     const inner = this.width - 40;
     const forecast = core.projectForecast(state, project);
-    this.text(body, '《' + project.name + '》', 0, y, inner - 150, 24, 16, colors.ink, true);
-    this.text(body, core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, y, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    const heading = this.box(body, 'Heading', 0, y, inner, 24);
+    this.clickable(heading, () => this.openMenu('project', project.id));
+    this.text(heading, '《' + project.name + '》', 0, 0, inner - 150, 24, 16, colors.ink, true);
+    this.text(heading, core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, 0, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     y += 28;
     y += this.milestones(body, y, project, metrics, forecast) + 6;
     // The radar is six zeroes and a lot of empty space until a prototype exists. Reveal the scoring
@@ -766,7 +776,7 @@ export class StudioApp extends Component {
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
       ['待修缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
-    ]);
+    ], () => this.openMenu('project', project.id));
     y += Math.max(height, 164) + 6;
     const insight = core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type);
     this.anchors.set('insight', this.text(body, insight + (project.test ? ' · 试玩 ' + project.test.score.toFixed(1) + ' 分' : ''), 0, y, inner, 18, 11, colors.muted).node);
@@ -851,6 +861,7 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const track = this.box(body, 'Track', 0, y, inner, 58);
     this.anchors.set('track', track);
+    this.clickable(track, () => this.openMenu('project', project.id));
     // Launch unlocks at the trial build, not at 100%. The old track ended in "发售" at full progress,
     // which taught the opposite and made players grind to 100% before daring to release.
     const phases = [['立项', 0], ['原型', 25], ['体验版', 55], ['做满', 100]];

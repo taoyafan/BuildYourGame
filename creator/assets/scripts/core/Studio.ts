@@ -289,7 +289,7 @@ export function createStudio(seed = Date.now()) {
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
     office: 0, goals: { firstRelease: null, breakEven: null, moved: null, topTen: null, award: null, expanded: null }, fans: 0, feed: [],
-    overtime: {}, outing: { charges: 1, next: 1 + OUTING_RECHARGE, last: null, resume: null, paused: {} }, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
+    overtime: {}, outing: { charges: 1, next: 1 + OUTING_RECHARGE, last: null, resume: null, paused: {}, pending: null, history: [] }, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
     eventNext: 60, eventSeen: {}, schedule: [], talents: [], flags: {}, achievements: {}, playSeconds: 0,
     rating: { score: 0, watch: false, promotedAt: 0, history: [] }
   };
@@ -381,14 +381,14 @@ function pickAbilities(state: any, role: string, channel: any) {
   const abilities: any = {};
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.55 + random(state) * 14, 5, 45));
   const ranked = [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1]);
-  // A small share specialise outside their trade, like a programmer with an ear for music.
-  const primary = random(state) < 0.12 ? pick(state, ranked.slice(2)) : ranked[0];
+  // The trade is always the strongest ability. A few also have a decent side skill outside the trade,
+  // like a programmer with an ear for music — useful as a stand-in, never better than the day job.
+  const primary = ranked[0];
   const peak = Math.round(low + random(state) * (high - low));
   abilities[primary] = peak;
-  if (random(state) < 0.4) {
-    const second = ranked.find(key => key !== primary);
-    abilities[second] = Math.max(abilities[second], Math.round(peak - 8 - random(state) * 10));
-  }
+  for (const key of ABILITY_KEYS) if (key !== primary) abilities[key] = Math.min(abilities[key], peak - 2);
+  const second = random(state) < 0.12 ? pick(state, ranked.slice(2)) : random(state) < 0.4 ? ranked[1] : null;
+  if (second) abilities[second] = Math.max(abilities[second], Math.round(peak - 8 - random(state) * 10));
   return abilities;
 }
 
@@ -983,18 +983,30 @@ function staffDay(state: any) {
 }
 
 // A first boost leans towards the person's character; holding one already means the next step is a grade up.
-function gainBoost(state: any, person: any, source: string) {
-  if (person.boost) {
-    if ((person.boostLevel || 1) >= 3) return false;
-    person.boostLevel = (person.boostLevel || 1) + 1;
-  } else {
-    const leaning = Object.keys(BOOST_TAGS).find(key => person.tags.some((tag: any) => tag.key === BOOST_TAGS[key].from));
-    person.boost = leaning && random(state) < 0.6 ? leaning : pick(state, Object.keys(BOOST_TAGS));
-    person.boostLevel = 1;
+function boostChoice(state: any, person: any) {
+  if (person.boost) return (person.boostLevel || 1) >= 3 ? null : { kind: 'boost', key: person.boost, level: (person.boostLevel || 1) + 1 };
+  const leaning = Object.keys(BOOST_TAGS).find(key => person.tags.some((tag: any) => tag.key === BOOST_TAGS[key].from));
+  return { kind: 'boost', key: leaning && random(state) < 0.6 ? leaning : pick(state, Object.keys(BOOST_TAGS)), level: 1 };
+}
+
+function applyGain(state: any, person: any, gain: any, source: string) {
+  if (gain.kind === 'trait') {
+    if (person.tags.some((tag: any) => tag.key === gain.key)) return false;
+    person.tags.push({ kind: 'personality', key: gain.key });
+    personNote(state, person, `${source}觉醒「${PERSONALITY_TAGS[gain.key].name}」`);
+    return true;
   }
+  if (person.boost && (person.boost !== gain.key || (person.boostLevel || 1) >= gain.level)) return false;
+  person.boost = gain.key;
+  person.boostLevel = gain.level;
+  personNote(state, person, `${source}${gain.level > 1 ? '团队增益升到' + BOOST_GRADES[gain.level - 1] : '获得团队增益'}「${BOOST_TAGS[gain.key].name}」`);
+  return true;
+}
+
+function gainBoost(state: any, person: any, source: string) {
+  const gain = boostChoice(state, person);
+  if (!gain || !applyGain(state, person, gain, source)) return false;
   const info = tagInfo(person.boost, person);
-  const verb = person.boostLevel > 1 ? '升到' + BOOST_GRADES[person.boostLevel - 1] : '获得';
-  personNote(state, person, `${source}${verb}团队增益「${info.name}」`);
   announce(state, { kind: 'record', title: `${person.name}：「${info.name}」${person.boostLevel > 1 ? BOOST_GRADES[person.boostLevel - 1] : ''}`, text: info.text, amount: 0 });
   return true;
 }
@@ -1042,7 +1054,31 @@ function outingDay(state: any) {
     }
     outing.paused = {};
     outing.resume = null;
+    if (outing.pending) settleOuting(state);
   }
+}
+
+// Results were drawn at departure; they land when the team is back, with a result page if anything changed.
+function settleOuting(state: any) {
+  const record = state.outing.pending;
+  state.outing.pending = null;
+  const results: any[] = [];
+  for (const plan of record.plans) {
+    const person = state.staff.find((item: any) => item.id === plan.id);
+    if (!person) continue;
+    const cleared = plan.clear.filter((key: string) => person.stressTags.includes(key));
+    person.stressTags = person.stressTags.filter((key: string) => !cleared.includes(key));
+    for (const key of cleared) personNote(state, person, `团建清掉了「${STRESS_TAGS[key].name}」`);
+    const gain = plan.gain && applyGain(state, person, plan.gain, '团建中') ? plan.gain : null;
+    results.push({ id: person.id, name: person.name, cleared, gain });
+  }
+  const entry = { day: record.day, back: state.day, days: record.days, cost: record.cost, results };
+  state.outing.history = [entry, ...(state.outing.history || [])].slice(0, 20);
+  const cleared = results.reduce((sum: number, item: any) => sum + item.cleared.length, 0);
+  const gained = results.filter((item: any) => item.gain).length;
+  studioLog(state, '团建结束', `清掉 ${cleared} 个负面标签，${gained} 人有收获。加班安排已恢复。`);
+  if (cleared || gained) state.event = { id: 'outing', title: '团建回来了', text: '', choices: [{ id: 'ok', title: '知道了' }] };
+  else announce(state, { kind: 'notice', title: '团建回来了', text: '这次没有人清掉标签或有新收获。', amount: 0 });
 }
 
 export function teamOuting(state: any, days = 3) {
@@ -1058,23 +1094,18 @@ export function teamOuting(state: any, days = 3) {
   outing.paused = { ...outing.paused, ...next.overtime };
   outing.resume = next.day + days;
   next.overtime = {};
-  let cleared = 0;
-  let raised = 0;
+  const plans: any[] = [];
   for (const person of next.staff) {
     person.leaveUntil = Math.max(person.leaveUntil || 0, next.day + days);
     const chance = outingChances(person, days);
     // 「想走」 is the one that costs people, so it is tried first.
-    for (const key of ['leaving', 'tired']) {
-      if (!person.stressTags.includes(key) || random(next) >= chance.clear) continue;
-      person.stressTags = person.stressTags.filter((item: string) => item !== key);
-      personNote(next, person, `团建清掉了「${STRESS_TAGS[key].name}」`);
-      cleared += 1;
-    }
+    const clear = ['leaving', 'tired'].filter(key => person.stressTags.includes(key) && random(next) < chance.clear);
     person.stressChance *= 0.5;
     person.overtimeDays = Math.floor(person.overtimeDays / 2);
-    if (random(next) < chance.awaken && outingGain(next, person)) raised += 1;
+    plans.push({ id: person.id, clear, gain: random(next) < chance.awaken ? outingGain(next, person) : null });
   }
-  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，清掉 ${cleared} 个负面标签，${raised} 人觉醒新性格或获得、提升团队增益。加班安排回来后恢复。`);
+  outing.pending = { day: next.day, days, cost: offer.cost, plans };
+  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，第 ${next.day + days} 天回来公布结果；加班安排回来后恢复。`);
   return next;
 }
 
@@ -1087,15 +1118,11 @@ function outingGain(state: any, person: any) {
     .map(key => ({ key, rank: PERSONALITY_TAGS[key].rarity }));
   if (!person.boost) options.push({ boost: true, rank: 1 });
   else if ((person.boostLevel || 1) < 3) options.push({ boost: true, rank: (person.boostLevel || 1) + 1 });
-  if (!options.length) return false;
+  if (!options.length) return null;
   const total = options.reduce((sum: number, item: any) => sum + RARITY_WEIGHT[item.rank], 0);
   let roll = random(state) * total;
   const choice = options.find((item: any) => (roll -= RARITY_WEIGHT[item.rank]) < 0) || options[options.length - 1];
-  if (choice.boost) return gainBoost(state, person, '团建中');
-  person.tags.push({ kind: 'personality', key: choice.key });
-  personNote(state, person, `团建中觉醒「${PERSONALITY_TAGS[choice.key].name}」`);
-  announce(state, { kind: 'record', title: `${person.name} 觉醒「${PERSONALITY_TAGS[choice.key].name}」`, text: PERSONALITY_TAGS[choice.key].text, amount: 0 });
-  return true;
+  return choice.boost ? boostChoice(state, person) : { kind: 'trait', key: choice.key };
 }
 
 // Talking someone out of leaving only means easing off: the label stays and so does the daily risk.
@@ -2010,7 +2037,7 @@ function resignOrContinue(state: any) {
   for (const person of state.staff) {
     if (state.event) return;
     const chance = resignChance(state, person);
-    if (!chance) continue;
+    if (!chance || (person.leaveUntil || 0) > state.day) continue;
     // The founder cannot resign from their own studio — he writes a farewell and dreams instead (once).
     if (person.founder) {
       if (!state.flags?.dream && random(state) < chance) {
@@ -3130,7 +3157,7 @@ export function restoreStudio(saved: any) {
     // Paid leave is gone: outings are the only way to clear stress, with saved-up charges. Team boosts
     // now have grades; the ones already earned start at the first.
     delete next.lastOuting;
-    next.outing = { charges: 1, next: next.day + OUTING_RECHARGE, last: null, resume: null, paused: {} };
+    next.outing = { charges: 1, next: next.day + OUTING_RECHARGE, last: null, resume: null, paused: {}, pending: null, history: [] };
     for (const person of next.staff) if (person.boost) person.boostLevel = person.boostLevel || 1;
     next.rulesRevision = 7;
   }

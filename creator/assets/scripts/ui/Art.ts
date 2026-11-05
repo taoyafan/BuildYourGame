@@ -106,13 +106,6 @@ export function drawRoom(pen: Pen, w: number, h: number, office: number, record:
   if (!formal) pen.circle(win.x + win.w * 0.7, win.y + 10, 6, '#ffe6a3');
   pen.frame(win.x, win.y, win.w, win.h, formal ? '#9fb7bf' : '#9a8466', 2, 3);
   pen.line(win.x + win.w / 2, win.y, win.x + win.w / 2, win.y + win.h, formal ? '#9fb7bf' : '#9a8466', 2);
-  if (formal) {
-    pen.rect(w - 30, floor - 26, 20, 26, '#8b6a4c', 3);
-    pen.circle(w - 20, floor - 34, 13, '#5c9a6e');
-  } else {
-    pen.rect(w - 26, floor - 20, 14, 20, '#b07b55', 3);
-    pen.circle(w - 19, floor - 28, 10, '#6fae7f');
-  }
   // Big screen bezel; the work itself is drawn into it by the app.
   const screen = props.screen;
   pen.rect(screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 8, '#2b3532', 4);
@@ -186,7 +179,7 @@ export function drawWork(pen: Pen, w: number, h: number, type: string, progress:
   };
   const ground = h * 0.74;
   const k = Math.min(1, h / 96);
-  if (type === 'sim') {
+  if (type === 'think' || type === 'sim') {
     pen.rect(0, 0, w, h, tier ? '#cfe9f5' : gray(0), 6);
     if (tier === 2) { pen.circle(w * 0.84, h * 0.2, 13, '#ffd77a'); pen.circle(w * 0.25, h * 0.17, 9, '#ffffff', 220); pen.circle(w * 0.3, h * 0.15, 11, '#ffffff', 220); }
     pen.rect(0, ground, w, h - ground, tier ? '#9ccf7f' : gray(1), 0);
@@ -201,10 +194,10 @@ export function drawWork(pen: Pen, w: number, h: number, type: string, progress:
       pen.poly([x - 3, ground - bh, x + bw / 2, ground - bh - 12, x + bw + 3, ground - bh], '#b5564a');
       if (tier === 2) for (let row = 0; row < Math.floor(bh / 14); row++) { pen.rect(x + 5, ground - bh + 6 + row * 13, 7, 6, '#fff7d6', 1); pen.rect(x + bw - 12, ground - bh + 6 + row * 13, 7, 6, '#fff7d6', 1); }
     }
-    if (tier === 2) for (let index = 0; index < 5; index++) { const x = 10 + rand() * (w - 20); pen.rect(x - 1.5, ground - 2, 3, 10, '#7a5a3a'); pen.circle(x, ground - 6, 7, '#4f9a5f'); }
+    if (tier === 2) for (let index = 0; index < 5; index++) { const x = 9 + rand() * (w - 18); pen.rect(x - 1.5, ground - 2, 3, 10, '#7a5a3a'); pen.circle(x, ground - 6, 7, '#4f9a5f'); }
   } else if (type === 'story') {
     pen.rect(0, 0, w, h, tier ? '#2e3a5c' : gray(0), 6);
-    if (tier === 2) for (let index = 0; index < 18; index++) pen.circle(rand() * w, rand() * h * 0.55, 1 + rand(), '#fff6d0');
+    if (tier === 2) for (let index = 0; index < 18; index++) pen.circle(3 + rand() * (w - 6), 3 + rand() * (h * 0.55 - 3), 1 + rand(), '#fff6d0');
     if (progress > 0.05) tier ? pen.circle(w * 0.78, h * 0.22, 15, '#f7e7b0') : box(w * 0.72, h * 0.1, 26, 26, 1);
     pen.poly([0, ground, w * 0.3, h * 0.5, w * 0.6, ground], tier ? '#3f5873' : gray(1));
     pen.rect(0, ground, w, h - ground, tier ? '#24324a' : gray(2), 0);
