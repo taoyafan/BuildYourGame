@@ -144,6 +144,11 @@ H5 和微信是**两套独立产物**。只重建 `build:wechat` 然后去浏览
 
 重点确认：输入与键盘、菜单滚动、胶囊与手势区、后台暂停、存档恢复。**平台真机适配不能由 H5 预览替代。**
 
+## 提交约定
+
+- 每次 commit 后立即 `git push`，不留只在本地的提交。
+- push 失败时先排查并重试（如 SSH 失败改用 `git push https://github.com/taoyafan/BuildYourGame.git main`），确实推不上去才向用户说明原因。
+
 ## 其他注意事项
 
 - `creator/settings/v2/packages/information.json`：Creator 首次以工程模式启动时，会把 `customSplash` / `removeSplash` 的 `enable` 改为 `true` 并写入会话 `sid`。这是编辑器行为，**不是代码改动**。还原一次后，后续构建通常不再变；若反复被改，可考虑 `git update-index --skip-worktree`。
