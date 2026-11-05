@@ -80,7 +80,7 @@ export const TYPES: any = {
 // trade's work still moves the date, it only lowers the score and leaves more defects.
 export const ROLES: any = {
   code: {
-    name: '程序', home: ['fluidity', 'depth', 'stability'], task: '负责流畅、深度与稳定',
+    name: '程序', home: ['fluidity', 'depth'], task: '负责流畅与深度',
     prior: { creativity: [25, 55], depth: [60, 90], fluidity: [65, 92], picture: [20, 45], sound: [15, 40], discover: [40, 70] }
   },
   design: {
