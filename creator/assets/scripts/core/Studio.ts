@@ -374,6 +374,16 @@ export function roleOpen(state: any, role: string) {
 const CHANNEL_PEAK: any = { friends: [42, 62], web: [54, 74], headhunt: [64, 82] };
 const POTENTIAL_ROOM: any = { friends: 32, web: 24, headhunt: 16 };
 const RARE_CHANCE: any = { friends: 0.02, web: 0.04, headhunt: 0.07 };
+// Programmers and designers have two trade abilities. A third of them lead with depth, so with an even
+// mix of the two the leading creativity, depth and fluidity come up about equally often.
+const LEAD_SPLIT: any = { code: ['fluidity', 'depth'], design: ['creativity', 'depth'] };
+
+function leadAbility(state: any, role: string) {
+  const split = LEAD_SPLIT[role];
+  if (split) return random(state) < 2 / 3 ? split[0] : split[1];
+  const prior = ROLES[role].prior;
+  return [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1])[0];
+}
 
 function pickAbilities(state: any, role: string, channel: any) {
   const prior = ROLES[role].prior;
@@ -381,13 +391,14 @@ function pickAbilities(state: any, role: string, channel: any) {
   const abilities: any = {};
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.55 + random(state) * 14, 5, 45));
   const ranked = [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1]);
-  // The trade is always the strongest ability. A few also have a decent side skill outside the trade,
+  // A trade ability is always the strongest. A few also have a decent side skill outside the trade,
   // like a programmer with an ear for music — useful as a stand-in, never better than the day job.
-  const primary = ranked[0];
+  const primary = leadAbility(state, role);
   const peak = Math.round(low + random(state) * (high - low));
   abilities[primary] = peak;
   for (const key of ABILITY_KEYS) if (key !== primary) abilities[key] = Math.min(abilities[key], peak - 2);
-  const second = random(state) < 0.12 ? pick(state, ranked.slice(2)) : random(state) < 0.4 ? ranked[1] : null;
+  const trade = ranked.slice(0, 2).find(key => key !== primary);
+  const second = random(state) < 0.12 ? pick(state, ranked.slice(2)) : random(state) < 0.4 ? trade : null;
   if (second) abilities[second] = Math.max(abilities[second], Math.round(peak - 8 - random(state) * 10));
   return abilities;
 }
@@ -446,7 +457,7 @@ function starFrom(state: any, role: string, talent: any = null) {
   const prior = ROLES[role].prior;
   const abilities: any = {};
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.6 + random(state) * 16, 5, 55));
-  const primary = talent?.primary || [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1])[0];
+  const primary = talent?.primary || leadAbility(state, role);
   abilities[primary] = Math.round(90 + random(state) * 7);
   return talent ? { ...talent.abilities } : abilities;
 }
@@ -2476,7 +2487,7 @@ export const POACH_FEE = 3;
 function newTalent(state: any, studio: any) {
   const role = pick(state, TALENT_ROLES);
   const prior = ROLES[role].prior;
-  const primary = [...ABILITY_KEYS].sort((left, right) => prior[right][1] - prior[left][1])[0];
+  const primary = leadAbility(state, role);
   const abilities: any = {};
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.6 + random(state) * 16, 5, 55));
   abilities[primary] = Math.round(clamp(87 + random(state) * 8 + studio.tier * 2, 85, 99));
