@@ -23,7 +23,7 @@ const tierColors = ['#2f7d63', '#3b6ea5', '#d39a1e'];
 // One rarity ramp for tags and values: green → blue → red → gold.
 const toneColors: any = {
   green: '#2f7d63', blue: '#3b6ea5', red: '#c8574f', gold: '#d39a1e', muted: '#76877d',
-  ability: '#2f7d63', personality: '#3b6ea5', boost: '#c8574f', rare: '#d39a1e', stress: '#8a6d68'
+  ability: '#2f7d63', personality: '#3b6ea5', boost: '#c8574f', rare: '#d39a1e', stress: '#3a403d'
 };
 // Grouped buttons always carry an icon; this picks one from the action when the menu gives none.
 const actionIcons: any = {
@@ -380,15 +380,17 @@ export class StudioApp extends Component {
     return height;
   }
 
-  // Coloured tag chips: ability green, personality blue, team boost red, rare gold, stress grey-red.
+  // Coloured tag chips: ability green, personality blue, team boost red, rare gold; stress is dark grey,
+  // and anything harmful (stress or a bad trait) carries a "!" so it never reads as a perk.
   private chips(parent: Node, items: any[], x: number, y: number, width: number) {
     let cursorX = x;
     let cursorY = y;
     for (const item of items) {
-      const chipWidth = item.name.length * 12 + 14;
+      const label = (item.warn ? '! ' : '') + item.name;
+      const chipWidth = item.name.length * 12 + 14 + (item.warn ? 10 : 0);
       if (cursorX + chipWidth > x + width && cursorX > x) { cursorX = x; cursorY += 22; }
       const chip = this.box(parent, 'Chip', cursorX, cursorY, chipWidth, 18, toneColors[item.tone] || colors.green, 9);
-      this.text(chip, item.name, 0, 0, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.text(chip, label, 0, 0, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
       cursorX += chipWidth + 6;
     }
     return cursorY + 22;
@@ -1168,8 +1170,7 @@ export class StudioApp extends Component {
           const chips = [...(person.boost ? [core.tagInfo(person.boost)] : []), ...person.stressTags.map((key: string) => core.tagInfo(key)), ...person.tags.map((tag: any) => core.tagInfo(tag))];
           const bestAbility = core.primaryAbility(person);
           const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 休假中' : ''}${person.mentor ? ' · 带教中' : ''}`;
-          const stress = person.stressTags.length > 0;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { tag: person.stressTags.includes('leaving') ? '想走' : stress ? '疲惫' : '', tagColor: colors.amber, radar: person.abilities, chips }) + 10;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips }) + 10;
         }
         return y;
       case 'ability-radar': {

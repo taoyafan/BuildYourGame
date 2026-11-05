@@ -117,7 +117,7 @@ export const ABILITY_TAGS: any = {
 export const PERSONALITY_TAGS: any = {
   iron: { name: '抗压', text: '加班不太会积累负面标签。' },
   eager: { name: '拼命', text: '产出更高，但更容易积累负面标签。' },
-  grumbler: { name: '爱抱怨', text: '一旦加班就很快不满。' },
+  grumbler: { name: '爱抱怨', text: '一旦加班就很快不满。', warn: true },
   growth: { name: '好学', text: '参与作品时成长更快。' },
   careful: { name: '细心', text: '做的工作留下的缺陷更少。' },
   speedy: { name: '手快', text: '工作速度更高。' },
@@ -126,8 +126,8 @@ export const PERSONALITY_TAGS: any = {
 // Negative labels are the only form stress takes. They lower ability and output, and only overtime
 // produces them. No fallback: the more often someone works overtime, the likelier they appear.
 export const STRESS_TAGS: any = {
-  tired: { name: '疲惫', text: '能力与产出下降。' },
-  leaving: { name: '想走', text: '继续施压就可能离开。' }
+  tired: { name: '疲惫', text: '能力与产出下降。', warn: true },
+  leaving: { name: '想走', text: '每天可能提出离职，还在加班时概率翻倍。', warn: true }
 };
 // Very rare traits that help the people around them rather than the holder.
 export const RARE_TAGS: any = {
@@ -146,7 +146,7 @@ export const BOOST_TAGS: any = {
 export function tagInfo(tag: any) {
   const key = typeof tag === 'string' ? tag : tag?.key;
   if (has(ABILITY_TAGS, key)) return { ...ABILITY_TAGS[key], tone: 'ability' };
-  if (has(PERSONALITY_TAGS, key)) return { ...PERSONALITY_TAGS[key], tone: 'personality' };
+  if (has(PERSONALITY_TAGS, key)) return { ...PERSONALITY_TAGS[key], tone: PERSONALITY_TAGS[key].warn ? 'stress' : 'personality' };
   if (has(BOOST_TAGS, key)) return { ...BOOST_TAGS[key], tone: 'boost' };
   if (has(RARE_TAGS, key)) return { ...RARE_TAGS[key], tone: 'rare' };
   if (has(STRESS_TAGS, key)) return { ...STRESS_TAGS[key], tone: 'stress' };
@@ -1886,19 +1886,27 @@ export function resolveStudioEvent(state: any, choice: string) {
   return next;
 }
 
+// A daily roll once someone wants to leave; still on overtime doubles it, so easing off is a visible choice.
+export const RESIGN_CHANCE = 0.02;
+export function resignChance(state: any, person: any) {
+  if (!person.stressTags.includes('leaving')) return 0;
+  return state.overtime[person.id] ? RESIGN_CHANCE * 2 : RESIGN_CHANCE;
+}
+
 function resignOrContinue(state: any) {
-  const RESIGN_CHANCE = 0.02;
   for (const person of state.staff) {
     if (state.event) return;
+    const chance = resignChance(state, person);
+    if (!chance) continue;
     // The founder cannot resign from their own studio — he writes a farewell and dreams instead (once).
     if (person.founder) {
-      if (person.stressTags.includes('leaving') && !state.flags?.dream && random(state) < RESIGN_CHANCE) {
+      if (!state.flags?.dream && random(state) < chance) {
         state.event = { id: 'dream', person: person.id, title: '解散公告', text: '', choices: [{ id: 'promise', title: '答应他：不再让他加班' }] };
         return;
       }
       continue;
     }
-    if (person.stressTags.includes('leaving') && random(state) < RESIGN_CHANCE) {
+    if (random(state) < chance) {
       const years = Math.max(0, Math.floor((state.day - person.joined) / 360));
       const compensation = round(person.wage * (years + 1));
       state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: '长期加班压力已让员工想走。可以安排带薪休假；接受离职仍按 N+1 补偿，并保留裁员记录与同事影响，不能靠施压来免除遣散成本。已完成成果保留。', choices: [{ id: 'leave', title: '安排五天带薪休假', detail: '暂停该员工的工作，工资照付。' }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
