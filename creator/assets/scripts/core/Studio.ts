@@ -1887,17 +1887,18 @@ export function resolveStudioEvent(state: any, choice: string) {
 }
 
 function resignOrContinue(state: any) {
+  const RESIGN_CHANCE = 0.02;
   for (const person of state.staff) {
     if (state.event) return;
-    // The founder cannot resign from their own studio — except once, in a dream (see below).
+    // The founder cannot resign from their own studio — he writes a farewell and dreams instead (once).
     if (person.founder) {
-      if (person.stressTags.includes('leaving') && state.overtime[person.id] && !state.flags?.dream && random(state) < 0.03) {
+      if (person.stressTags.includes('leaving') && !state.flags?.dream && random(state) < RESIGN_CHANCE) {
         state.event = { id: 'dream', person: person.id, title: '解散公告', text: '', choices: [{ id: 'promise', title: '答应他：不再让他加班' }] };
         return;
       }
       continue;
     }
-    if (person.stressTags.includes('leaving') && random(state) < 0.02) {
+    if (person.stressTags.includes('leaving') && random(state) < RESIGN_CHANCE) {
       const years = Math.max(0, Math.floor((state.day - person.joined) / 360));
       const compensation = round(person.wage * (years + 1));
       state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: '长期加班压力已让员工想走。可以安排带薪休假；接受离职仍按 N+1 补偿，并保留裁员记录与同事影响，不能靠施压来免除遣散成本。已完成成果保留。', choices: [{ id: 'leave', title: '安排五天带薪休假', detail: '暂停该员工的工作，工资照付。' }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
