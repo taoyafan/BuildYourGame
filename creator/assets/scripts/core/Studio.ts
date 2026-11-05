@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.32';
+export const VERSION = '0.1.33';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -283,7 +283,7 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 7, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 8, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -683,7 +683,8 @@ function belongsTo(state: any, project: any, person: any) {
   const known = state.projects.some((item: any) => item.id === project.id);
   if (!known) return true;
   for (const other of state.projects) {
-    if (chosenWorks(other, person).length) return other.id === project.id;
+    // An empty list is a real choice (that person idles here), so it still pins them to this project.
+    if (assignmentGiven(other, person)) return other.id === project.id;
   }
   if (project.released) return false;
   const live = state.projects.filter((item: any) => !item.released);
@@ -696,7 +697,8 @@ function belongsTo(state: any, project: any, person: any) {
 // (their first home work). Time is split in proportion to what is left, so several works finish
 // roughly together. Nobody assigned and no trade left means no progress.
 // The assignment shown by the UI is the same one used for production. With no explicit choice a
-// person does their home work; an explicit list replaces that default instead of adding to it.
+// person does their home work; an explicit list replaces that default instead of adding to it — and
+// an explicit empty list means the player told this person to do nothing at all.
 // Assignment lists live in saves, so tolerate values written by older builds. In particular, Cocos
 // used to transpile `[...new Set(list)]` into `[].concat(new Set(list))`, which stored a Set object
 // instead of strings; after JSON serialisation it became `{}`. Ignore anything that is not a work key
@@ -707,9 +709,14 @@ export function chosenWorks(project: any, person: any) {
   return Array.from(new Set(explicit.filter((key: string) => WORK_KEYS.includes(key))));
 }
 
+// Did the player ever set this person's work in this project? An empty array counts: idle is a choice,
+// not "no choice yet". A malformed legacy value (`{}` from the old Set bug) does not count.
+export function assignmentGiven(project: any, person: any) {
+  return Array.isArray(project?.assignments?.[person.id]);
+}
+
 export function assignedWorks(project: any, person: any) {
-  const explicit = chosenWorks(project, person);
-  return explicit.length ? explicit : [homeWork(person)];
+  return assignmentGiven(project, person) ? chosenWorks(project, person) : [homeWork(person)];
 }
 
 export function personWorks(state: any, project: any, person: any) {
@@ -719,6 +726,8 @@ export function personWorks(state: any, project: any, person: any) {
 export function personActivity(state: any, project: any, person: any) {
   if (!belongsTo(state, project, person)) return '未参与本项目';
   if (person.leaveUntil > state.day) return '外出中（团建或活动）';
+  // Idle people are still part of the project — they just produce nothing.
+  if (!assignedWorks(project, person).length) return '空闲（不做工作，工资照付）';
   if (project.patch) return patchProgress(project).fixed < project.patch.targets.length ? '补丁：修复已报告缺陷' : '补丁：返工' + (DIMENSIONS.find(item => item.key === project.patch.rework)?.name || '');
   const split = assignDay(state, project, person);
   if (split.repair) return '自动修复待修缺陷（消耗工时）';
@@ -727,6 +736,8 @@ export function personActivity(state: any, project: any, person: any) {
 
 function assignDay(state: any, project: any, person: any) {
   const usable = assignedWorks(project, person);
+  // Nothing assigned: no output at all. Without this guard an idle person still picked up defect repair.
+  if (!usable.length) return {};
   const pending = usable.some(key => remainingOf(project, key) > 0.0001);
   if (!pending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
   const remaining: any = {};
@@ -1189,14 +1200,15 @@ export function assign(state: any, projectId: string, personId: string, works: s
   }
   if (!project.assignments) project.assignments = {};
   project.assignments[personId] = list;
-  studioLog(next, '调整分工', `${person.name} 参与《${project.name}》：${list.length ? list.map(key => WORKS.find(work => work.key === key)?.name).join('、') : '仅做本行'}。`);
+  studioLog(next, '调整分工', `${person.name} 参与《${project.name}》：${list.length ? list.map(key => WORKS.find(work => work.key === key)?.name).join('、') : '空闲（不做任何工作）'}。`);
   return next;
 }
 
-// 分工开关只有一个入口：按当前存档里的分工取反，永不留空（空了就回到本行）。
+// 分工开关只有一个入口：按当前存档里的分工取反。
+// 关掉最后一项就是「空闲」——空表会原样存下来，不再自动回落到本行，这是玩家明确的选择。
 // 界面只传“谁、哪个项目、点了哪项”，不要再自己拼一份名单——拼错就会写成空表，
 // 表现就是点了不亮、本职也不亮、后面怎么点都不亮。
-export const ASSIGN_REVISION = 'assign-v2';
+export const ASSIGN_REVISION = 'assign-v3';
 
 export function toggleAssign(state: any, projectId: string, personId: string, workKey: string) {
   if (!WORK_KEYS.includes(workKey)) throw new Error('工作类型无效。');
@@ -1206,10 +1218,6 @@ export function toggleAssign(state: any, projectId: string, personId: string, wo
   if (!person) throw new Error('员工不存在，请返回重进。');
   const current: string[] = assignedWorks(project, person);
   const next = current.includes(workKey) ? current.filter((key: string) => key !== workKey) : [...current, workKey];
-  if (!next.length) {
-    const home = homeWork(person);
-    return assign(state, projectId, personId, [home]);
-  }
   return assign(state, projectId, personId, next);
 }
 
@@ -2590,7 +2598,13 @@ export function calendarOf(state: any, span = 180) {
     const day = index * 360 + at;
     if (day < state.day || day > end) return;
     const entry = state.exhibitions.find((item: any) => item.day === day && (item.tier ?? 0) === level);
-    items.push({ day, kind: 'expo', title: tier.expo, detail: entry ? `已报名《${entry.name}》` : `报名截止第 ${day - 7} 天 · 报名费 ${tier.fee} 万`, tier: level, own: !!entry, route: { menu: 'market' } });
+    // Talk in days left, not in absolute day numbers: the player reads the calendar, not a day counter.
+    const left = day - 7 - state.day;
+    const detail = entry ? `已报名《${entry.name}》`
+      : left > 0 ? `报名截止还有 ${left} 天 · 报名费 ${tier.fee} 万`
+      : left === 0 ? `今天报名截止 · 报名费 ${tier.fee} 万`
+      : '报名已截止';
+    items.push({ day, kind: 'expo', title: tier.expo, detail, tier: level, own: !!entry, route: { menu: 'market' } });
   })));
   for (let day = (year + 1) * 360; day <= end; day += 360) items.push({ day, kind: 'awards', title: '年度评选', detail: '城市、全国、国际三级', own: false, route: { menu: 'industry', id: 'awards:first:' + (state.focus || 0) } });
   for (let day = (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD; day <= end; day += RATING_PERIOD) items.push({ day, kind: 'rating', title: `${RATING_MEDIA}季度评级`, detail: '决定公司星级', own: true, route: { menu: 'rating' } });
@@ -3171,6 +3185,21 @@ export function restoreStudio(saved: any) {
     next.outing = { charges: 1, next: next.day + OUTING_RECHARGE, last: null, resume: null, paused: {}, pending: null, history: [] };
     for (const person of next.staff) if (person.boost) person.boostLevel = person.boostLevel || 1;
     next.rulesRevision = 7;
+  }
+  if (next.rulesRevision < 8) {
+    // Idle is a real choice from here on, so an empty work list means "do nothing". Old saves used the
+    // empty list to mean "fall back to the home trade" (and an old UI bug could write one by accident),
+    // so every empty list already on disk becomes the home trade once, on load.
+    for (const project of next.projects) {
+      if (!project.assignments) continue;
+      for (const id of Object.keys(project.assignments)) {
+        const list = project.assignments[id];
+        if (!Array.isArray(list) || list.length) continue;
+        const person = next.staff.find((item: any) => item.id === id);
+        if (person) project.assignments[id] = [homeWork(person)];
+      }
+    }
+    next.rulesRevision = 8;
   }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;

@@ -253,7 +253,7 @@ function projectMenu(state: any, id?: string) {
 function patchProjectMenu(state: any, project: any) {
   const book = state.catalog.find((item: any) => item.id === project.id);
   const live = core.liveProjects(state);
-  if (!project.patch) return { title: '《' + project.name + '》', blocks: [{ type: 'text', text: '这部作品已发售，没有进行中的补丁。' }, { type: 'actions', items: [{ text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }] }] };
+  if (!project.patch) return { title: '《' + project.name + '》', blocks: [{ type: 'text', text: '这部作品已发售，没有进行中的补丁。' }, { type: 'actions', items: [{ text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }, { text: '再开一个项目', detail: '多项目并行时，排在后面的项目有协调成本。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }] }] };
   const forecast = core.patchForecast(state, project);
   const crew = state.staff.filter((person: any) => core.personWorks(state, project, person).length);
   const rework = project.patch.rework ? core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : '';
@@ -281,7 +281,8 @@ function patchProjectMenu(state: any, project: any) {
       { type: 'actions', items: [
         { text: '安排补丁人手', detail: '补丁只有一份工作清单，人员只分参与或不参与。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
         { text: '立即上线', detail: '把已完成的部分先发出去，没修完的问题留在待修列表。', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
-        { text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }
+        { text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } },
+        { text: '再开一个项目', detail: '多项目并行时，排在后面的项目有协调成本。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
       ] }
     ]
   };
@@ -365,13 +366,15 @@ function assignMenu(state: any, projectId: string) {
       { type: 'text', text: '参与的人先修开工时已报告的缺陷，再做返工；修复按缺陷所属那一项的能力计算速度。每人同时只属于一个项目，加入补丁会离开原来的项目。', muted: true },
       { type: 'choices', anchor: 'patch-crew', items: state.staff.map((person: any) => {
         const on = core.personWorks(state, project, person).length > 0;
-        const elsewhere = state.projects.find((item: any) => item.id !== project.id && core.chosenWorks(item, person).length);
-        return { text: person.name + ' · ' + core.ROLES[person.role].name, detail: (on ? '参与中：' + core.personActivity(state, project, person) : elsewhere ? '现在在《' + elsewhere.name + '》' : '现在做默认项目') + '\n速度 ' + person.speed + (person.leaveUntil > state.day ? ' · 外出中' : ''), action: 'patch-crew', data: { id: project.id, person: person.id, on: !on }, tag: on ? '参与' : '' };
+        const elsewhere = core.projectOf(state, person);
+        const away = elsewhere && elsewhere.id !== project.id ? '现在在《' + elsewhere.name + '》' + (core.personWorks(state, elsewhere, person).length ? '' : '（空闲）') : '';
+        return { text: person.name + ' · ' + core.ROLES[person.role].name, detail: (on ? '参与中：' + core.personActivity(state, project, person) : away || '现在做默认项目') + '\n速度 ' + person.speed + (person.leaveUntil > state.day ? ' · 外出中' : ''), action: 'patch-crew', data: { id: project.id, person: person.id, on: !on }, tag: on ? '参与' : '' };
       }) }
     ] };
   }
   const blocks: any[] = [
-    { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的工作做满后自动消耗工时修复测试抓到的缺陷；没有待修问题时才继续返工。', muted: false }
+    { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的工作做满后自动消耗工时修复测试抓到的缺陷；没有待修问题时才继续返工。', muted: false },
+    { type: 'text', text: '六项全部关掉就是让他空闲：不出任何产出，工资照付。', muted: true }
   ];
   state.staff.forEach((person: any, index: number) => {
     // Show what the person actually does in this project (explicit assignment, else their default
@@ -379,7 +382,8 @@ function assignMenu(state: any, projectId: string) {
     // founder/employee is "locked out" by an old assignment on a shipped title, which made the whole
     // assign page read as unassigned and every click report "已退出".
     const assigned: string[] = core.personWorks(state, project, person);
-    const elsewhere = state.projects.find((item: any) => item.id !== projectId && core.personWorks(state, item, person).length);
+    const home = core.projectOf(state, person);
+    const elsewhere = home && home.id !== projectId ? home : null;
     blocks.push({
       type: 'person-assign',
       title: person.name + ' · ' + core.ROLES[person.role].name,
@@ -388,7 +392,7 @@ function assignMenu(state: any, projectId: string) {
       projectId: project.id,
       index,
       assigned,
-      status: elsewhere ? '在《' + elsewhere.name + '》' : '',
+      status: elsewhere ? '在《' + elsewhere.name + '》' + (core.personWorks(state, elsewhere, person).length ? '' : ' · 空闲') : '',
       // Anyone running at reduced output is flagged here, so a slow-down is never a mystery later.
       stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
       fame: !!person.fame && state.day - (person.joined || 0) < 30,
@@ -498,7 +502,11 @@ function marketMenu(state: any, id?: string) {
   const blocks: any[] = [];
   const offers = core.exhibitionOffers(state);
   const currentNotReady = !!project && project.progress < 55;
-  blocks.push({ type: 'lines', items: [...offers.map((offer: any) => [offer.name + ' · 报名 ' + money(offer.fee), '第 ' + offer.day + ' 天（截止还剩 ' + (offer.deadline - state.day) + ' 天）']), ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
+  blocks.push({ type: 'lines', items: [...offers.map((offer: any) => {
+    const left = offer.deadline - state.day;
+    const cutoff = left > 0 ? '报名截止还有 ' + left + ' 天' : left === 0 ? '今天报名截止' : '报名已截止';
+    return [offer.name + ' · 报名 ' + money(offer.fee), '第 ' + offer.day + ' 天 · ' + cutoff];
+  }), ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
   blocks.push({ type: 'buttons', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
   blocks.push({ type: 'actions', items: [
     { text: '日历', detail: '展会、年度评选、媒体评级与已公布的发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry', id: 'schedule' } },

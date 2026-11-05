@@ -1331,16 +1331,14 @@ export class StudioApp extends Component {
             const person = this.state.staff.find((item: any) => item.id === block.personId);
             if (!projectId || !person) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
             const name = core.WORKS.find(entry => entry.key === work.key)?.name || work.key;
-            // 用 assignedWorks 而不是 personWorks 算 before/after：personWorks 受 belongsTo 门控，
+            // 用 assignedWorks 而不是 personWorks 算 after：personWorks 受 belongsTo 门控，
             // 而真正写状态的 toggleAssign 用的是 assignedWorks。两者不一致时，会把“调入本项目”误报成“已退出”，
             // 且跨项目看人时按钮全灰。统一来源后提示才正确，点击也能把人真正调过来。
-            const project = core.activeProject(this.state, projectId) || { id: projectId };
-            const before = core.assignedWorks(project, person);
             const next = core.toggleAssign(this.state, projectId, person.id, work.key);
             const after = core.assignedWorks(core.activeProject(next, projectId) || { id: projectId }, person);
             this.apply(next);
-            const returnedHome = before.length === 1 && before.includes(work.key) && !after.includes(work.key);
-            if (returnedHome) this.notify(person.name + '：每人至少做一项，已回到本行。');
+            // Turning the last box off no longer bounces back to the home trade: the person idles.
+            if (!after.length) this.notify(person.name + '：已空闲，不做任何工作，工资照付。');
             else this.notify(person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
           });
         });
@@ -1349,8 +1347,10 @@ export class StudioApp extends Component {
         this.anchors.set('person-assign-' + block.index, this.box(card, 'AssignGrid', 8, header - 4, width - 16, rows * 50 + 4));
         const person = this.state.staff.find((item: any) => item.id === block.personId);
         const homeKey = person ? ((core.ROLES[person.role].home || []).find((key: string) => core.WORK_KEYS.includes(key)) || 'discover') : '';
-        const half = (width - 32) / 2;
-        this.button(card, '只做本行', 12, header + rows * 50 + 2, half, 36, () => {
+        // Three shortcuts share one row: home trade, everything, or nothing at all.
+        const chip = (width - 40) / 3;
+        const chipX = (index: number) => 12 + index * (chip + 8);
+        this.button(card, '只做本行', chipX(0), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
@@ -1358,13 +1358,22 @@ export class StudioApp extends Component {
           this.apply(core.assign(this.state, project.id, target.id, [homeKey]));
           this.notify(target.name + '：只做本行。');
         }, false);
-        this.button(card, '全部都做', 12 + half + 8, header + rows * 50 + 2, half, 36, () => {
+        this.button(card, '全部都做', chipX(1), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
           if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
           this.apply(core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]));
           this.notify(target.name + '：所有工作都接手。');
+        }, false);
+        // Idle on purpose: kept on payroll, produces nothing. An explicit empty list is what says so.
+        this.button(card, '空闲', chipX(2), header + rows * 50 + 2, chip, 36, () => {
+          const route = this.routes[this.routes.length - 1] || {};
+          const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
+          const target = this.state.staff.find((item: any) => item.id === block.personId);
+          if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
+          this.apply(core.assign(this.state, project.id, target.id, []));
+          this.notify(target.name + '：已空闲，不做任何工作，工资照付。');
         }, false);
         return y + height + 12;
       }
