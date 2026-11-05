@@ -323,7 +323,10 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   // The works whose dimension maps to this one (stability is fed by testing).
   const works = core.WORKS.filter(work => work.dimension === dimKey);
   const workKeys = works.map(work => work.key);
-  const assignedPeople = state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
+  // A finished dimension is not "staffed" or "unstaffed" any more: whoever is on it is already
+  // spending their day elsewhere, so the page says so instead of listing people who look idle here.
+  const finished = !!row && row.remaining <= 0.0001;
+  const assignedPeople = finished ? [] : state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
   const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
@@ -336,7 +339,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const blocks: any[] = [
     ...head,
     { type: 'text', text: dimension.desc + (weight >= 0.3 ? ' ' + core.TYPES[project.type].audience + '玩家很看重这一项。' : ' 这类玩家相对不挑剔这一项。'), muted: true },
-    { type: 'section', title: assignedPeople.length ? '负责这一项的人（点工作块直接调整）' : '还没有人做，点工作块安排人手' },
+    { type: 'section', title: finished ? '这一项已做满：负责人会把这部分时间让给还没做完的项' : assignedPeople.length ? '负责这一项的人（点工作块直接调整）' : '还没有人做，点工作块安排人手' },
     ...state.staff.map((person: any, index: number) => {
       const assigned = core.personWorks(state, project, person);
       const elsewhere = state.projects.find((item: any) => item.id !== projectId && core.personWorks(state, item, person).length);
@@ -347,7 +350,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
         status: elsewhere ? '在《' + elsewhere.name + '》' : '',
         stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
         fame: !!person.fame && state.day - (person.joined || 0) < 30,
-        works: works.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key) }))
+        works: works.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: finished }))
       };
     }),
     { type: 'buttons', items: [{ text: '查看整部作品的分工', action: 'menu', data: { menu: 'assign', id: projectId }, anchor: 'to-assign' }] },
@@ -373,9 +376,13 @@ function assignMenu(state: any, projectId: string) {
     ] };
   }
   const blocks: any[] = [
-    { type: 'text', text: '每人只属于一个项目，可同时做多项。负责的工作做满后自动消耗工时修复测试抓到的缺陷；没有待修问题时才继续返工。', muted: false },
+    { type: 'text', text: '每人只属于一个项目，可同时做多项。哪一项做满，他那部分时间就自动让给还没做完的项；全部做满后才会去修测试抓到的缺陷，没有待修问题才继续返工。', muted: false },
     { type: 'text', text: '六项全部关掉就是让他空闲：不出任何产出，工资照付。', muted: true }
   ];
+  // Read the remaining work once for the whole page instead of per card, so every box agrees with the
+  // production numbers it sits next to.
+  const pipeline = core.dimensionPipeline(state, project);
+  const leftOf = (key: string) => pipeline.rows.find((row: any) => row.key === (key === 'discover' ? 'stability' : key))?.remaining ?? 0;
   state.staff.forEach((person: any, index: number) => {
     // Show what the person actually does in this project (explicit assignment, else their default
     // home work) rather than the belongsTo-gated personWorks. personWorks hides every box when a
@@ -396,7 +403,7 @@ function assignMenu(state: any, projectId: string) {
       // Anyone running at reduced output is flagged here, so a slow-down is never a mystery later.
       stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
       fame: !!person.fame && state.day - (person.joined || 0) < 30,
-      works: core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key) }))
+      works: core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001 }))
     });
   });
   return { title: '分工', blocks };

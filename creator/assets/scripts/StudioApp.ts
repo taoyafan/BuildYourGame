@@ -1316,12 +1316,16 @@ export class StudioApp extends Component {
         const cell = (width - 24 - (columns - 1) * 8) / columns;
         block.works.forEach((work: any, index: number) => {
           const on = work.on;
+          // A finished item keeps its box (so the assignment is still visible) but stops looking like
+          // work in progress: pale card, muted text, and "已完成" where the ability used to be.
+          const done = !!work.done;
           const column = index % columns;
           const line = Math.floor(index / columns);
-          const node = this.box(card, 'Work-' + work.key, 12 + column * (cell + 8), header + line * 50, cell, 42, on ? colors.green : colors.soft, 8);
+          const node = this.box(card, 'Work-' + work.key, 12 + column * (cell + 8), header + line * 50, cell, 42, done ? colors.pale : on ? colors.green : colors.soft, 8);
           const shortName = work.key === 'discover' ? '找缺陷' : work.key === 'repair' ? '修缺陷' : work.name;
-          this.text(node, shortName, 2, 2, cell - 4, 22, 12, on ? colors.paper : colors.green, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-          this.text(node, '能力 ' + (work.ability ?? '—'), 2, 23, cell - 4, 16, 10, on ? '#e8f3ed' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+          this.text(node, shortName, 2, 2, cell - 4, 22, 12, on && !done ? colors.paper : colors.muted, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+          const sub = done ? (on ? '已完成 · 让出工时' : '已完成') : '能力 ' + (work.ability ?? '—');
+          this.text(node, sub, 2, 23, cell - 4, 16, 9, on && !done ? '#e8f3ed' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
           this.clickable(node, () => {
             // 界面只报“谁、哪个项目、点了哪项”，由 core 按存档取反并保证不为空。
             // 旧版在这里自己拼名单：拼出空表时三块工作会一起灭掉，之后再点也写不进正确的项目。

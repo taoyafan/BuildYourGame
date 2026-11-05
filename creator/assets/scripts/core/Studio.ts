@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.33';
+export const VERSION = '0.1.34';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -731,7 +731,15 @@ export function personActivity(state: any, project: any, person: any) {
   if (project.patch) return patchProgress(project).fixed < project.patch.targets.length ? '补丁：修复已报告缺陷' : '补丁：返工' + (DIMENSIONS.find(item => item.key === project.patch.rework)?.name || '');
   const split = assignDay(state, project, person);
   if (split.repair) return '自动修复待修缺陷（消耗工时）';
-  return Object.keys(split).map(key => key === 'discover' ? (remainingOf(project, key) > 0.0001 ? '测试' : '复测') : `${DIMENSIONS.find(item => item.key === key)?.name}${remainingOf(project, key) > 0.0001 ? '制作' : '返工'}`).join('、');
+  const busy = Object.keys(split);
+  if (!busy.length) return '空闲（不做工作，工资照付）';
+  // Items that are done drop out of the split, so what is left is always real work — except when
+  // everything assigned is finished and the leftover hours go back into reworking that same item.
+  // Saying "创意返工" there reads like he is still producing new content; say it is rework instead.
+  const open = assignedWorks(project, person).some((key: string) => remainingOf(project, key) > 0.0001);
+  const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}制作`;
+  if (!open) return '已做满：' + busy.map(label).join('、') + '（时间用于返工）';
+  return busy.map(label).join('、');
 }
 
 function assignDay(state: any, project: any, person: any) {
@@ -742,9 +750,11 @@ function assignDay(state: any, project: any, person: any) {
   if (!pending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
   const remaining: any = {};
   const open: string[] = [];
+  // One threshold both here and in `pending`: the box that counts as finished must be the box that
+  // stops taking time, otherwise a sliver of work keeps soaking up a share of the day.
   for (const key of usable) {
     const left = remainingOf(project, key);
-    if (left > 0) { remaining[key] = left; open.push(key); }
+    if (left > 0.0001) { remaining[key] = left; open.push(key); }
   }
   // A finished dimension still gets time when it is the only thing assigned, so rework can happen.
   const list = open.length ? open : usable.slice(0, 1);
@@ -758,6 +768,35 @@ function assignDay(state: any, project: any, person: any) {
 function remainingOf(project: any, workKey: string) {
   const work = workOf(project, WORKS.find(item => item.key === workKey)?.dimension || workKey);
   return Math.max(0, work.total - work.done);
+}
+
+// How much of one work item is still to do. A finished item keeps its place in the assignment list,
+// but it no longer takes any of the day: `assignDay` only splits time across items still open.
+export function workLeft(project: any, workKey: string) {
+  return remainingOf(project, workKey);
+}
+
+// A finished item's share is not wasted: the leftover hours go to this person's other open items
+// first, and only when nothing is left open do they turn into repairs or rework. Without this the
+// overflow of a nearly-finished item was spent reworking that same item while a teammate's item
+// sat unfinished — the exact "still working on something already done" the player sees.
+function spreadSpare(state: any, project: any, person: any, budget: number, skipKey: string, factor: number, growth: number, defects: number) {
+  let left = budget;
+  for (const key of assignedWorks(project, person)) {
+    if (left <= 0.0001) break;
+    if (key === skipKey || key === 'repair') continue;
+    const work = WORKS.find(item => item.key === key);
+    if (!work) continue;
+    const room = remainingOf(project, key);
+    if (room <= 0.0001) continue;
+    const amount = Math.min(left, room);
+    const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
+    recordWork(project, person, work.dimension, amount, quality);
+    if (work.dimension !== 'stability') addDefect(project, person, work.dimension, amount * (100 - quality) / 100 * DEFECT_RATE * defects, state);
+    practice(person, work.ability, amount, growth);
+    left -= amount;
+  }
+  return budget - left;
 }
 
 // Six scores: the finished work's average ability times the progress of its dimension. Progress is
@@ -1471,8 +1510,13 @@ function produceProject(state: any, project: any) {
         }
         const spare = amount - used;
         if (spare > 0) {
-          if (project.defects.some((defect: any) => defect.found && !defect.fixed)) repair(state, project, spare, person);
-          else { rework(project, work.dimension, spare, quality); practice(person, work.ability, spare, growth); }
+          // Finished items give their hours back to whatever this person still has open today.
+          const given = spreadSpare(state, project, person, spare, key, factor, growth, defects);
+          const left = spare - given;
+          if (left > 0.0001) {
+            if (project.defects.some((defect: any) => defect.found && !defect.fixed)) repair(state, project, left, person);
+            else { rework(project, work.dimension, left, quality); practice(person, work.ability, left, growth); }
+          }
           project.contributions[person.id] = (project.contributions[person.id] || 0) + spare;
           person.work = round(person.work + spare);
         }
