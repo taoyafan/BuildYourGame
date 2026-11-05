@@ -146,7 +146,8 @@ H5 和微信是**两套独立产物**。只重建 `build:wechat` 然后去浏览
 
 ## 提交约定
 
-- 每次 commit 后立即 `git push`，不留只在本地的提交。
+- 只在用户要求时提交。每次 commit 后立即 `git push`，不留只在本地的提交。
+- 实现「待实现」前，若 TODO 有新增条目，先单独提交 TODO（保留待实现的提交记录），再实现并删除已完成条目。
 - push 失败时先排查并重试（如 SSH 失败改用 `git push https://github.com/taoyafan/BuildYourGame.git main`），确实推不上去才向用户说明原因。
 
 ## 其他注意事项
