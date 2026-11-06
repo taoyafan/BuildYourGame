@@ -542,7 +542,7 @@ function marketMenu(state: any, id?: string) {
       core.PROMOTE_TIERS.forEach((budget, index) => {
         const range = core.promoteRange(state, project, budget);
         const worth = Math.round((range.low + range.high) / 2 * value.yuan / 10000 * 100) / 100;
-        blocks.push({ type: 'card', group: 'promotions', title: ['小范围投放', '常规推广', '大规模宣发', '全面营销'][index] + ' · ' + money(budget), text: '预计新增关注 ' + number(range.low) + '～' + number(range.high) + ' 人，按上面的估计约折合首发 ' + money(worth) + '。', button: { text: '投放 · ' + money(budget), action: 'promote', data: { id: project.id, cost: budget }, disabled: project.progress < 55 || state.cash < budget, anchor: 'promote-' + index } });
+        blocks.push({ type: 'card', group: 'promotions', title: ['小范围投放', '常规推广', '大规模宣发', '全面营销', '全网铺量'][index] + ' · ' + money(budget), text: '预计新增关注 ' + number(range.low) + '～' + number(range.high) + ' 人，按上面的估计约折合首发 ' + money(worth) + '。', button: { text: '投放 · ' + money(budget), action: 'promote', data: { id: project.id, cost: budget }, disabled: project.progress < 55 || state.cash < budget, anchor: 'promote-' + index } });
       });
     }
   }
@@ -1022,7 +1022,8 @@ function unlockStep(state: any, route: any): GuideStep | null {
       () => state.staff.some((person: any) => person.stressTags.length) ? once('stressIntro', 'nav-team', '有人挂上了负面标签：「疲惫」拉低产出，「想走」每天可能提离职（还在加班时翻倍）。只有团建能清掉它们，但要全队停工，次数也有限。') : null,
       () => state.catalog.length ? once('unlockWeb', 'nav-team', '首作发售后解锁：招聘网站（候选人更强、要价也更高）、音频与测试岗位，以及中型作品。') : null,
       () => state.office === 0 && (state.catalog.length || state.staff.length >= core.seats(state)) ? once('unlockMove', 'nav-finance', '办公室随时可以搬：点「公司」，在办公室一栏能看到搬家费和搬家后的月租。正式办公室工位更多，开放行业推荐、猎头和大型作品；房租也更高，什么时候搬由你决定。') : null,
-      () => state.office >= 1 ? once('unlockOffice', 'nav-team', '搬进正式办公室了：招聘多了「行业推荐」，团队页多了「猎头」，可以高薪挖对手的名人；立项也能选大型作品。') : null
+      () => state.office >= 1 ? once('unlockOffice', 'nav-team', '搬进正式办公室了：招聘多了「行业推荐」，团队页多了「猎头」，可以高薪挖对手的名人；立项也能选大型作品。') : null,
+      () => state.office >= 3 ? once('unlockHuge', 'nav-team', '搬进写字楼整层了：立项可以选超大型作品，约三十人做半年，做好了回报最大，做砸了也亏得最多。') : null
     ];
     for (const step of steps) { const result = step(); if (result) return result; }
     return null;

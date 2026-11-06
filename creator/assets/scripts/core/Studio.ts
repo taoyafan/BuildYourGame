@@ -46,11 +46,15 @@ export const ABILITIES: any[] = [
 ];
 export const ABILITY_KEYS = ABILITIES.map(ability => ability.key);
 
-// Three settings of scale decide how much work there is, what it may sell for and how big its market is.
+// Four settings of scale decide how much work there is, what it may sell for and how big its market is.
+// Work is set by team and time: small is two people for a month, medium five for two months, large ten
+// for four months, extra-large thirty for half a year. Price and reach grow so that a well-made title
+// earns about the same multiple of its cost at every size, and a poor big one loses more.
 export const SCALES = [
   { name: '小型', work: 1, price: 1, reach: 1 },
-  { name: '中型', work: 1.7, price: 1.3, reach: 2 },
-  { name: '大型', work: 2.6, price: 1.65, reach: 4 }
+  { name: '中型', work: 5, price: 1.4, reach: 3.5 },
+  { name: '大型', work: 20, price: 1.8, reach: 12 },
+  { name: '超大型', work: 90, price: 2.4, reach: 45 }
 ];
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
@@ -215,7 +219,9 @@ export const CHANNELS: any = {
 export const OFFICES = [
   { name: '起步小屋', seats: 4, rent: 1.5 },
   { name: '正式办公室', seats: 10, rent: 3, cost: 8 },
-  { name: '独立工作室', seats: 16, rent: 5, cost: 30 }
+  { name: '独立工作室', seats: 16, rent: 5, cost: 30 },
+  { name: '写字楼整层', seats: 40, rent: 12, cost: 120 },
+  { name: '园区大楼', seats: 100, rent: 30, cost: 500 }
 ];
 // Sound can be bought instead of hired: a one-off purchase finishes part of the sound dimension at a
 // modest quality, which is how a small team ships sound at all before it can afford an audio hire.
@@ -227,7 +233,7 @@ export const SOUND_OUTSOURCE = [
 // Promotion is one campaign per title, picked once after the trial build. Tiers differ by orders of
 // magnitude and each yuan buys fewer followers as the budget grows, so the right tier depends on what
 // one follower is worth for this title (price, trial reception) and how far its launch can reach.
-export const PROMOTE_TIERS = [0.5, 3, 15, 60];
+export const PROMOTE_TIERS = [0.5, 3, 15, 60, 200];
 const PROMOTE_SCALE = 400;
 // Minimum discount a title may go to. The system decides when to run a sale and how deep within the floor.
 export const DISCOUNTS = [0.75];
@@ -255,6 +261,7 @@ const clone = (value: any) => JSON.parse(JSON.stringify(value));
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 const round = (value: number) => Math.round(value * 100) / 100;
 const tier = (value: any) => Number.isInteger(value) && value >= 0 && value <= 2;
+const scaleIndex = (value: any) => Number.isInteger(value) && value >= 0 && value < SCALES.length;
 // Object.hasOwn is missing on older mini-game runtimes (iOS < 15.4).
 const has = (object: any, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
@@ -995,8 +1002,9 @@ export function projectForecast(state: any, project: any) {
   return { ...pipeline, days, aggregate: round(aggregate), remaining: round(totalRemaining), progress: round(done * 100), metrics, eta: days === null ? null : state.day + days };
 }
 
+export const SCALE_LOCKS = ['', '首作发售后开放中型作品。', '搬进正式办公室后开放大型作品。', '搬进写字楼整层后开放超大型作品。'];
 export function scaleOpen(state: any, scale: number) {
-  return scale === 0 || scale === 1 && state.goals.firstRelease !== null || scale === 2 && state.office >= 1;
+  return scale === 0 || scale === 1 && state.goals.firstRelease !== null || scale === 2 && state.office >= 1 || scale === 3 && state.office >= 3;
 }
 
 export function setOvertime(state: any, id: string, enabled: boolean) {
@@ -1225,8 +1233,8 @@ function keepPerson(state: any, id: string) {
 export function startProject(state: any, plan: any, priority = -1) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
-  if (!plan || !has(TYPES, plan.type) || !tier(plan.scale)) throw new Error('请选择作品类型与体量。');
-  if (!scaleOpen(next, plan.scale)) throw new Error(plan.scale === 1 ? '首作发售后开放中型作品。' : '搬进正式办公室后开放大型作品。');
+  if (!plan || !has(TYPES, plan.type) || !scaleIndex(plan.scale)) throw new Error('请选择作品类型与体量。');
+  if (!scaleOpen(next, plan.scale)) throw new Error(SCALE_LOCKS[plan.scale] || '这个体量还没开放。');
   const original = plan.sequel ? next.catalog.find((book: any) => book.id === plan.sequel) : null;
   if (plan.sequel && (!original || original.reviewScore < 70)) throw new Error('好评达到 70 分的作品才能开发续作。');
   const name = String(plan.name || '').trim().slice(0, 24);
@@ -2417,7 +2425,7 @@ const TITLE_TAIL = ['物语', '远征', '之城', '计划', '纪元', '回廊', 
 
 const gauss = (state: any) => (random(state) + random(state) + random(state) - 1.5) * 1.15;
 const pick = (state: any, list: any[]) => list[Math.floor(random(state) * list.length)];
-const scaleSales = [0.6, 1, 1.8];
+const scaleSales = [0.6, 1, 1.8, 3.2];
 
 function newStudio(state: any, tier: number, day: number) {
   const used = new Set(state.rivals.map((studio: any) => studio.name));
@@ -2430,7 +2438,7 @@ function newStudio(state: any, tier: number, day: number) {
 
 function rivalWork(state: any, tier: number, studio: any, released: number) {
   const roll = random(state);
-  const scale = tier === 2 ? (roll < 0.6 ? 2 : 1) : tier === 1 ? (roll < 0.3 ? 2 : roll < 0.65 ? 1 : 0) : (roll < 0.2 ? 1 : 0);
+  const scale = tier === 2 ? (roll < 0.15 ? 3 : roll < 0.6 ? 2 : 1) : tier === 1 ? (roll < 0.03 ? 3 : roll < 0.3 ? 2 : roll < 0.65 ? 1 : 0) : (roll < 0.2 ? 1 : 0);
   const power = studio ? studio.power : 0.7 + random(state) * 0.6;
   const quality = clamp(TIERS[tier].score + gauss(state) * 10 + (power - 1) * 20, 25, 97);
   const growth = 1 + Math.floor(released / 360) * 0.04;
@@ -2533,7 +2541,7 @@ export function rivalProfile(state: any, id: string) {
 
 function finishRivalWork(state: any, work: any, quiet: boolean) {
   const studio = state.rivals.find((item: any) => item.id === work.studio);
-  if (!quiet && (studio || work.tier >= state.focus)) news(state, work.tier, work.tier === 2 && work.scale === 2, `《${work.name}》首周售出 ${work.firstWeek.toLocaleString('zh-CN')} 份`, `${work.studioName}出品，${TYPES[work.type].name}·${SCALES[work.scale].name}。`, work.studio);
+  if (!quiet && (studio || work.tier >= state.focus)) news(state, work.tier, work.tier === 2 && work.scale >= 2, `《${work.name}》首周售出 ${work.firstWeek.toLocaleString('zh-CN')} 份`, `${work.studioName}出品，${TYPES[work.type].name}·${SCALES[work.scale].name}。`, work.studio);
   if (!studio) return;
   studio.pending = null;
   studio.next = work.released + Math.round(STUDIO_CADENCE[studio.tier] * (0.7 + random(state) * 0.6));
@@ -3347,8 +3355,8 @@ function validStudio(state: any) {
   const work = (value: any) => object(value) && DIM_KEYS.every(key => value[key] && nonnegative(value[key].total) && nonnegative(value[key].done) && nonnegative(value[key].value));
   if (!state || state.version !== 6 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean') return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
-  if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && tier(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
-  if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && tier(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
+  if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
+  if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
   if (!object(state.goals) || !object(state.tutorial) || !object(state.overtime) || !Array.isArray(state.rankings) || !Array.isArray(state.exhibitions) || !Array.isArray(state.awards) || !Array.isArray(state.history) || !Array.isArray(state.reports)) return false;
   return true;
 }

@@ -1049,12 +1049,13 @@ export class StudioApp extends Component {
     this.text(body, '体量', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
     core.SCALES.forEach((scale, index) => {
-      const cell = (inner - 16) / 3;
+      const cell = (inner - 24) / 4;
       const open = core.scaleOpen(state, index);
       this.button(body, scale.name, index * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index, !open);
     });
     cursor += 54;
-    if (!core.scaleOpen(state, 1) || !core.scaleOpen(state, 2)) cursor += this.paragraph(body, '中型：首作发售后开放；大型：搬进正式办公室后开放。', cursor, true);
+    const locked = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => !core.scaleOpen(state, index));
+    if (locked.length) cursor += this.paragraph(body, locked.map((index: number) => core.SCALE_LOCKS[index]).join(''), cursor, true);
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
     this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !this.draft.type || !core.scaleOpen(state, this.draft.scale));
     return cursor + 66;
