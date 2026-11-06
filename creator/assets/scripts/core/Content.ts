@@ -514,7 +514,7 @@ function marketMenu(state: any, id?: string) {
     const cutoff = left > 0 ? '报名截止还有 ' + left + ' 天' : left === 0 ? '今天报名截止' : '报名已截止';
     return [offer.name + ' · 报名 ' + money(offer.fee), '第 ' + offer.day + ' 天 · ' + cutoff];
   }), ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
-  blocks.push({ type: 'buttons', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
+  blocks.push({ type: 'buttons', anchor: 'exhibitions', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
   blocks.push({ type: 'actions', items: [
     { text: '日历', detail: '展会、年度评选、媒体评级与已公布的发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry', id: 'schedule' } },
     { text: '行业', detail: '榜单、对手、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
@@ -706,10 +706,10 @@ function personMenu(state: any, id: string) {
       ...(person.noOvertime ? [{ type: 'note', icon: 'Star', text: '他答应过屏幕外的你：再也不加班。' }] : []),
       { type: 'section', title: '带教' },
       { type: 'text', text: pair ? '正在由' + pair.mentor.name + '带' + core.ABILITIES.find(item => item.key === pair.ability)?.name + '：每天约 +' + core.mentorGain(state, person).toFixed(2) + '，产出 ×' + core.MENTEE_SLOW + '。' : person.mentor ? '带教暂停：两人不在同一个项目。' : pupils.length ? '正在带' + pupils.map((other: any) => other.name).join('、') + '，产出 ×' + core.MENTOR_SLOW + '。' : '能力强的同事可以带他提高某一项，两人都会变慢。', muted: !pair },
-      { type: 'buttons', columns: person.mentor ? 2 : 1, items: [{ text: person.mentor ? '换一位带教' : '找人带他', action: 'menu', icon: 'GraduationCap', data: { menu: 'mentor', id: person.id } }, ...(person.mentor ? [{ text: '结束带教', action: 'mentor', icon: 'X', data: { id: person.id, mentor: null } }] : [])] },
+      { type: 'buttons', anchor: 'mentor', columns: person.mentor ? 2 : 1, items: [{ text: person.mentor ? '换一位带教' : '找人带他', action: 'menu', icon: 'GraduationCap', data: { menu: 'mentor', id: person.id } }, ...(person.mentor ? [{ text: '结束带教', action: 'mentor', icon: 'X', data: { id: person.id, mentor: null } }] : [])] },
       ...(person.stressTags.includes('leaving') && !person.founder ? [{ type: 'lines', title: '离职风险', items: [['每天提出离职的概率', Math.round(core.resignChance(state, person) * 100) + '%' + (state.overtime[person.id] ? '（加班中翻倍）' : ''), 'red'], ['说明', '停止加班可降到 ' + Math.round(core.RESIGN_CHANCE * 100) + '%。']] }] : []),
       ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', Math.round((person.stressChance || 0) * 100) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
-      { type: 'toggle', text: '让 ' + person.name + ' 加班', value: !!state.overtime[id], action: 'overtime', data: { id } },
+      { type: 'toggle', anchor: 'overtime', text: '让 ' + person.name + ' 加班', value: !!state.overtime[id], action: 'overtime', data: { id } },
       ...(person.founder ? [] : [{ type: 'buttons', items: [{ text: '裁员（N+1）', action: 'menu', icon: 'UserMinus', data: { menu: 'dismiss', id: person.id } }] }]),
       { type: 'section', title: '员工档案' },
       ...((person.trace || []).length > 1 ? [{ type: 'trace', trace: person.trace, history: person.history || [] }] : [{ type: 'text', text: '每月记录一次六项能力，满两个月后在这里画出成长曲线。', muted: true }]),
@@ -964,7 +964,54 @@ export function weakestRole(state: any) {
 }
 
 export function guide(state: any, route: any, playing: boolean): GuideStep | null {
-  if (!guideOn(state)) return null;
+  if (!state.company || state.tutorial.skipped) return null;
+  return (guideOn(state) ? tutorialStep(state, route, playing) : null) || unlockStep(state, route);
+}
+
+// Once-only notes for features the tutorial does not reach or that open later: each explains what just
+// became possible the first time it matters, then never again. Skipping the tutorial silences them too.
+function unlockStep(state: any, route: any): GuideStep | null {
+  const seen = state.tutorial.seen;
+  const once = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };
+  const project = core.projectOpen(state)[0];
+  const demo = !!project?.checkpoints?.demo;
+  if (!route) {
+    if (state.event) return null;
+    const steps: Array<() => GuideStep | null> = [
+      () => state.staff.some((person: any) => person.stressTags.length) ? once('stressIntro', 'nav-team', '有人挂上了负面标签：「疲惫」拉低产出，「想走」每天可能提离职（还在加班时翻倍）。只有团建能清掉它们，但要全队停工，次数也有限。') : null,
+      () => state.catalog.length ? once('unlockWeb', 'nav-team', '首作发售后解锁：招聘网站（候选人更强、要价也更高）、音频与测试岗位，以及中型作品。') : null,
+      () => state.goals.breakEven !== null && state.office === 0 ? once('unlockMove', 'shelf', '已经回本！点奖杯架打开成就页，可以搬进正式办公室：工位更多，开放行业推荐、猎头和大型作品。') : null,
+      () => state.office >= 1 ? once('unlockOffice', 'nav-team', '搬进正式办公室了：招聘多了「行业推荐」，团队页多了「猎头」，可以高薪挖对手的名人；立项也能选大型作品。') : null
+    ];
+    for (const step of steps) { const result = step(); if (result) return result; }
+    return null;
+  }
+  switch (route.menu) {
+    case 'team': return state.staff.some((person: any) => !person.founder) ? once('outingIntro', 'outing-3', '团建是清掉负面标签的唯一办法：全队停工，天数越长越可能清掉，还可能觉醒正面性格或团队增益。次数要攒，两次之间也有间隔，留着在需要的时候用。') : null;
+    case 'person': {
+      const person = state.staff.find((item: any) => item.id === route.id);
+      if (!person) return null;
+      return once('overtimeIntro', 'overtime', '加班：产出 +45%，但缺陷更多，还会累积「疲惫」「想走」，加班越久越容易挂上。')
+        || (state.staff.length > 1 ? once('mentorIntro', 'mentor', '带教：能力强的同事可以带他提高某一项，两人在同一项目时生效，产出都会变慢；追上后自动出师。') : null);
+    }
+    case 'project':
+      if (!project || project.released) return null;
+      if (!state.staff.some((person: any) => person.role === 'audio') && project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null) {
+        const step = once('outsourceIntro', 'outsource-0', '还没有音频岗位时，可以外包声音：廉价素材便宜但这一项做不高，委托制作一次做完、质量中等。');
+        if (step) return step;
+      }
+      return demo && project.deadline === null ? once('deadlineIntro', 'deadline', '公布发售日能换一笔关注；到期还没准备好，延期或取消都会损失关注。不公布也可以，准备好了直接发售。') : null;
+    case 'market': return demo ? once('expoIntro', 'exhibitions', '展会按日历举办，报名需要体验版：级别越高报名费越贵、对手越强，名次靠前能换来关注和报道。') : null;
+    case 'book': {
+      const book = state.catalog.find((item: any) => item.id === route.id);
+      return book ? once('bookOps', 'patch-book', '已发售的作品还能继续经营：开补丁修玩家报告的缺陷或返工、开促销、做资料片（DLC），口碑达到 70 分还能开续作。') : null;
+    }
+    case 'rating': return once('ratingIntro', 'rating', '媒体每季度给工作室评一次星级，只看最近三部作品的首周名次、口碑与获奖。星级越高，媒体曝光越多、名人越常出现；成绩下滑也会降星。');
+    default: return null;
+  }
+}
+
+function tutorialStep(state: any, route: any, playing: boolean): GuideStep | null {
   const seen = state.tutorial.seen;
   const project = core.projectOpen(state)[0];
   const hasTeammate = state.staff.some((person: any) => !person.founder);

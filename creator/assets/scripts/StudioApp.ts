@@ -1048,6 +1048,7 @@ export class StudioApp extends Component {
     const width = this.width - 40;
     switch (block.type) {
       case 'toggle': {
+        if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'ToggleAnchor', 0, y, width, 36));
         this.text(parent, block.text, 0, y, width - 72, 36, 14, colors.ink, true);
         const toggle = this.box(parent, block.text + 'Switch', width - 56, y + 3, 56, 30, block.value ? colors.green : colors.line, 15);
         this.box(toggle, 'Thumb', block.value ? 28 : 4, 4, 24, 22, colors.paper, 11);
