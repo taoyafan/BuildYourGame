@@ -44,6 +44,9 @@ export function advice(state: any, projectId?: string) {
   if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: 'code:' + bestChannel(state) };
   const idlePatch = state.projects.find((item: any) => item.patch && !state.staff.some((person: any) => core.chosenWorks(item, person).length));
   if (idlePatch) return { title: '补丁还没有人做', text: '《' + idlePatch.name + '》的补丁需要安排人手，做完自动上线。', menu: 'assign', id: idlePatch.id };
+  // Repairs only happen on a project someone still works on; once everyone moves on, the bugs just sit.
+  const unattended = state.projects.find((item: any) => !item.released && defectsByDimension(item) && !state.staff.some((person: any) => core.chosenWorks(item, person).length));
+  if (unattended) return { title: '《' + unattended.name + '》的缺陷没人修', text: '待修：' + defectsByDimension(unattended) + '。给它留一个人，做完自己的部分就会去修。', menu: 'assign', id: unattended.id };
   const bigger = core.OFFICES[state.office + 1];
   if (bigger && state.staff.length >= core.seats(state) && state.cash >= bigger.cost + core.monthlyCost(state) * 2) return { title: '工位坐满了：可以考虑搬到更大的办公室', text: bigger.name + ' ' + bigger.seats + ' 个工位，搬家 ' + money(bigger.cost) + '，月租 ' + money(bigger.rent) + '。点这里去「公司」看看。', menu: 'finance' };
   // A shipped title has no six-dimension pipeline left; only its patch is actionable.
@@ -186,8 +189,21 @@ export function planPreview(state: any, draft: any) {
   // honest no matter how the work gets split later.
   const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
   const days = capacity > 0.0001 ? Math.ceil(workload / capacity) : null;
-  const time = days === null ? '还没有能推进的人，招聘后才能开始。' : '现有 ' + state.staff.length + ' 人、五项内容都有人做，做满约 ' + days + ' 天（约 ' + (days / 30).toFixed(1) + ' 个月），不含测试与修复。';
-  return '工作量 ' + workload.toFixed(0) + '，' + time + '\n售价 ' + price(type.price * scale.price) + '；基础市场容量 ' + number(core.MARKET_SIZE * scale.reach) + ' 份，不是保底销量。\n' + type.audience + '最看重：' + core.audienceFocus(draft.type) + '。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+  const time = days === null ? '还没有能推进的人，招聘后才能开始。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完。';
+  // Wages buy person-days, so the cost follows the workload; a lone unpaid founder would make every plan look free.
+  const paid = state.staff.filter((person: any) => !person.founder);
+  const wage = paid.length ? paid.reduce((total: number, person: any) => total + person.wage, 0) / paid.length : 3;
+  const cost = workload / 30 * wage + core.OFFICES[state.office].rent * (days || 30) / 30;
+  const share = type.share;
+  const split = [...core.DIM_KEYS].sort((left: string, right: string) => share[right] - share[left]).map((key: string) => core.DIMENSIONS.find((item: any) => item.key === key)?.name + ' ' + Math.round(share[key] * 100) + '%').join(' · ');
+  return '工作量 ' + workload.toFixed(0) + '，' + time + '预计成本约 ' + money(cost) + '。\n各项占比：' + split + '\n售价 ' + price(type.price * scale.price) + '；市场容量约 ' + number(core.MARKET_SIZE * scale.reach) + ' 份。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+}
+
+// Known, unfixed defects grouped by the dimension that left them, e.g. "流畅 3 · 画面 1"; '' when none.
+function defectsByDimension(project: any) {
+  const counts: any = {};
+  for (const defect of project.defects || []) if (defect.found && !defect.fixed) counts[defect.dimension] = (counts[defect.dimension] || 0) + 1;
+  return Object.keys(counts).sort((left, right) => counts[right] - counts[left]).map(key => core.DIMENSIONS.find((item: any) => item.key === key)?.name + ' ' + counts[key]).join(' · ');
 }
 
 function newProjectMenu(state: any) {  return {
@@ -220,7 +236,7 @@ function projectMenu(state: any, id?: string) {
     ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
-    { type: 'lines', items: [['预计内容完成', etaText], ['待修缺陷', metrics.known + ' 项'], ['关注', number(project.followers) + ' 人']] },
+    { type: 'lines', items: [['预计内容完成', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
       { type: 'text', text: '当前第 ' + (rank + 1) + ' 优先；其余项目按顺序承担协调成本。' },
@@ -334,7 +350,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   if (dimKey === 'stability') {
     const found = project.defects.filter((defect: any) => defect.found).length;
     const fixed = project.defects.filter((defect: any) => defect.fixed).length;
-    head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known], ['修复投入', forecast.repair + ' 人日/天']] });
+    head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known + (metrics.known ? '（' + defectsByDimension(project) + '）' : '')], ['修复投入', forecast.repair + ' 人日/天']] });
   }
   const blocks: any[] = [
     ...head,
