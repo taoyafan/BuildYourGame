@@ -19,7 +19,7 @@ const navigation = [
   ['project', '项目', 'FolderKanban'], ['team', '团队', 'Users'],
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
 ];
-const tierColors = ['#2f7d63', '#3b6ea5', '#d39a1e'];
+const tierColors = ['#2f7d63', '#3b6ea5', '#7b55b8', '#d39a1e', '#d39a1e'];
 // One rarity ramp for tags and values: green → blue → purple → gold. Red is only for warnings.
 const toneColors: any = {
   green: '#2f7d63', blue: '#3b6ea5', purple: '#7b55b8', gold: '#d39a1e', red: '#c8574f', muted: '#76877d', stress: '#3a403d'

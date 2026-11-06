@@ -44,8 +44,8 @@ export function advice(state: any, projectId?: string) {
   if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: 'code:' + bestChannel(state) };
   const idlePatch = state.projects.find((item: any) => item.patch && !state.staff.some((person: any) => core.chosenWorks(item, person).length));
   if (idlePatch) return { title: '补丁还没有人做', text: '《' + idlePatch.name + '》的补丁需要安排人手，做完自动上线。', menu: 'assign', id: idlePatch.id };
-  if (state.goals.breakEven !== null && state.office === 0 && state.cash >= core.OFFICES[1].cost + core.monthlyCost(state) * 2) return { title: '已经回本：可以搬进正式办公室', text: core.OFFICES[1].seats + ' 个工位，开放行业推荐与猎头。点奖杯架或这里去搬家。', menu: 'achievements' };
-  if (state.office === 1 && state.goals.topTen !== null && state.goals.award !== null && state.cash >= core.OFFICES[2].cost + core.monthlyCost(state) * 2) return { title: '可以再次扩建了', text: core.OFFICES[2].seats + ' 个工位。点奖杯架或这里去扩建。', menu: 'achievements' };
+  const bigger = core.OFFICES[state.office + 1];
+  if (bigger && state.staff.length >= core.seats(state) && state.cash >= bigger.cost + core.monthlyCost(state) * 2) return { title: '工位坐满了：可以考虑搬到更大的办公室', text: bigger.name + ' ' + bigger.seats + ' 个工位，搬家 ' + money(bigger.cost) + '，月租 ' + money(bigger.rent) + '。点这里去「公司」看看。', menu: 'finance' };
   // A shipped title has no six-dimension pipeline left; only its patch is actionable.
   if (shown && shown.released && shown.patch) {
     const patch = core.patchForecast(state, shown);
@@ -235,7 +235,7 @@ function projectMenu(state: any, id?: string) {
       { text: '调整分工', detail: '谁做哪几项工作；做满后自动修复已发现的缺陷。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '已推广 ' + money(project.promoted) + ' · 报名展会' : '每作推广一次 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
-      ...(demo && project.deadline === null ? [{ text: '公布 ' + core.RELEASE_LEAD_DAYS + ' 天后发售', detail: '换一笔关注' + (state.focus ? '，' + core.STAR_NAMES[state.focus] + '工作室的媒体曝光更多' : '') + '；延期或取消会损失关注。', icon: 'CalendarDays', action: 'deadline', data: { id: project.id, days: core.RELEASE_LEAD_DAYS }, anchor: 'deadline' }] : []),
+      ...(demo && project.deadline === null ? [{ text: '公布 ' + core.RELEASE_LEAD_DAYS + ' 天后发售', detail: '换一笔关注' + (state.stars ? '，' + core.STAR_NAMES[state.stars] + '工作室的媒体曝光更多' : '') + '；延期或取消会损失关注。', icon: 'CalendarDays', action: 'deadline', data: { id: project.id, days: core.RELEASE_LEAD_DAYS }, anchor: 'deadline' }] : []),
       { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '' },
       { text: '再开一个项目', detail: '多项目并行时，排在后面的项目有协调成本。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
     ] },
@@ -340,7 +340,10 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
     ...head,
     { type: 'text', text: dimension.desc + (weight >= 0.3 ? ' ' + core.TYPES[project.type].audience + '玩家很看重这一项。' : ' 这类玩家相对不挑剔这一项。'), muted: true },
     { type: 'section', title: finished ? '这一项已做满：负责人会把这部分时间让给还没做完的项' : assignedPeople.length ? '负责这一项的人（点工作块直接调整）' : '还没有人做，点工作块安排人手' },
-    ...state.staff.map((person: any, index: number) => {
+    // Best at this dimension first: the page is for picking who should do it.
+    ...state.staff.map((person: any, index: number) => ({ person, index }))
+      .sort((left: any, right: any) => (right.person.abilities[works[0]?.ability] || 0) - (left.person.abilities[works[0]?.ability] || 0))
+      .map(({ person, index }: any) => {
       const assigned = core.personWorks(state, project, person);
       const elsewhere = state.projects.find((item: any) => item.id !== projectId && core.personWorks(state, item, person).length);
       return {
@@ -601,10 +604,8 @@ const abilityLines = (person: any) => core.ABILITIES.map(ability => [ability.nam
 // Milestones first (they unlock things), then the rest; hidden ones stay "???" until earned.
 function achievementsMenu(state: any) {
   const view = core.achievementsOf(state);
-  const canMove = state.goals.breakEven !== null && state.office === 0 || state.office === 1 && state.goals.topTen !== null && state.goals.award !== null;
   const blocks: any[] = [
-    { type: 'stats', tone: 'plain', items: [['已解锁', view.count + ' / ' + view.total], ['当前办公室', core.OFFICES[state.office].name], ['已发售作品', state.catalog.length + ' 部']] },
-    ...(state.office < 2 ? [{ type: 'buttons', items: [{ text: canMove ? (state.office === 0 ? '搬进正式办公室' : '再次扩建工作室') + ' · ' + money(core.OFFICES[state.office + 1].cost) : (state.office === 0 ? '第一次回本后可以搬家' : '全国前十与全国获奖后可以扩建'), action: 'move', icon: 'Building2', disabled: !canMove }] }] : [])
+    { type: 'stats', tone: 'plain', items: [['已解锁', view.count + ' / ' + view.total], ['当前办公室', core.OFFICES[state.office].name], ['已发售作品', state.catalog.length + ' 部']] }
   ];
   for (const [group, title] of core.ACHIEVEMENT_GROUPS) {
     blocks.push({ type: 'section', title });
@@ -626,14 +627,14 @@ function ratingMenu(state: any) {
       ['下次评级', '第 ' + rating.next + ' 天']
     ] },
     ...(rating.watch ? [{ type: 'note', icon: 'Target', text: core.RATING_MEDIA + '把公司列入了观察名单。下一期评级前发售一部成绩好的作品，可以把分数拉回保星线以上。' }] : []),
-    { type: 'text', text: core.RATING_MEDIA + '每 ' + core.RATING_PERIOD + ' 天发布一次工作室评级，只看最近三部作品（资料片不算），越新的作品权重越高：每部看首周名次（按够得着的最高一级榜单）、玩家口碑和获奖。最新一部发售满两年后，评级每季度下滑一点。', muted: true },
+    { type: 'text', text: core.RATING_MEDIA + '每 ' + core.RATING_PERIOD + ' 天发布一次工作室评级，只看最近三部作品（资料片不算），越新的作品权重越高：每部主要看首周名次（按够得着的最高一级榜单，全国、国际榜分数更高），其次是玩家口碑；获奖只是荣誉，不计分。最新一部发售满两年后，评级每季度下滑一点。', muted: true },
     { type: 'section', title: '近三部作品的贡献' }
   ];
   if (!rating.books.length) blocks.push({ type: 'text', text: '还没有首周名次已定的作品。作品发售满一周后计入评级。', muted: true });
-  else blocks.push({ type: 'lines', items: rating.books.map((book: any) => ['《' + book.name + '》 · 权重 ' + Math.round(book.weight * 100) + '%', '名次 ' + Math.round(book.rank) + ' · 口碑 ' + Math.round(book.review) + (book.award ? ' · 获奖 +' + book.award : '') + ' → ' + Math.round(book.score) + ' 分']) });
+  else blocks.push({ type: 'lines', items: rating.books.map((book: any) => ['《' + book.name + '》 · 权重 ' + Math.round(book.weight * 100) + '%', '名次 ' + Math.round(book.rank) + ' · 口碑 ' + Math.round(book.review) + ' → ' + Math.round(book.score) + ' 分']) });
   if (rating.decay) blocks.push({ type: 'text', text: '已经两年多没有新作，评级下滑 ' + rating.decay + ' 分。', muted: true });
   blocks.push({ type: 'section', title: '星级的作用' });
-  blocks.push({ type: 'lines', items: core.TIERS.map((item: any, index: number) => [star(index) + (index === rating.tier ? ' · 当前' : ''), index === 0 ? '新闻与行业页关注城市范围' : '关注' + item.name + '范围 · 媒体曝光 +' + Math.round(core.MEDIA_BONUS[index] * 100) + '% · 名人更常出现']) });
+  blocks.push({ type: 'lines', items: core.STAR_NAMES.map((_name: string, index: number) => [star(index) + (index === rating.tier ? ' · 当前' : ''), (index ? '升星线 ' + core.RATING_UP[index] + ' 分 · ' : '') + '关注' + core.TIERS[core.STAR_RANGE[index]].name + '范围' + (core.MEDIA_BONUS[index] ? ' · 媒体曝光 +' + Math.round(core.MEDIA_BONUS[index] * 100) + '%' : '') + (core.FAME_CHANCE[index] ? ' · 名人出现率 ' + Math.round(core.FAME_CHANCE[index] * 100) + '%' : '')]) });
   if (rating.history.length) {
     blocks.push({ type: 'section', title: '历次评级' });
     blocks.push({ type: 'lines', items: [...rating.history].reverse().map((entry: any) => ['第 ' + entry.day + ' 天', Math.round(entry.score) + ' 分 · ' + star(entry.tier)]) });
@@ -724,12 +725,16 @@ function personMenu(state: any, id: string) {
 function mentorMenu(state: any, id: string) {
   const person = state.staff.find((item: any) => item.id === id);
   if (!person) return { title: '带教', blocks: [{ type: 'text', text: '员工不存在。' }] };
-  const options = core.mentorOptions(state, person).filter((option: any) => option.mentors.length);
-  const blocks: any[] = [{ type: 'text', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '。被带的那一项每天向带人一方靠拢，差得越多涨得越快，追上后自动出师；超过自己潜力后速度减半。两人需在同一个项目。', muted: true }];
-  if (!options.length) blocks.push({ type: 'text', text: '同一个项目里没有在某一项明显比' + person.name + '强的人。' });
+  // Every ability is listed, strongest first, so the player sees why an ability has nobody to learn from.
+  const options = core.mentorOptions(state, person).sort((left: any, right: any) => person.abilities[right.ability] - person.abilities[left.ability]);
+  const blocks: any[] = [{ type: 'text', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '。被带的那一项每天向带人一方靠拢，差得越多涨得越快，追上后自动出师；超过自己潜力后速度减半。带人的一方这一项要比他高 6 分以上，且两人在同一个项目。', muted: true }];
   for (const option of options) {
     const name = core.ABILITIES.find(item => item.key === option.ability)?.name;
     blocks.push({ type: 'section', title: name + ' · 现在 ' + Math.round(person.abilities[option.ability]) });
+    if (!option.mentors.length) {
+      blocks.push({ type: 'text', text: '同一项目里没有这一项比' + person.name + '高 6 分以上的人。可以招一位更强的人，或把更强的同事调到同一项目。', muted: true });
+      continue;
+    }
     blocks.push({ type: 'choices', items: option.mentors.slice(0, 3).map((mentor: any) => {
       const gap = mentor.abilities[option.ability] - person.abilities[option.ability];
       const monthly = Math.min(gap, 30 * Math.min(0.4, Math.max(0.03, gap * 0.01)));
@@ -811,13 +816,18 @@ function financeMenu(state: any) {
   const ledger = state.ledger;
   const rating = core.ratingOf(state);
   const wins = state.awards.filter((award: any) => award.own).length;
+  const nextOffice = core.OFFICES[state.office + 1];
+  const moveCost = core.moveCost(state);
   return {
     title: '公司',
     blocks: [
       { type: 'lines', items: [['现金', money(state.cash)], ['本月收入', money(ledger.income)], ['本月已开支', money(monthSpent(state))], ['已累计应付', money(state.accrued)], ['月开支（工资 + 房租）', money(core.monthlyCost(state))]] },
+      { type: 'section', title: '办公室' },
+      { type: 'lines', items: [['现在', core.OFFICES[state.office].name + ' · ' + core.seats(state) + ' 个工位 · 月租 ' + money(core.OFFICES[state.office].rent)], ...(nextOffice ? [['下一档', nextOffice.name + ' · ' + nextOffice.seats + ' 个工位 · 月租 ' + money(nextOffice.rent)]] : [])] },
+      ...(nextOffice ? [{ type: 'buttons', anchor: 'move', items: [{ text: (state.office === 0 ? '搬进' : '扩建为') + nextOffice.name + ' · ' + money(moveCost), action: 'move', icon: 'Building2', disabled: state.cash < moveCost }] }, { type: 'text', text: '搬家一次性花 ' + money(moveCost) + '，之后月租从 ' + money(core.OFFICES[state.office].rent) + ' 变为 ' + money(nextOffice.rent) + '，月开支约 ' + money(core.monthlyCost(state) - core.OFFICES[state.office].rent + nextOffice.rent) + '。什么时候搬由你决定。' + (state.office === 0 ? '正式办公室还会开放行业推荐、猎头与大型作品。' : ''), muted: true }] : [{ type: 'text', text: '已经是最大的办公室了。', muted: true }]),
       { type: 'actions', items: [
         { text: core.STAR_MARKS[rating.tier] + ' ' + core.STAR_NAMES[rating.tier] + '工作室 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · 下次第 ' + rating.next + ' 天', icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
-        { text: '成就', detail: core.achievementsOf(state).count + ' / ' + core.ACHIEVEMENTS.length + ' · 里程碑、搬家与扩建', icon: 'Trophy', action: 'menu', data: { menu: 'achievements' } },
+        { text: '成就', detail: core.achievementsOf(state).count + ' / ' + core.ACHIEVEMENTS.length + ' · 里程碑与荣誉', icon: 'Trophy', action: 'menu', data: { menu: 'achievements' } },
         { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
       ] },
@@ -980,7 +990,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
     const steps: Array<() => GuideStep | null> = [
       () => state.staff.some((person: any) => person.stressTags.length) ? once('stressIntro', 'nav-team', '有人挂上了负面标签：「疲惫」拉低产出，「想走」每天可能提离职（还在加班时翻倍）。只有团建能清掉它们，但要全队停工，次数也有限。') : null,
       () => state.catalog.length ? once('unlockWeb', 'nav-team', '首作发售后解锁：招聘网站（候选人更强、要价也更高）、音频与测试岗位，以及中型作品。') : null,
-      () => state.goals.breakEven !== null && state.office === 0 ? once('unlockMove', 'shelf', '已经回本！点奖杯架打开成就页，可以搬进正式办公室：工位更多，开放行业推荐、猎头和大型作品。') : null,
+      () => state.office === 0 && (state.catalog.length || state.staff.length >= core.seats(state)) ? once('unlockMove', 'nav-finance', '办公室随时可以搬：点「公司」，在办公室一栏能看到搬家费和搬家后的月租。正式办公室工位更多，开放行业推荐、猎头和大型作品；房租也更高，什么时候搬由你决定。') : null,
       () => state.office >= 1 ? once('unlockOffice', 'nav-team', '搬进正式办公室了：招聘多了「行业推荐」，团队页多了「猎头」，可以高薪挖对手的名人；立项也能选大型作品。') : null
     ];
     for (const step of steps) { const result = step(); if (result) return result; }
@@ -1006,7 +1016,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
       const book = state.catalog.find((item: any) => item.id === route.id);
       return book ? once('bookOps', 'patch-book', '已发售的作品还能继续经营：开补丁修玩家报告的缺陷或返工、开促销、做资料片（DLC），口碑达到 70 分还能开续作。') : null;
     }
-    case 'rating': return once('ratingIntro', 'rating', '媒体每季度给工作室评一次星级，只看最近三部作品的首周名次、口碑与获奖。星级越高，媒体曝光越多、名人越常出现；成绩下滑也会降星。');
+    case 'rating': return once('ratingIntro', 'rating', '媒体每季度给工作室评一次星级（最高五星），主要看最近三部作品的首周名次，其次是口碑；要升到高星，得在全国、国际榜上打出成绩。星级越高，媒体曝光越多、名人越常出现；成绩下滑也会降星。');
     default: return null;
   }
 }

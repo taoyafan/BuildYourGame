@@ -283,7 +283,7 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 8, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 9, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -491,7 +491,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   });
   // A name in the industry shows up only where word of mouth is worth something: a strong record draws
   // them out, they want their own people and they take a while to settle in.
-  const fameChance = [0, 0.15, 0.35][next.focus || 0];
+  const fameChance = FAME_CHANCE[next.stars || 0];
   if (next.notices.fameNext && channel === 'headhunt' || fameChance > 0 && random(next) < fameChance) {
     if (channel === 'headhunt') delete next.notices.fameNext;
     const star = people[Math.floor(random(next) * people.length)];
@@ -1759,44 +1759,47 @@ export function companyPhase(state: any) {
 export const RATING_MEDIA = '《独立游戏观察》';
 // The company's tier reads as a star rating, so it never gets confused with the city/national/global
 // range of a chart, expo or award.
-export const STAR_NAMES = ['一星', '二星', '三星'];
-export const STAR_MARKS = ['★', '★★', '★★★'];
+export const STAR_NAMES = ['一星', '二星', '三星', '四星', '五星'];
+export const STAR_MARKS = ['★', '★★', '★★★', '★★★★', '★★★★★'];
+// Which market range a star level watches: one and two stars the city, three and four the nation, five the world.
+export const STAR_RANGE = [0, 0, 1, 1, 2];
 export const RATING_PERIOD = 90;
-export const RATING_UP = [0, 46, 72];
-export const RATING_KEEP = [0, 38, 63];
+export const RATING_UP = [0, 45, 52, 64, 80];
+export const RATING_KEEP = [0, 38, 45, 56, 72];
 const RATING_WATCH = 4;
 const RATING_WEIGHTS = [0.5, 0.3, 0.2];
-// Attention a tier's coverage adds when a release date is announced and at launch.
-export const MEDIA_BONUS = [0, 0.1, 0.2];
+// Attention a star level's coverage adds when a release date is announced and at launch.
+export const MEDIA_BONUS = [0, 0.05, 0.1, 0.15, 0.2];
+export const FAME_CHANCE = [0, 0.08, 0.15, 0.25, 0.35];
 // A first-week rank is worth most on the highest chart the title reaches.
 const RANK_TOP = [40, 70, 100];
-const AWARD_POINTS = [3, 8, 15];
 
 function rankPoints(ranks: any) {
   if (!Array.isArray(ranks)) return 0;
   return Math.max(0, ...ranks.map((rank: number, level: number) => RANK_TOP[level] * clamp(1.15 - 0.5 * Math.log10(Math.max(1, rank)), 0, 1)));
 }
 
+// Chart standing carries most of the score so higher stars need national and world charts; reviews
+// still count, awards are honours only.
 export function ratingOf(state: any) {
   const ranked = state.catalog.filter((book: any) => !book.parentId && book.firstRanks).slice(0, 3);
   const used = RATING_WEIGHTS.slice(0, ranked.length);
   const weightSum = sum(used) || 1;
   const books = ranked.map((book: any, index: number) => {
-    const awards = state.awards.filter((award: any) => award.own && (award.book === book.id || award.winner === `《${book.name}》`));
     const rank = round(rankPoints(book.firstRanks));
-    const award = Math.min(15, sum(awards.map((item: any) => AWARD_POINTS[item.tier ?? 1])));
-    const score = round(rank * 0.55 + book.reviewScore * 0.45 + award);
-    return { id: book.id, name: book.name, rank, review: round(book.reviewScore), award, score, weight: round(used[index] / weightSum) };
+    const score = round(rank * 0.7 + book.reviewScore * 0.3);
+    return { id: book.id, name: book.name, rank, review: round(book.reviewScore), award: 0, score, weight: round(used[index] / weightSum) };
   });
   const latest = Math.max(-Infinity, ...state.catalog.filter((book: any) => !book.parentId).map((book: any) => book.released));
   const idle = Number.isFinite(latest) ? state.day - latest : 0;
   const decay = idle >= 720 ? (Math.floor((idle - 720) / RATING_PERIOD) + 1) * 4 : 0;
   const score = round(Math.max(0, sum(books.map((book: any) => book.score * book.weight)) - decay));
-  const tier = state.focus || 0;
+  const tier = state.stars || 0;
   const rating = state.rating || {};
+  const top = STAR_NAMES.length - 1;
   return {
     score, books, decay, tier, watch: !!rating.watch, published: rating.score ?? 0, history: rating.history || [],
-    up: tier < 2 ? RATING_UP[tier + 1] : null, keep: tier > 0 ? RATING_KEEP[tier] : null,
+    up: tier < top ? RATING_UP[tier + 1] : null, keep: tier > 0 ? RATING_KEEP[tier] : null,
     next: (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD, safe: tier > 0 && state.day - (rating.promotedAt || 0) < RATING_PERIOD
   };
 }
@@ -1805,12 +1808,12 @@ function rateDay(state: any) {
   if (state.day % RATING_PERIOD !== 0 || !state.company) return;
   const view = ratingOf(state);
   const rating = state.rating;
-  const before = state.focus || 0;
+  const before = state.stars || 0;
   const score = view.score;
   let tier = before;
   let note = '';
   const settled = tier > 0 && state.day - (rating.promotedAt || 0) > RATING_PERIOD;
-  if (tier < 2 && score >= RATING_UP[tier + 1]) {
+  if (tier < STAR_NAMES.length - 1 && score >= RATING_UP[tier + 1]) {
     tier += 1;
     rating.promotedAt = state.day;
     rating.watch = false;
@@ -1825,9 +1828,10 @@ function rateDay(state: any) {
   } else rating.watch = false;
   rating.score = score;
   rating.history = [...(rating.history || []), { day: state.day, score, tier }].slice(-12);
-  state.focus = tier;
+  state.stars = tier;
+  state.focus = STAR_RANGE[tier];
   const line = tier !== before ? note : note ? `${note}，下一期低于保级线 ${RATING_KEEP[tier]} 分将降级` : `维持${STAR_NAMES[tier]}工作室`;
-  news(state, tier, true, `${RATING_MEDIA}季度评级：${state.company} ${score.toFixed(0)} 分`, line + '。', null, true);
+  news(state, state.focus, true, `${RATING_MEDIA}季度评级：${state.company} ${score.toFixed(0)} 分`, line + '。', null, true);
   announce(state, { kind: tier > before ? 'record' : tier < before || note ? 'warning' : 'notice', title: `季度评级 ${score.toFixed(0)} 分`, text: `${RATING_MEDIA}：${line}`, amount: 0 });
   studioLog(state, '季度媒体评级', `${RATING_MEDIA}评分 ${score.toFixed(0)}，${line}。`);
 }
@@ -1875,7 +1879,7 @@ export function launchProject(state: any, projectId: string) {
   const breakoutChance = clamp((metrics.dimensions.creativity - 55) / 100 * 0.45, 0, 0.32);
   const breakout = breakoutChance > 0 && random(next) < breakoutChance;
   if (breakout) project.followers = Math.round(project.followers * (1.6 + random(next) * 0.9));
-  const exposure = MEDIA_BONUS[next.focus || 0];
+  const exposure = MEDIA_BONUS[next.stars || 0];
   if (exposure) project.followers = Math.round(project.followers * (1 + exposure));
   const clash = clashOf(next, next.day, project.followers);
   const { units, price, receipt } = openingSales(project, trend.multiplier * clash.factor, score);
@@ -1928,7 +1932,7 @@ export function launchProject(state: any, projectId: string) {
   const shortBoard = metrics.unfinished.length ? `仍有 ${metrics.unfinished.length} 个维度未完成，带着短板上市换回了款，之后可以继续更新。` : '';
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
-  const media = exposure ? `${STAR_NAMES[next.focus]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
+  const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广 ${promo.cost} 万带来 ${promo.followers} 位关注，按本作转化约折合首发 ${promo.receipt.toFixed(2)} 万。` : '';
   next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
@@ -1948,16 +1952,21 @@ function checkMarks(state: any, book: any) {
   }
 }
 
+// Moving is the company's own call: any time, for the price.
+export function moveCost(state: any) {
+  const office = OFFICES[state.office + 1];
+  return office ? office.cost : null;
+}
+
 export function moveOffice(state: any) {
   const next = studioAction(state);
-  if (next.office >= 2) throw new Error('已经完成工作室扩建。');
-  if (next.goals.breakEven === null) throw new Error('第一次回本后才能搬进正式办公室。');
-  if (next.office === 1 && (next.goals.topTen === null || next.goals.award === null)) throw new Error('进入全国首周榜前十并获得全国年度奖项后才能再次扩建。');
+  if (next.office >= OFFICES.length - 1) throw new Error('已经是最大的办公室了。');
   const office = OFFICES[next.office + 1];
-  spend(next, office.cost, next.office ? '扩建独立工作室' : '搬进正式办公室');
+  const cost = moveCost(next);
+  spend(next, cost, (next.office ? '扩建为' : '搬进') + office.name);
   next.office += 1;
-  next.goals[next.office === 1 ? 'moved' : 'expanded'] = next.day;
-  announce(next, { kind: 'office', title: next.office === 1 ? '搬进正式办公室' : '扩建独立工作室', text: `${office.seats} 个工位，月租 ${office.rent} 万`, amount: 0 });
+  next.goals[next.office === 1 ? 'moved' : 'expanded'] = next.goals[next.office === 1 ? 'moved' : 'expanded'] ?? next.day;
+  announce(next, { kind: 'office', title: (next.office === 1 ? '搬进' : '扩建为') + office.name, text: `${office.seats} 个工位，月租 ${office.rent} 万`, amount: 0 });
   return next;
 }
 
@@ -1965,13 +1974,13 @@ export function goalsOf(state: any) {
   const goals = state.goals;
   const steps = [
     { key: 'firstRelease', title: '完成首作', text: '把第一款游戏做完并发售。首作是练习，小亏也没关系。', reward: '开放招聘网站与音频、测试岗位', done: goals.firstRelease !== null },
-    { key: 'breakEven', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '可以搬进正式办公室', done: goals.breakEven !== null },
-    { key: 'moved', title: '搬进正式办公室', text: `在公司菜单搬家，一次性 ${OFFICES[1].cost} 万。`, reward: `${OFFICES[1].seats} 个工位，开放行业推荐`, done: goals.moved !== null }
+    { key: 'breakEven', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '证明作品能赚钱', done: goals.breakEven !== null },
+    { key: 'moved', title: '搬进正式办公室', text: `在「公司」页搬家，一次性 ${OFFICES[1].cost} 万。`, reward: `${OFFICES[1].seats} 个工位，开放行业推荐`, done: goals.moved !== null }
   ];
   steps.push(
-    { key: 'topTen', title: '进入全国首周榜前十', text: '作品发售第一周的销量，在近一年全国新作里排进前十。', reward: '获得 200 位粉丝，向扩建迈进一步', done: goals.topTen !== null },
-    { key: 'award', title: '获得全国年度奖项', text: '每年年底评选全国年度作品、创意与表现奖（国际奖项也算）。', reward: '获奖增加粉丝，开放工作室扩建资格', done: goals.award !== null },
-    { key: 'expanded', title: '再次扩建工作室', text: `完成前十与获奖目标后，花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位，可组建成熟团队`, done: goals.expanded !== null }
+    { key: 'topTen', title: '进入全国首周榜前十', text: '作品发售第一周的销量，在近一年全国新作里排进前十。', reward: '获得 200 位粉丝', done: goals.topTen !== null },
+    { key: 'award', title: '获得全国年度奖项', text: '每年年底评选全国年度作品、创意与表现奖（国际奖项也算）。', reward: '获奖增加粉丝', done: goals.award !== null },
+    { key: 'expanded', title: '再次扩建工作室', text: `在「公司」页花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位，可组建成熟团队`, done: goals.expanded !== null }
   );
   const current = steps.find(step => !step.done);
   const best = Math.max(0, ...state.catalog.map((book: any) => book.received));
@@ -1989,11 +1998,11 @@ function cameBack(state: any) {
 export const ACHIEVEMENT_GROUPS = [['milestone', '里程碑'], ['business', '经营'], ['works', '作品'], ['team', '团队'], ['industry', '行业'], ['hidden', '隐藏']];
 export const ACHIEVEMENTS: any[] = [
   { key: 'firstRelease', group: 'milestone', title: '完成首作', text: '把第一款游戏做完并发售。', reward: '开放招聘网站与音频、测试岗位', check: (s: any) => s.goals.firstRelease !== null },
-  { key: 'breakEven', group: 'milestone', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '可以搬进正式办公室', check: (s: any) => s.goals.breakEven !== null },
-  { key: 'moved', group: 'milestone', title: '搬进正式办公室', text: `回本后在成就页搬家，一次性 ${OFFICES[1].cost} 万。`, reward: `${OFFICES[1].seats} 个工位，开放行业推荐与猎头`, check: (s: any) => s.goals.moved !== null },
+  { key: 'breakEven', group: 'milestone', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '证明作品能赚钱', check: (s: any) => s.goals.breakEven !== null },
+  { key: 'moved', group: 'milestone', title: '搬进正式办公室', text: `在「公司」页搬家，一次性 ${OFFICES[1].cost} 万。`, reward: `${OFFICES[1].seats} 个工位，开放行业推荐与猎头`, check: (s: any) => s.goals.moved !== null },
   { key: 'topTen', group: 'milestone', title: '全国首周榜前十', text: '作品首周销量在近一年全国新作里排进前十。', reward: '获得 200 位粉丝', check: (s: any) => s.goals.topTen !== null },
-  { key: 'award', group: 'milestone', title: '全国年度奖项', text: '获得全国或国际年度评选的任一奖项。', reward: '获奖增加粉丝，开放再次扩建', check: (s: any) => s.goals.award !== null },
-  { key: 'expanded', group: 'milestone', title: '再次扩建', text: `完成前十与获奖后，花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位`, check: (s: any) => s.goals.expanded !== null },
+  { key: 'award', group: 'milestone', title: '全国年度奖项', text: '获得全国或国际年度评选的任一奖项。', reward: '获奖增加粉丝', check: (s: any) => s.goals.award !== null },
+  { key: 'expanded', group: 'milestone', title: '再次扩建', text: `在「公司」页花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位`, check: (s: any) => s.goals.expanded !== null },
   { key: 'cash100', group: 'business', title: '百万现金', text: '公司现金达到 100 万。', check: (s: any) => s.cash >= 100, progress: (s: any) => [s.cash, 100] },
   { key: 'cash1000', group: 'business', title: '千万现金', text: '公司现金达到 1000 万。', check: (s: any) => s.cash >= 1000, progress: (s: any) => [s.cash, 1000] },
   { key: 'team8', group: 'business', title: '八人小队', text: '同时有 8 名员工。', check: (s: any) => s.staff.length >= 8, progress: (s: any) => [s.staff.length, 8] },
@@ -2013,8 +2022,10 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'poached', group: 'team', title: '挖角成功', text: '从对手那里挖来一位名人。', check: (s: any) => flag(s, 'poached') },
   { key: 'rare', group: 'team', title: '可遇不可求', text: '招到带稀有标签的员工。', check: (s: any) => s.staff.some((person: any) => person.tags.some((tag: any) => tag.kind === 'rare')) },
   { key: 'grown90', group: 'team', title: '自己培养的高手', text: '一位非名人员工的某项能力达到 90。', check: (s: any) => s.staff.some((person: any) => !person.fame && ABILITY_KEYS.some(key => person.abilities[key] >= 90)) },
-  { key: 'star2', group: 'industry', title: '二星工作室', text: `${RATING_MEDIA}评为二星。`, check: (s: any) => (s.focus || 0) >= 1 },
-  { key: 'star3', group: 'industry', title: '三星工作室', text: `${RATING_MEDIA}评为三星。`, check: (s: any) => (s.focus || 0) >= 2 },
+  { key: 'star2', group: 'industry', title: '二星工作室', text: `${RATING_MEDIA}评为二星。`, check: (s: any) => (s.stars || 0) >= 1 },
+  { key: 'star3', group: 'industry', title: '三星工作室', text: `${RATING_MEDIA}评为三星。`, check: (s: any) => (s.stars || 0) >= 2 },
+  { key: 'star4', group: 'industry', title: '四星工作室', text: `${RATING_MEDIA}评为四星。`, check: (s: any) => (s.stars || 0) >= 3 },
+  { key: 'star5', group: 'industry', title: '五星工作室', text: `${RATING_MEDIA}评为五星。`, check: (s: any) => (s.stars || 0) >= 4 },
   { key: 'globalTop10', group: 'industry', title: '走向世界', text: '一部作品进入国际首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.firstRanks && book.firstRanks[2] <= 10) },
   { key: 'expoWin', group: 'industry', title: '展会第一', text: '在任一展会拿到第一名。', check: (s: any) => s.exhibitions.some((entry: any) => entry.result?.rank === 1) },
   { key: 'awardGlobal', group: 'industry', title: '国际年度作品', text: '获得国际年度作品。', check: (s: any) => s.awards.some((award: any) => award.own && award.tier === 2) },
@@ -2349,9 +2360,9 @@ export function setDeadline(state: any, projectId: string, days: number) {
   if (!project || project.deadline) throw new Error('当前无法公布发售日。');
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后再公布发售日。');
   project.deadline = next.day + days;
-  const exposure = Math.round(project.followers * MEDIA_BONUS[next.focus || 0]);
+  const exposure = Math.round(project.followers * MEDIA_BONUS[next.stars || 0]);
   project.followers += 150 + exposure;
-  const extra = exposure ? `（含${STAR_NAMES[next.focus]}工作室的媒体曝光 ${exposure} 人）` : '';
+  const extra = exposure ? `（含${STAR_NAMES[next.stars || 0]}工作室的媒体曝光 ${exposure} 人）` : '';
   studioLog(next, '公布发售日', `计划第 ${project.deadline} 天发售《${project.name}》，新增 ${150 + exposure} 人关注${extra}；延期会损失关注。`);
   const near = scheduleOf(next).filter((item: any) => !item.own && Math.abs(item.day - project.deadline) <= 3);
   if (near.length) announce(next, { kind: 'notice', title: '档期提醒', text: `同周已有${near.map((item: any) => item.name).join('、')}定档，首发可能被分流。`, amount: 0 });
@@ -2672,6 +2683,7 @@ function seedIndustry(state: any) {
   state.works = [];
   state.news = [];
   state.focus = 0;
+  state.stars = 0;
   const today = state.day;
   // Old saves need rival history as far back as their first release, or its chart would be empty.
   const start = Math.min(today, ...state.catalog.map((book: any) => book.released)) - 360;
@@ -3252,6 +3264,16 @@ export function restoreStudio(saved: any) {
       }
     }
     next.rulesRevision = 8;
+  }
+  if (next.rulesRevision < 9) {
+    // Five stars instead of three, scored mostly on chart standing; the market range follows the stars.
+    const score = ratingOf({ ...next, stars: 0 }).score;
+    let stars = 0;
+    while (stars < STAR_NAMES.length - 1 && score >= RATING_UP[stars + 1]) stars += 1;
+    next.stars = stars;
+    next.focus = STAR_RANGE[stars];
+    next.rating = { score, watch: false, promotedAt: next.day - RATING_PERIOD - 1, history: [{ day: next.day, score, tier: stars }] };
+    next.rulesRevision = 9;
   }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;

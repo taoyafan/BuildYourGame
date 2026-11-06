@@ -114,7 +114,7 @@ export function drawRoom(pen: Pen, w: number, h: number, office: number, record:
   const plaque = props.plaque;
   pen.rect(plaque.x, plaque.y, plaque.w, plaque.h, '#8b6a4c', 4);
   pen.rect(plaque.x + 2, plaque.y + 2, plaque.w - 4, plaque.h - 4, '#f5ead2', 3);
-  for (let index = 0; index < 3; index++) star(pen, plaque.x + plaque.w / 2 + (index - 1) * 14, plaque.y + plaque.h / 2, 6, index < record.stars ? record.starColor : '#d8cdb5');
+  for (let index = 0; index < 5; index++) star(pen, plaque.x + plaque.w / 2 + (index - 2) * 11, plaque.y + plaque.h / 2, 5, index < record.stars ? record.starColor : '#d8cdb5');
   // Whiteboard with a little month grid.
   const board = props.board;
   pen.rect(board.x, board.y, board.w, board.h, '#fbfbf7', 3);
