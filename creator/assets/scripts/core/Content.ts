@@ -808,18 +808,21 @@ function mentorMenu(state: any, id: string) {
 
 // Named leads at rival studios, and what it would take to bring one over.
 function talentsMenu(state: any) {
-  const list = (state.talents || []).filter((talent: any) => talent.status === 'employed');
-  const free = (state.talents || []).filter((talent: any) => talent.status === 'free');
+  const list = (state.talents || []).filter((talent: any) => talent.status === 'employed' || talent.status === 'free');
   return {
     title: '猎头',
     blocks: [
-      { type: 'text', text: '对手工作室的核心人物。猎头费 ' + money(core.POACH_FEE) + ' 不退；出价越高、你的星级比对方越高、对方势头越差，成功率越高。失败后半年内不会再谈。离职的名人可能出现在你的行业推荐里，约 ' + core.TALENT_FREE_DAYS + ' 天没人录用就会被别家签走。', muted: true },
-      ...(free.length ? [{ type: 'lines', title: '正在找新东家', items: free.map((talent: any) => [talent.name + ' · ' + core.ROLES[talent.role].name, '离职 ' + (state.day - talent.since) + ' 天' + (talent.work ? ' · 代表作《' + talent.work + '》' : '')]) }] : []),
+      { type: 'text', text: '对手工作室的核心人物，以及正在找新东家的离职名人。猎头费 ' + money(core.POACH_FEE) + ' 不退；出价越高、你的星级比对方越高、对方势头越差，成功率越高。自由身没有东家挽留，三档出价成功率 55% / 70% / 85%，失败后 30 天就能再谈；在职的被拒后半年内不会再谈。离职约 ' + core.TALENT_FREE_DAYS + ' 天没人签就会被别家签走。', muted: true },
       { type: 'choices', items: list.map((talent: any) => {
         const offer = core.poachOffer(state, talent.id, 1);
         const ability = core.ABILITIES.find(item => item.key === talent.primary)?.name;
         const work = core.talentWork(state, talent);
-        return { text: talent.name + ' · ' + core.ROLES[talent.role].name, detail: talent.studioName + (work ? ' · 代表作《' + work + '》' : '') + '\n' + ability + ' ' + talent.abilities[talent.primary] + ' · 中档出价成功率 ' + Math.round(offer.chance * 100) + '%', action: 'menu', data: { menu: 'talent', id: talent.id }, tag: offer.available ? '' : '暂不可谈' };
+        const free = talent.status === 'free';
+        return {
+          text: talent.name + ' · ' + core.ROLES[talent.role].name + (free ? ' · 自由身' : ''),
+          detail: (free ? '正在找新东家 · 离职 ' + (state.day - talent.since) + ' 天' : talent.studioName) + (work ? ' · 代表作《' + work + '》' : '') + '\n' + ability + ' ' + talent.abilities[talent.primary] + ' · 中档出价成功率 ' + Math.round(offer.chance * 100) + '%',
+          action: 'menu', data: { menu: 'talent', id: talent.id }, tag: offer.available ? '' : '暂不可谈'
+        };
       }) }
     ]
   };
@@ -837,8 +840,9 @@ function talentMenu(state: any, id: string) {
       { type: 'lines', items: [['岗位', core.ROLES[talent.role].name], ['现在', talent.status === 'employed' ? talent.studioName : talent.status === 'free' ? '正在找新东家' : '已加入本社'], ['代表作', work ? '《' + work + '》' : '—']] },
       { type: 'lines', title: '六项能力', items: abilityLines(talent) },
       ...(offers[0].reason ? [{ type: 'note', icon: 'Lock', text: offers[0].reason + '。' }] : []),
+      ...(talent.status === 'free' ? [{ type: 'note', icon: 'Star', text: '自由身没有对手挽留，三档出价成功率固定 55% / 70% / 85%；被拒后 30 天就能再谈，也不影响任何对手。' }] : []),
       { type: 'choices', items: offers.map((offer: any, index: number) => ({ text: '出价 ' + core.POACH_BIDS[index] + ' 倍 · 月薪 ' + money(offer.wage), detail: '成功率 ' + Math.round(offer.chance * 100) + '% · 猎头费 ' + money(offer.fee) + '（失败不退）', action: 'poach', data: { id, bid: index }, disabled: !offer.available })) },
-      { type: 'text', text: '月薪一旦谈定就不会再变，是长期成本。挖来的人入职 30 天内需要磨合。', muted: true }
+      { type: 'text', text: '月薪一旦谈定就不会再变，是长期成本。入职 30 天内需要磨合。', muted: true }
     ]
   };
 }

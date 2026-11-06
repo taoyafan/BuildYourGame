@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.40';
+export const VERSION = '0.1.41';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -556,7 +556,7 @@ export function hireReasons(state: any, id: string): string[] {
   if (!person || person.hired) return [person?.hired ? '这位候选人已录用。' : '候选人已不可录用。'];
   const reasons: string[] = [];
   const talent = person.talent ? (state.talents || []).find((item: any) => item.id === person.talent) : null;
-  if (talent && talent.status !== 'free') reasons.push(`${person.name}已经加入了${talent.studioName}。`);
+  if (talent && talent.status !== 'free') reasons.push(talent.status === 'hired' ? `${person.name}已经加入了本社。` : `${person.name}已经加入了${talent.studioName}。`);
   if (state.staff.length >= seats(state)) reasons.push(`${OFFICES[state.office].name}只有 ${seats(state)} 个工位，当前已满。`);
   if (state.cash - state.accrued < monthlyCost(state) + person.wage) reasons.push('扣除应付工资后，资金不够支付录用后的近期工资。');
   return reasons;
@@ -2726,13 +2726,23 @@ function talentMonth(state: any) {
 export function poachOffer(state: any, talentId: string, bid: number) {
   const talent = (state.talents || []).find((item: any) => item.id === talentId);
   if (!talent) return null;
-  const studio = state.rivals.find((item: any) => item.id === talent.studio);
+  // A free agent has no employer to counter the offer: easier to sign than a poach, and their odds
+  // do not depend on how their former studio is doing.
+  const freeAgent = talent.status === 'free';
+  const studio = freeAgent ? null : state.rivals.find((item: any) => item.id === talent.studio);
   const base = marketWage({ abilities: talent.abilities, speed: talent.speed });
   const wage = round(base * POACH_BIDS[bid]);
   const trend = studio ? rivalProfile(state, studio.id)?.trend : '平稳';
-  const chance = round(clamp(0.2 + [0, 0.15, 0.3][bid] + ((state.focus || 0) - (studio?.tier ?? 1)) * 0.15 + (trend === '下滑' ? 0.1 : trend === '上升' ? -0.1 : 0), 0.05, 0.85));
-  const reason = talent.status !== 'employed' ? '此人现在不在对手那里' : state.office < 1 ? '搬进正式办公室后才能找猎头' : (talent.cooldown || 0) > state.day ? `被拒后要到${dueText(state, talent.cooldown)}才肯再谈` : state.staff.length >= seats(state) ? '工位已满' : state.cash < POACH_FEE ? `猎头费需要 ${POACH_FEE} 万` : '';
-  return { talent, studio, wage, chance, fee: POACH_FEE, reason, available: !reason };
+  const chance = freeAgent
+    ? round(0.55 + [0, 0.15, 0.3][bid])
+    : round(clamp(0.2 + [0, 0.15, 0.3][bid] + ((state.focus || 0) - (studio?.tier ?? 1)) * 0.15 + (trend === '下滑' ? 0.1 : trend === '上升' ? -0.1 : 0), 0.05, 0.85));
+  const eligible = freeAgent || talent.status === 'employed';
+  const reason = !eligible ? (talent.status === 'hired' ? '已经加入本社' : '此人现在不在对手那里')
+    : state.office < 1 ? '搬进正式办公室后才能找猎头'
+    : (talent.cooldown || 0) > state.day ? `被拒后要到${dueText(state, talent.cooldown)}才肯再谈`
+    : state.staff.length >= seats(state) ? '工位已满'
+    : state.cash < POACH_FEE ? `猎头费需要 ${moneyText(POACH_FEE)}` : '';
+  return { talent, studio, wage, chance, fee: POACH_FEE, freeAgent, reason, available: !reason };
 }
 
 export function poach(state: any, talentId: string, bid: number) {
@@ -2743,26 +2753,35 @@ export function poach(state: any, talentId: string, bid: number) {
   const next = studioAction(state);
   const talent = next.talents.find((item: any) => item.id === talentId);
   const studio = next.rivals.find((item: any) => item.id === talent.studio);
+  const freeAgent = offer.freeAgent;
   spend(next, POACH_FEE, `猎头接触${talent.name}`);
   if (random(next) >= offer.chance) {
-    talent.cooldown = next.day + 180;
-    studioLog(next, `${talent.name} 拒绝了邀请`, `${talent.studioName}留住了人，180 天内不会再谈。`);
-    announce(next, { kind: 'notice', title: `${talent.name} 拒绝了邀请`, text: '猎头费不退，半年内不会再谈', amount: 0 });
+    // No employer to lose them to: a free agent can be approached again much sooner.
+    const cooldown = freeAgent ? 30 : 180;
+    talent.cooldown = next.day + cooldown;
+    studioLog(next, `${talent.name} 拒绝了邀请`, freeAgent ? `他还在考虑别家，${cooldown} 天内不会再谈。` : `${talent.studioName}留住了人，180 天内不会再谈。`);
+    announce(next, { kind: 'notice', title: `${talent.name} 拒绝了邀请`, text: `猎头费不退，${cooldown} 天内不会再谈`, amount: 0 });
     return next;
   }
   const person = freshPerson(next, {
     id: `star-${talent.id}`, name: talent.name, role: talent.role, abilities: { ...talent.abilities }, speed: talent.speed, wage: offer.wage,
     hired: true, fame: true, rampup: 30, joined: next.day, home: homeWork({ role: talent.role, abilities: talent.abilities, home: '' }), snap: { ...talent.abilities },
-    potential: Math.min(100, talent.abilities[talent.primary] + 2), tags: [{ kind: 'personality', key: 'eager' }], story: `从${talent.studioName}挖来`
+    potential: Math.min(100, talent.abilities[talent.primary] + 2), tags: [{ kind: 'personality', key: 'eager' }],
+    story: freeAgent ? '离职后以自由身加盟' : `从${talent.studioName}挖来`
   });
   next.staff.push(person);
-  personNote(next, person, `从${talent.studioName}挖来，月薪 ${offer.wage.toFixed(2)} 万`);
+  personNote(next, person, (freeAgent ? '自由身加盟' : `从${talent.studioName}挖来`) + `，月薪 ${moneyText(offer.wage)}`);
   talent.status = 'hired';
   talent.since = next.day;
-  if (studio) studio.power = round(Math.max(0.3, studio.power - 0.15));
-  next.flags = { ...(next.flags || {}), poached: next.day };
-  news(next, studio ? studio.tier : 1, true, `${talent.name}离开${talent.studioName}，加盟${next.company}`, `月薪 ${offer.wage.toFixed(2)} 万。`, talent.studio, true);
-  announce(next, { kind: 'record', title: `挖来了${talent.name}`, text: `${ROLES[talent.role].name}名人，月薪 ${offer.wage.toFixed(2)} 万`, amount: 0 });
+  // Signing a free agent does not weaken a rival and does not count as a successful poach.
+  if (!freeAgent) {
+    if (studio) studio.power = round(Math.max(0.3, studio.power - 0.15));
+    next.flags = { ...(next.flags || {}), poached: next.day };
+  }
+  news(next, studio ? studio.tier : 1, true,
+    freeAgent ? `${talent.name}加盟${next.company}` : `${talent.name}离开${talent.studioName}，加盟${next.company}`,
+    `月薪 ${moneyText(offer.wage)}。`, freeAgent ? null : talent.studio, true);
+  announce(next, { kind: 'record', title: `${freeAgent ? '签下了' : '挖来了'}${talent.name}`, text: `${ROLES[talent.role].name}名人，月薪 ${moneyText(offer.wage)}`, amount: 0 });
   return next;
 }
 
