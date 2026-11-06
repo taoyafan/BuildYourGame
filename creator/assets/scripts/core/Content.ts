@@ -65,13 +65,14 @@ export function advice(state: any, projectId?: string) {
     return { title: '还没有人做这份工作', text: '在「项目」里给同事分配要做的工作。', menu: 'project', id: project.id };
   }
   const pipeline = core.dimensionPipeline(state, project);
-  // Stability is not a work item; it follows the defects that testing finds, so it is never "unstaffed".
+  // Testing can be left undone on purpose (the game is still shippable), so it is not an unstaffed
+  // scoring item here. Its row in the project page already says "未安排测试 · 漏掉的缺陷留给玩家".
   const idle = pipeline.rows.filter((row: any) => row.key !== 'stability' && row.days === null && row.remaining > 0);
   if (idle.length) return { title: '有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
   if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
   if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
-  if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.DIMENSIONS.find(d => d.key === pipeline.bottleneck.key)?.name}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
+  if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.bottleneckName(pipeline.bottleneck.key)}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
   return { title: '推进项目', text: '查看各评分项的剩余人日与预计完成日，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
 
@@ -239,7 +240,10 @@ function projectMenu(state: any, id?: string) {
   const live = core.liveProjects(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
-  const finished = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
+  // Testing still in progress counts as work left; testing nobody was assigned to does not block a release.
+  const contentDone = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
+  const testing = forecast.rows.some((row: any) => row.key === 'stability' && row.remaining > 0.0001 && row.days !== null);
+  const finished = contentDone && !testing;
   const idleRows = forecast.rows.filter((row: any) => row.key !== 'stability' && row.remaining > 0.0001 && row.days === null);
   const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
   const order = core.projectOrder(state);
@@ -251,7 +255,7 @@ function projectMenu(state: any, id?: string) {
     ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
-    { type: 'lines', items: [['预计内容完成', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
+    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
       { type: 'text', text: '当前第 ' + (rank + 1) + ' 优先；其余项目按顺序承担协调成本。' },
@@ -666,7 +670,12 @@ function ratingMenu(state: any) {
   else blocks.push({ type: 'lines', items: rating.books.map((book: any) => ['《' + book.name + '》 · 权重 ' + Math.round(book.weight * 100) + '%', '名次 ' + Math.round(book.rank) + ' · 口碑 ' + Math.round(book.review) + ' → ' + Math.round(book.score) + ' 分']) });
   if (rating.decay) blocks.push({ type: 'text', text: '已经两年多没有新作，评级下滑 ' + rating.decay + ' 分。', muted: true });
   blocks.push({ type: 'section', title: '星级的作用' });
-  blocks.push({ type: 'lines', items: core.STAR_NAMES.map((_name: string, index: number) => [star(index) + (index === rating.tier ? ' · 当前' : ''), (index ? '升星线 ' + core.RATING_UP[index] + ' 分 · ' : '') + '关注' + core.TIERS[core.STAR_RANGE[index]].name + '范围' + (core.MEDIA_BONUS[index] ? ' · 媒体曝光 +' + Math.round(core.MEDIA_BONUS[index] * 100) + '%' : '') + (core.FAME_CHANCE[index] ? ' · 名人出现率 ' + Math.round(core.FAME_CHANCE[index] * 100) + '%' : '')]) });
+  const fameText = (index: number) => {
+    const odds = (channel: string) => Math.round(core.fameChance({ stars: index }, channel) * 1000) / 10;
+    return odds('headhunt') ? ` · 单人概率 熟人${odds('friends')}%/网站${odds('web')}%/推荐${odds('headhunt')}%` : '';
+  };
+  blocks.push({ type: 'lines', items: core.STAR_NAMES.map((_name: string, index: number) => [star(index) + (index === rating.tier ? ' · 当前' : ''), (index ? '升星线 ' + core.RATING_UP[index] + ' 分 · ' : '') + '关注' + core.TIERS[core.STAR_RANGE[index]].name + '范围' + (core.MEDIA_BONUS[index] ? ' · 媒体曝光 +' + Math.round(core.MEDIA_BONUS[index] * 100) + '%' : '') + fameText(index)]) });
+  blocks.push({ type: 'text', text: '名人按每位候选人单独判定，一批三人各算一次；上面给的是单人概率，星级越高三个渠道一起提高。熟人介绍最不容易遇到名人，行业推荐最容易。', muted: true });
   if (rating.history.length) {
     blocks.push({ type: 'section', title: '历次评级' });
     blocks.push({ type: 'lines', items: [...rating.history].reverse().map((entry: any) => [core.dateText(entry.day), Math.round(entry.score) + ' 分 · ' + star(entry.tier)]) });
@@ -1099,7 +1108,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => introduce('goal', 'shelf', '欢迎！你是工作室的创始人。办公室里的奖杯架是成就墙：点开看看公司要走的里程碑。'),
       () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项；首作选小型就够。', tap: 'navProject' } : null,
-      () => project && !seen.track ? explain('track', 'track', '五项内容各有进度，最慢的一项是瓶颈；稳定看未修缺陷，没人测试就无从估计。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
+      () => project && !seen.track ? explain('track', 'track', '五项内容加测试各有工作量，六项里最慢的一项就是瓶颈；完成度只算五项内容，稳定还要看缺陷找没找到、修没修完。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
       // A hire is only useful against a short board, so the tip names the trade that covers the

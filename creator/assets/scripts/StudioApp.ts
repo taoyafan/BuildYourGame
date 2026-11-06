@@ -790,7 +790,7 @@ export class StudioApp extends Component {
     }
     const radarWidth = Math.round(inner * 0.58);
     const height = this.radar(body, y, metrics, project.type, project, radarWidth);
-    const bottleneck = forecast.bottleneck ? core.DIMENSIONS.find(dimension => dimension.key === forecast.bottleneck.key)?.name : '—';
+    const bottleneck = forecast.bottleneck ? core.bottleneckName(forecast.bottleneck.key) : '—';
     this.anchors.set('stats', this.box(body, 'StatsAnchor', radarWidth + 6, y, inner - radarWidth - 6, 164));
     this.statColumn(body, radarWidth + 6, y, inner - radarWidth - 6, [
       ['综合估计', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
@@ -1320,7 +1320,7 @@ export class StudioApp extends Component {
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
           this.text(row, dimension?.name || item.key, 12, 4, width - 150, 18, 13, colors.ink, true);
           this.text(row, item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          const note = item.days === null ? (item.remaining > 0.0001 ? (item.key === 'stability' ? '未安排测试 · 漏掉的缺陷留给玩家' : '无人负责 · 点开分工') : '') : '预计 ' + item.days + ' 天';
+          const note = item.days === null ? (item.remaining > 0.0001 ? (item.key === 'stability' ? '未安排测试 · 漏掉的缺陷留给玩家' : '无人负责 · 点开分工') : '') : '预计 ' + item.days + ' 天' + (slow && item.key === 'stability' ? ' · 测试最慢' : '');
           this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
           if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;

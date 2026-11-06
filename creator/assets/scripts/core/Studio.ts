@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.36';
+export const VERSION = '0.1.39';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -500,14 +500,23 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     const wage = round(source.wage[0] + abilities[strongest] * source.wage[1] + (speed - source.speed[0]) * source.wage[2] + random(next) * source.wage[3]);
     return freshPerson(next, { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, abilities, speed, tags, wage, hired: false, potential: potentialFor(next, abilities, channel) });
   });
-  // A name in the industry shows up only where word of mouth is worth something: a strong record draws
-  // them out, they want their own people and they take a while to settle in.
-  const fameChance = FAME_CHANCE[next.stars || 0];
-  if (next.notices.fameNext && channel === 'headhunt' || fameChance > 0 && random(next) < fameChance) {
-    if (channel === 'headhunt') delete next.notices.fameNext;
-    const star = people[Math.floor(random(next) * people.length)];
-    // A free agent the player has read about in the news is the one who turns up.
-    const talent = (next.talents || []).find((item: any) => item.status === 'free' && item.role === role);
+  // Three candidates, three independent rolls. Odds are per person and scale with star level and
+  // channel: at five stars an industry referral gives each candidate a 1-in-10 chance. A shortlist
+  // can therefore contain more than one famous name.
+  if (next.notices.fameRoll) delete next.notices.fameRoll; // leftover per-period flag from old saves
+  const chance = fameChance(next, channel);
+  const promised = !!next.notices.fameNext && channel === 'headhunt';
+  const stars = people.filter(() => chance > 0 && random(next) < chance);
+  // An event promising a name is spent on the next industry-referral shortlist, and makes sure of it.
+  if (promised) {
+    if (!stars.length) stars.push(people[Math.floor(random(next) * people.length)]);
+    delete next.notices.fameNext;
+  }
+  const freeTalents = (next.talents || []).filter((item: any) => item.status === 'free' && item.role === role);
+  stars.forEach((star: any, index: number) => {
+    // They want their own people and take a while to settle in. A free agent the player has read
+    // about in the news takes one of the slots when there is one available.
+    const talent = freeTalents[index] || null;
     star.abilities = starFrom(next, role, talent);
     if (talent) { star.name = talent.name; star.talent = talent.id; star.story = `${dateText(talent.since)}新闻：${talent.title}`; }
     star.potential = Math.max(...ABILITY_KEYS.map(item => star.abilities[item])) + 2;
@@ -519,7 +528,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     // A name comes with terms: half of them insist on bringing an old crewmate, the rest only take
     // the genre they are known for.
     star.condition = random(next) < 0.5 ? 'crew' : 'type:' + Object.keys(TYPES)[Math.floor(random(next) * Object.keys(TYPES).length)];
-  }
+  });
   next.candidates[key] = { batch, people };
   studioLog(next, '发布招聘', `${source.name}送来 ${people.length} 份${ROLES[role].name}简历，名单保持到${dateText((batch + 1) * 14)}。`);
   return next;
@@ -976,11 +985,13 @@ export function dimensionPipeline(state: any, project: any) {
     const days = remaining <= 0.0001 ? 0 : daily > 0.0001 ? Math.ceil(remaining / daily) : null;
     return { key, remaining: round(remaining), rate: round(daily), days };
   });
-  const pending = rows.filter((row: any) => row.key !== 'stability' && row.remaining > 0.0001);
-  const idle = pending.filter((row: any) => row.days === null).map((row: any) => row.key);
-  // The bottleneck is the furthest date the whole team can actually reach. Dimensions nobody works on
-  // are not a date at all: they are reported separately so the player can see what to staff, and the
-  // rest of the estimate stays useful instead of collapsing to "unknown".
+  // Testing is a real work item with its own person-days, so it competes for the slowest date too.
+  // Reporting a bottleneck over only five rows while the sixth quietly stretched the schedule by a
+  // fortnight was ambiguous: the player saw a date and a label that did not describe the same plan.
+  const pending = rows.filter((row: any) => row.remaining > 0.0001);
+  // An unstaffed content dimension blocks the date. An unstaffed test does not: the game can ship
+  // without one, and its row already says "未安排测试 · 漏掉的缺陷留给玩家". Keep those separate.
+  const idle = pending.filter((row: any) => row.key !== 'stability' && row.days === null).map((row: any) => row.key);
   const scheduled = pending.filter((row: any) => row.days !== null);
   // A bottleneck is a dimension that finishes strictly later than every other one. When the day is
   // split in proportion to what is left, all dimensions land together — that is not a bottleneck,
@@ -991,13 +1002,21 @@ export function dimensionPipeline(state: any, project: any) {
   return { rows, discover: round(discover), repair: round(repair), bottleneck, idle, blocked: idle.length > 0 };
 }
 
+// "稳定" as a bottleneck means the testing workload is the slowest, not that the score is low.
+export function bottleneckName(key: string) {
+  return key === 'stability' ? '稳定（测试）' : DIMENSIONS.find(item => item.key === key)?.name || key || '—';
+}
+
 export function projectForecast(state: any, project: any) {
   if (!project) return null;
   const pipeline = dimensionPipeline(state, project);
   const metrics = visibleMetrics(project);
   const totalRemaining = CONTENT_KEYS.reduce((total, key) => total + Math.max(0, workOf(project, key).total - workOf(project, key).done), 0);
   const aggregate = sum(CONTENT_KEYS.map(key => pipeline.rows.find((row: any) => row.key === key)?.rate || 0));
-  const days = totalRemaining <= 0.0001 ? 0 : pipeline.idle.length ? null : Math.max(...pipeline.rows.filter((row: any) => row.key !== 'stability').map((row: any) => row.days || 0));
+  // The date covers every staffed row, testing included. An unstaffed test row has no date and is
+  // not a blocker, so it is skipped rather than turning the whole estimate into "unknown".
+  const scheduled = pipeline.rows.filter((row: any) => row.days !== null);
+  const days = pipeline.idle.length ? null : scheduled.length ? Math.max(0, ...scheduled.map((row: any) => row.days || 0)) : 0;
   const done = CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).total, 0));
   return { ...pipeline, days, aggregate: round(aggregate), remaining: round(totalRemaining), progress: round(done * 100), metrics, eta: days === null ? null : state.day + days };
 }
@@ -1796,7 +1815,16 @@ const RATING_WATCH = 4;
 const RATING_WEIGHTS = [0.5, 0.3, 0.2];
 // Attention a star level's coverage adds when a release date is announced and at launch.
 export const MEDIA_BONUS = [0, 0.05, 0.1, 0.15, 0.2];
-export const FAME_CHANCE = [0, 0.08, 0.15, 0.25, 0.35];
+// Every candidate in a three-person shortlist rolls on their own. These are the per-person odds at
+// five stars: 2% through friends, 4% on a job site, 10% through an industry referral. Lower star
+// levels scale the whole table down; one-star studios see none. A referral event still guarantees
+// at least one name in the next industry-referral shortlist.
+export const FAME_CHANNEL_CHANCE: any = { friends: 0.02, web: 0.04, headhunt: 0.1 };
+export const FAME_STAR_SCALE = [0, 0.25, 0.5, 0.75, 1];
+export function fameChance(state: any, channel: string) {
+  const stars = Math.min(FAME_STAR_SCALE.length - 1, Math.max(0, state.stars || 0));
+  return (FAME_CHANNEL_CHANCE[channel] || 0) * FAME_STAR_SCALE[stars];
+}
 // A first-week rank is worth most on the highest chart the title reaches.
 const RANK_TOP = [40, 70, 100];
 
@@ -2018,9 +2046,23 @@ export function goalsOf(state: any) {
 // The six growth goals are milestones (they still unlock things); everything else is for show only.
 const ownBooks = (state: any) => state.catalog;
 const flag = (state: any, key: string) => !!(state.flags && state.flags[key]);
-function cameBack(state: any) {
-  const history = state.rating?.history || [];
-  return history.some((entry: any, index: number) => index >= 2 && history[index - 1].tier < history[index - 2].tier && entry.tier >= history[index - 2].tier);
+// A side skill beating the day job: the best ability outside someone's trade has grown past the best
+// ability inside it. New hires always have a trade ability on top (pickAbilities caps the rest two
+// points lower), so this only happens after deliberate off-trade work, mentoring or training. The
+// hire-time snapshot keeps a lucky founder roll from unlocking it on day one.
+function sideSkillWins(state: any) {
+  return (state.staff || []).some((person: any) => {
+    const home = (ROLES[person.role]?.home || []).filter((key: string) => ABILITY_KEYS.includes(key));
+    const outside = ABILITY_KEYS.filter((key: string) => !home.includes(key));
+    if (!home.length || !outside.length) return false;
+    const abilities = person.abilities || {};
+    const num = (key: string) => Number(abilities[key]) || 0;
+    const main = Math.max(...home.map(num));
+    const best = outside.reduce((top: string, key: string) => num(key) > num(top) ? key : top, outside[0]);
+    const side = num(best);
+    const baseline = Number(person.snap?.[best] ?? 0);
+    return side > main && side >= baseline + 2;
+  });
 }
 export const ACHIEVEMENT_GROUPS = [['milestone', '里程碑'], ['business', '经营'], ['works', '作品'], ['team', '团队'], ['industry', '行业'], ['hidden', '隐藏']];
 export const ACHIEVEMENTS: any[] = [
@@ -2059,9 +2101,35 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'dream', group: 'hidden', title: '屏幕外的人', text: '创始人过劳后被托梦救回。', check: (s: any) => flag(s, 'dream') },
   { key: 'flawless', group: 'hidden', title: '零缺陷', text: '一部作品发售时没有任何未修缺陷。', check: (s: any) => ownBooks(s).some((book: any) => book.flawless) },
   { key: 'clashWin', group: 'hidden', title: '硬碰硬', text: '和两部以上对手作品同周发售，仍拿到全国首周第一。', check: (s: any) => ownBooks(s).some((book: any) => (book.clash || 0) >= 2 && book.firstRanks && book.firstRanks[1] === 1) },
-  { key: 'comeback', group: 'hidden', title: '卷土重来', text: '降级后的下一期评级立刻回到原来的星级。', check: (s: any) => cameBack(s) },
   { key: 'smallPromo', group: 'hidden', title: '小钱办大事', text: '只投最小一档推广的作品进入全国首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.promo && book.promo.cost === PROMOTE_TIERS[0] && book.firstRanks && book.firstRanks[1] <= 10) },
-  { key: 'familiar', group: 'hidden', title: '新闻里的那个人', text: '录用一位曾在新闻里出现过的名人。', check: (s: any) => s.staff.some((person: any) => person.story) }
+  { key: 'familiar', group: 'hidden', title: '新闻里的那个人', text: '录用一位曾在新闻里出现过的名人。', check: (s: any) => s.staff.some((person: any) => person.story) },
+  { key: 'sideHustle', group: 'hidden', title: '不务正业', text: '把一位员工的非本职能力练到超过他本职的最强一项。', check: (s: any) => sideSkillWins(s) },
+  // Three ladders: scale of a shipped title, how many abilities one employee has at 90+, and how
+  // many quality dimensions of one released title reached 90+.
+  ...SCALES.slice(1).map((scale, index) => {
+    const level = index + 1;
+    return {
+      key: 'scale' + level, group: 'works', title: '完成' + scale.name + '作品',
+      text: '发售一部' + scale.name + '作品。',
+      check: (s: any) => ownBooks(s).some((book: any) => book.scale === level)
+    };
+  }),
+  ...['双料高手', '三栖高手', '四项全能', '五维全才', '六边形战士'].map((title, index) => {
+    const count = index + 2;
+    return {
+      key: 'staff90x' + count, group: 'team', title,
+      text: `一名员工有 ${count} 项属性达到 90 分以上。`,
+      check: (s: any) => (s.staff || []).some((person: any) => ABILITY_KEYS.filter(key => ((person.abilities || {})[key] || 0) >= 90).length >= count)
+    };
+  }),
+  ...['双维高分', '三维高分', '四维高分', '五维高分', '六维全优'].map((title, index) => {
+    const count = index + 2;
+    return {
+      key: 'dims90x' + count, group: 'works', title,
+      text: `发售一部有 ${count} 个维度达到 90 分以上的作品。`,
+      check: (s: any) => ownBooks(s).some((book: any) => DIM_KEYS.filter(key => ((book.metrics?.dimensions || {})[key] || 0) >= 90).length >= count)
+    };
+  })
 ];
 
 function checkAchievements(state: any, quiet = false) {
@@ -2073,17 +2141,25 @@ function checkAchievements(state: any, quiet = false) {
   }
 }
 
+// Count only achievements that still exist. An old save can carry a key for one that was removed;
+// counting raw keys would overstate the total and keep the new-achievement badge from clearing.
+function unlockedCount(state: any) {
+  const unlocked = state.achievements || {};
+  return ACHIEVEMENTS.filter(item => unlocked[item.key] !== undefined).length;
+}
+
 export function achievementsOf(state: any) {
   const unlocked = state.achievements || {};
+  const count = unlockedCount(state);
   return {
-    count: Object.keys(unlocked).length, total: ACHIEVEMENTS.length,
-    fresh: Math.max(0, Object.keys(unlocked).length - (state.notices?.achSeen || 0)),
+    count, total: ACHIEVEMENTS.length,
+    fresh: Math.max(0, count - (state.notices?.achSeen || 0)),
     items: ACHIEVEMENTS.map(item => ({ ...item, day: unlocked[item.key] ?? null, progress: item.progress ? item.progress(state) : null }))
   };
 }
 
 export function markAchievementsSeen(state: any) {
-  return { ...state, notices: { ...state.notices, achSeen: Object.keys(state.achievements || {}).length } };
+  return { ...state, notices: { ...state.notices, achSeen: unlockedCount(state) } };
 }
 
 export function resolveStudioEvent(state: any, choice: string) {
