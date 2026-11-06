@@ -34,47 +34,52 @@ export function bestChannel(state: any) {
   return ['headhunt', 'web', 'friends'].find(channel => core.channelOpen(state, channel));
 }
 
-// The main screen can look at any running title, so the bottom card has to speak for the one on
-// screen instead of always the first project in the list.
+// The main screen can look at any running title, so the bottom card speaks only for the one on
+// screen. Global alerts (a pending event, a full office) stay global; every project-specific line
+// resolves against `shown` rather than the first title in the list.
 export function advice(state: any, projectId?: string) {
   const shown = projectId ? state.projects.find((item: any) => item.id === projectId) || null : null;
-  const project = shown && !shown.released ? shown : core.projectOpen(state)[0];
+  const project = shown || core.liveProjects(state)[0] || core.projectOpen(state)[0] || null;
   if (state.over) return { title: '公司未能支付月底开支', text: '可在公司菜单导出或重新创业。', menu: 'finance' };
   if (state.event) return { title: state.event.title, text: '需要你做个决定，时间已暂停。', menu: 'event' };
   const worker = state.staff[0];
   if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: 'code:' + bestChannel(state) };
-  const idlePatch = state.projects.find((item: any) => item.patch && !state.staff.some((person: any) => core.chosenWorks(item, person).length));
-  if (idlePatch) return { title: '补丁还没有人做', text: '《' + idlePatch.name + '》的补丁需要安排人手，做完自动上线。', menu: 'assign', id: idlePatch.id };
-  // Repairs only happen on a project someone still works on; once everyone moves on, the bugs just sit.
-  const unattended = state.projects.find((item: any) => !item.released && defectsByDimension(item) && !state.staff.some((person: any) => core.chosenWorks(item, person).length));
-  if (unattended) return { title: '《' + unattended.name + '》的缺陷没人修', text: '待修：' + defectsByDimension(unattended) + '。给它留一个人，做完自己的部分就会去修。', menu: 'assign', id: unattended.id };
+  // `chosenWorks` only reads explicit assignments and is empty for someone on their default home
+  // work, yet production uses `personWorks`. Counting explicit assignments alone said "nobody is
+  // fixing the bugs" while the whole crew was busy. Use the same rule the day simulation uses.
+  const staffed = (item: any) => !!item && state.staff.some((person: any) => core.personWorks(state, item, person).length);
+  if (project?.patch && !staffed(project)) return { title: '《' + project.name + '》的补丁还没有人做', text: '需要安排人手，做完自动上线。', menu: 'assign', id: project.id };
+  // Known defects are repaired by whoever still works on this title: once a person's own items are
+  // finished, their hours go to repairs. Only a completely unstaffed title leaves them open.
+  if (project && !project.released && defectsByDimension(project) && !staffed(project)) return { title: '《' + project.name + '》的缺陷没人修', text: '待修：' + defectsByDimension(project) + '。给它留一个人，做完自己的部分就会去修。', menu: 'assign', id: project.id };
   const bigger = core.OFFICES[state.office + 1];
   if (bigger && state.staff.length >= core.seats(state) && state.cash >= bigger.cost + core.monthlyCost(state) * 2) return { title: '工位坐满了：可以考虑搬到更大的办公室', text: bigger.name + ' ' + bigger.seats + ' 个工位，搬家 ' + money(bigger.cost) + '，月租 ' + money(bigger.rent) + '。点这里去「公司」看看。', menu: 'finance' };
   // A shipped title has no six-dimension pipeline left; only its patch is actionable.
-  if (shown && shown.released && shown.patch) {
-    const patch = core.patchForecast(state, shown);
+  if (project?.released) {
+    if (!project.patch) return { title: '《' + project.name + '》已发售', text: '看看成绩单，或者再开一部新作品。', menu: 'project', id: project.id };
+    const patch = core.patchForecast(state, project);
     const left = patch ? Number(patch.left) : NaN;
     const days = patch ? patch.days : null;
     const text = !Number.isFinite(left) ? '点开可看补丁进度与人手。' : days === null ? '还没有人做这个补丁，安排人手后才会开始修。' : days === 0 ? '即将上线。' : `还剩 ${left.toFixed(1)} 人日，约 ${days} 天上线。`;
-    return { title: '推进《' + shown.name + '》补丁', text, menu: 'project', id: shown.id };
+    return { title: '推进《' + project.name + '》补丁', text, menu: 'project', id: project.id };
   }
   if (!project) {
     if (!state.catalog.length) return { title: '为第一款游戏立项', text: '首作是练习，建议选小型作品。', menu: 'new-project' };
     return { title: '为下一款作品立项', text: '参考上一作复盘，先补最被在意的短板。', menu: 'new-project' };
   }
-  if (!state.staff.some((person: any) => core.chosenWorks(project, person).length) && !state.staff.some((person: any) => person.role === 'code' || person.role === 'design' || person.role === 'art')) {
-    return { title: '还没有人做这份工作', text: '在「项目」里给同事分配要做的工作。', menu: 'project', id: project.id };
+  if (!staffed(project) && !state.staff.some((person: any) => person.role === 'code' || person.role === 'design' || person.role === 'art')) {
+    return { title: '还没有人做《' + project.name + '》', text: '在「项目」里给同事分配要做的工作。', menu: 'project', id: project.id };
   }
   const pipeline = core.dimensionPipeline(state, project);
   // Testing can be left undone on purpose (the game is still shippable), so it is not an unstaffed
   // scoring item here. Its row in the project page already says "未安排测试 · 漏掉的缺陷留给玩家".
   const idle = pipeline.rows.filter((row: any) => row.key !== 'stability' && row.days === null && row.remaining > 0);
-  if (idle.length) return { title: '有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
+  if (idle.length) return { title: '《' + project.name + '》有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
-  if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
-  if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
+  if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
+  if (project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '《' + project.name + '》推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
   if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.bottleneckName(pipeline.bottleneck.key)}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
-  return { title: '推进项目', text: '查看各评分项的剩余人日与预计完成日，点开可给对应的人分工。', menu: 'project', id: project.id };
+  return { title: '推进《' + project.name + '》', text: '查看各评分项的剩余人日与预计完成日，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
 
 function recruitMenu(state: any, id: string) {
