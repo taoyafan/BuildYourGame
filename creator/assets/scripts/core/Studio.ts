@@ -2662,7 +2662,8 @@ export function poach(state: any, talentId: string, bid: number) {
 // What the home-screen bulletin plays: the company's own news first, then the current tier, then the
 // headlines above it. Reading it is optional; important moments still get a banner.
 export function bulletinOf(state: any) {
-  const list = newsFor(state).filter((item: any) => state.day - item.day <= 60);
+  // From three stars on, nameless small releases are noise; only news about named studios and headlines stay.
+  const list = newsFor(state).filter((item: any) => state.day - item.day <= 60 && (item.own || item.headline || (state.stars || 0) < 2 || item.studio));
   const own = list.filter((item: any) => item.own);
   const rest = list.filter((item: any) => !item.own);
   return [...own.slice(0, 3), ...rest].slice(0, 6);

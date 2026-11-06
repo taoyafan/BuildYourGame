@@ -651,7 +651,7 @@ export class StudioApp extends Component {
     });
     // One chip in the bottom corner: room, seats, and how many people the picture leaves out.
     const hidden = state.staff.length - shown.length;
-    const label = core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state) + (hidden > 0 ? ' · 另 ' + hidden + ' 人' : '');
+    const label = hidden > 0 ? '共 ' + state.staff.length + ' 人 · 图中 ' + shown.length + ' 人' : core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state);
     const chipWidth = label.length * 10 + 14;
     const chip = this.box(node, 'Room', inner - chipWidth - 6, height - 22, chipWidth, 18, colors.night, 9, 200);
     this.text(chip, label, 7, 0, chipWidth - 14, 18, 10, '#ffffff');
@@ -687,7 +687,8 @@ export class StudioApp extends Component {
     const items = core.bulletinOf(this.state);
     const node = this.box(body, 'Bulletin', 0, y, inner, 34, colors.night, 8);
     this.navIcon(node, 'Newspaper', 8, 8, 18, '#ffd166');
-    const item = items.length ? items[Math.floor(this.state.day / 3) % items.length] : null;
+    // Rotate on the wall clock, not game days, so high speed never flashes items past.
+    const item = items.length ? items[Math.floor(Date.now() / 6000) % items.length] : null;
     const line = item ? (item.own ? '【本社】' : '') + item.title + (item.text ? ' · ' + item.text : '') : core.RATING_MEDIA + '：圈子里暂时没有新消息。';
     const label = this.text(node, line, 32, 2, inner - 40, 30, 10, item?.own ? '#ffd166' : '#e8f3ed');
     label.lineHeight = 14;
@@ -1176,7 +1177,8 @@ export class StudioApp extends Component {
       }
       case 'staff':
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
-        for (const person of this.state.staff) {
+        const order = (block.order || []).map((id: string) => this.state.staff.find((person: any) => person.id === id)).filter(Boolean);
+        for (const person of order.length ? order : this.state.staff) {
           // Tags stay on the card: they are how the player ties a later slowdown to overtime.
           const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);

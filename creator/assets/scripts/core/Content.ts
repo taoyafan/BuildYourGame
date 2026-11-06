@@ -120,7 +120,7 @@ export function menu(state: any, route: any) {
     case 'industry': return industryMenu(state, route.id);
     case 'rival': return rivalMenu(state, route.id);
     case 'exhibitions': return exhibitionsMenu(state);
-    case 'team': return teamMenu(state);
+    case 'team': return teamMenu(state, route.id);
     case 'recruit': return recruitMenu(state, route.id);
     case 'candidate': return candidateMenu(state, route.id);
     case 'person': return personMenu(state, route.id);
@@ -642,7 +642,22 @@ function ratingMenu(state: any) {
   return { title: '媒体评级', blocks };
 }
 
-function teamMenu(state: any) {
+// The team list can be read by seniority, strength, pay, trouble or any one ability (highest first).
+const STAFF_SORTS = [['joined', '入职先后'], ['best', '最强能力'], ['wage', '月薪'], ['stress', '状态']];
+function staffOrder(state: any, sort: string) {
+  const best = (person: any) => Math.max(...core.ABILITY_KEYS.map((key: string) => person.abilities[key]));
+  const trouble = (person: any) => (person.stressTags.includes('leaving') ? 2 : 0) + (person.stressTags.includes('tired') ? 1 : 0);
+  const rank: any = {
+    joined: (person: any) => -(person.joined || 0),
+    best,
+    wage: (person: any) => person.wage,
+    stress: trouble
+  };
+  const score = rank[sort] || ((person: any) => person.abilities[sort] ?? -(person.joined || 0));
+  return [...state.staff].sort((left: any, right: any) => score(right) - score(left) || (left.joined || 0) - (right.joined || 0)).map((person: any) => person.id);
+}
+
+function teamMenu(state: any, sort = 'joined') {
   const channel = bestChannel(state);
   const hasTeammate = state.staff.some((person: any) => !person.founder);
   const openRoles = Object.keys(core.ROLES).filter((role: string) => core.roleOpen(state, role));
@@ -658,7 +673,11 @@ function teamMenu(state: any) {
       { type: 'buttons', columns: 3, items: openRoles.map(role => ({ text: '招聘' + core.ROLES[role].name, action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: role + ':' + channel }, anchor: 'recruit-' + role })) },
       ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
       ...(state.office >= 1 ? [{ type: 'actions', items: [{ text: '猎头', detail: '向对手的名人开高薪挖人。', icon: 'Briefcase', action: 'menu', data: { menu: 'talents' } }] }] : []),
-      { type: 'staff' },
+      ...(state.staff.length > 1 ? [
+        { type: 'tabs', items: STAFF_SORTS.map(([key, text]) => ({ text, route: { menu: 'team', id: key }, active: key === sort })) },
+        { type: 'tabs', items: core.ABILITIES.map((ability: any) => ({ text: ability.name, route: { menu: 'team', id: ability.key }, active: ability.key === sort })) }
+      ] : []),
+      { type: 'staff', order: staffOrder(state, sort) },
       ...(hasTeammate ? [] : [{ type: 'text', text: '创始人也在工作。首作一个人就能做完，招人是为了补上自己干不了的那一头：程序或策划请配美术，美术请配程序。', muted: true }]),
       { type: 'section', title: '团建' },
       { type: 'text', text: '团建是清掉「疲惫」「想走」的唯一办法：全队停工，工资照付，另付费用。每个负面标签按概率被清掉（先清「想走」），天数越长越可能清掉，但不保证；每人还有机会有收获：觉醒一个正面性格，或获得、提升一档团队增益，越稀有的越难出。团建期间暂停加班，回来后恢复原来的安排。', muted: true },
