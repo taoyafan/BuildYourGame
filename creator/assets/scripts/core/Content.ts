@@ -727,17 +727,17 @@ function mentorMenu(state: any, id: string) {
   if (!person) return { title: '带教', blocks: [{ type: 'text', text: '员工不存在。' }] };
   // Every ability is listed, strongest first, so the player sees why an ability has nobody to learn from.
   const options = core.mentorOptions(state, person).sort((left: any, right: any) => person.abilities[right.ability] - person.abilities[left.ability]);
-  const blocks: any[] = [{ type: 'text', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '。被带的那一项每天向带人一方靠拢，差得越多涨得越快，追上后自动出师；超过自己潜力后速度减半。带人的一方这一项要比他高 6 分以上，且两人在同一个项目。', muted: true }];
+  const blocks: any[] = [{ type: 'text', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '。被带的那一项每天向带人一方靠拢，差得越多涨得越快、差得越少越慢，追上后自动出师；超过自己潜力后速度减半。带人的一方这一项只要比他高就行，两人需在同一个项目。', muted: true }];
   for (const option of options) {
     const name = core.ABILITIES.find(item => item.key === option.ability)?.name;
     blocks.push({ type: 'section', title: name + ' · 现在 ' + Math.round(person.abilities[option.ability]) });
     if (!option.mentors.length) {
-      blocks.push({ type: 'text', text: '同一项目里没有这一项比' + person.name + '高 6 分以上的人。可以招一位更强的人，或把更强的同事调到同一项目。', muted: true });
+      blocks.push({ type: 'text', text: '同一项目里没有这一项比' + person.name + '高的人。可以招一位更强的人，或把更强的同事调到同一项目。', muted: true });
       continue;
     }
     blocks.push({ type: 'choices', items: option.mentors.slice(0, 3).map((mentor: any) => {
       const gap = mentor.abilities[option.ability] - person.abilities[option.ability];
-      const monthly = Math.min(gap, 30 * Math.min(0.4, Math.max(0.03, gap * 0.01)));
+      const monthly = Math.min(gap, 30 * core.mentorDaily(gap));
       return { text: mentor.name + ' · ' + name + ' ' + Math.round(mentor.abilities[option.ability]), detail: '预计第一个月 +' + monthly.toFixed(1) + '，两人这段时间都变慢', action: 'mentor', data: { id: person.id, mentor: mentor.id, ability: option.ability } };
     }) });
   }

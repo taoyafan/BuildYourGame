@@ -605,7 +605,23 @@ function able(person: any, ability: string) {
 // Whoever leaves takes their mentoring and overtime with them.
 function departed(state: any, person: any) {
   delete state.overtime[person.id];
-  for (const other of state.staff) if (other.mentor?.by === person.id) other.mentor = null;
+  for (const other of state.staff) if (other.mentor?.by === person.id) endMentoring(state, other, `${person.name}离开了公司`);
+}
+
+// Every mentoring stint ends with a line on both records saying how far the ability moved during it.
+function endMentoring(state: any, person: any, reason: string) {
+  const pair = person.mentor;
+  if (!pair) return;
+  const mentor = state.staff.find((item: any) => item.id === pair.by);
+  const name = ABILITIES.find(item => item.key === pair.ability)?.name;
+  const now = Math.round(person.abilities[pair.ability]);
+  const change = typeof pair.start === 'number' ? `${name} ${Math.round(pair.start)} → ${now}（+${Math.max(0, now - Math.round(pair.start))}）` : `${name}现在 ${now}`;
+  const days = Math.max(0, state.day - (pair.since || state.day));
+  personNote(state, person, `带教结束（${reason}）：${days} 天，${change}`);
+  if (mentor) personNote(state, mentor, `带${person.name}的${name}结束：${days} 天，${change}`);
+  announce(state, { kind: 'record', title: `${person.name} 带教结束`, text: `${reason}。${days} 天里${change}`, amount: 0 });
+  studioLog(state, `${person.name} 带教结束`, `${reason}。${days} 天，${change}。`);
+  person.mentor = null;
 }
 
 export function projectOf(state: any, person: any) {
@@ -655,15 +671,18 @@ function practice(person: any, ability: string, amount: number, bonus = 1) {
   person.abilities[ability] = round(Math.min(cap, value + amount * rate * clamp((cap - value) / 30, 0.1, 1)));
 }
 
-// Daily mentoring gain: towards the mentor's level, half speed above the mentee's own potential.
+// Daily mentoring gain: proportional to the gap, so a big gap closes fast and the last points come slowly;
+// half speed above the mentee's own potential. Within half a point counts as caught up.
+export const mentorDaily = (gap: number) => clamp(gap * 0.03, 0.01, 0.6);
+
 export function mentorGain(state: any, person: any) {
   const pair = mentorActive(state, person);
   if (!pair) return 0;
   const target = pair.mentor.abilities[pair.ability];
   const value = person.abilities[pair.ability];
-  if (value >= target - 1) return 0;
+  if (value >= target - 0.5) return 0;
   const coach = boostFactor(state, pair.project, 'coach');
-  return round(clamp((target - value) * 0.01, 0.03, 0.4) * (value >= (person.potential ?? 100) ? 0.5 : 1) * coach * 1000) / 1000;
+  return round(mentorDaily(target - value) * (value >= (person.potential ?? 100) ? 0.5 : 1) * coach * 1000) / 1000;
 }
 
 function speedOf(state: any, person: any, workKey: string) {
@@ -999,7 +1018,7 @@ export function mentorOptions(state: any, person: any) {
   const project = projectOf(state, person);
   return ABILITY_KEYS.map(ability => ({
     ability,
-    mentors: state.staff.filter((other: any) => other.id !== person.id && other.abilities[ability] >= person.abilities[ability] + 6 && project && projectOf(state, other)?.id === project.id)
+    mentors: state.staff.filter((other: any) => other.id !== person.id && other.abilities[ability] > person.abilities[ability] + 0.5 && project && projectOf(state, other)?.id === project.id)
       .sort((left: any, right: any) => right.abilities[ability] - left.abilities[ability])
   }));
 }
@@ -1009,17 +1028,16 @@ export function setMentor(state: any, personId: string, mentorId: string | null,
   const person = next.staff.find((item: any) => item.id === personId);
   if (!person) throw new Error('员工不存在。');
   if (!mentorId) {
-    if (person.mentor) personNote(next, person, '结束带教');
-    person.mentor = null;
-    studioLog(next, `${person.name} 结束带教`, '两人恢复原来的产出。');
+    endMentoring(next, person, '手动结束');
     return next;
   }
   const mentor = next.staff.find((item: any) => item.id === mentorId);
   if (!mentor || !ability || !ABILITY_KEYS.includes(ability)) throw new Error('带教安排无效。');
-  if (mentor.abilities[ability] < person.abilities[ability] + 6) throw new Error('带人的一方需要在这一项明显更强。');
+  if (mentor.abilities[ability] <= person.abilities[ability] + 0.5) throw new Error('带人的一方这一项要比他高。');
   const project = projectOf(next, person);
   if (!project || projectOf(next, mentor)?.id !== project.id) throw new Error('两人需要在同一个项目里。');
-  person.mentor = { by: mentor.id, ability, since: next.day };
+  endMentoring(next, person, '换了带教');
+  person.mentor = { by: mentor.id, ability, since: next.day, start: person.abilities[ability] };
   const name = ABILITIES.find(item => item.key === ability)?.name;
   personNote(next, person, `由${mentor.name}带教${name}`);
   personNote(next, mentor, `开始带${person.name}的${name}`);
@@ -1037,10 +1055,8 @@ function staffDay(state: any) {
     } else if (person.mentor && mentorActive(state, person)) {
       const mentor = state.staff.find((item: any) => item.id === person.mentor.by);
       const name = ABILITIES.find(item => item.key === person.mentor.ability)?.name;
-      personNote(state, person, `出师：${name}追上了${mentor.name}`);
-      announce(state, { kind: 'record', title: `${person.name} 出师了`, text: `${name}追上了${mentor.name}`, amount: 0 });
       state.flags = { ...(state.flags || {}), mentored: state.day };
-      person.mentor = null;
+      endMentoring(state, person, `出师：${name}追上了${mentor.name}`);
     }
     if (state.day % 30 === 0) {
       person.trace = [...(person.trace || []), { day: state.day, a: { ...person.abilities } }].slice(-48);
