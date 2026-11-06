@@ -1,6 +1,7 @@
 import * as core from './Studio';
 
-export const money = (value: number) => Number(value).toFixed(2) + ' 万';
+// One formatter for every figure in the UI; the rule lives in core so log text matches the cards.
+export const money = core.moneyText;
 export const number = (value: number) => Math.round(value).toLocaleString('zh-CN');
 export const price = (value: number) => (value * 10000).toFixed(0) + ' 元/份';
 export function salesHistory(book: any) {

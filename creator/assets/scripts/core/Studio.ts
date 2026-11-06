@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.39';
+export const VERSION = '0.1.40';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -260,6 +260,12 @@ const GIVEN_NAMES = ['知夏', '明远', '可宁', '星河', '亦舟', '思齐',
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
 const round = (value: number) => Math.round(value * 100) / 100;
+// All amounts are stored in 万. Beyond 1 亿 (10,000 万) the unit switches, so the top bar, the
+// company page, event text and the ledger never disagree about how large a number is.
+export function moneyText(value: number) {
+  const amount = Number(value);
+  return Math.abs(amount) >= 10000 ? (amount / 10000).toFixed(2) + ' 亿' : amount.toFixed(2) + ' 万';
+}
 const tier = (value: any) => Number.isInteger(value) && value >= 0 && value <= 2;
 const scaleIndex = (value: any) => Number.isInteger(value) && value >= 0 && value < SCALES.length;
 // Object.hasOwn is missing on older mini-game runtimes (iOS < 15.4).
@@ -339,7 +345,7 @@ function spend(state: any, amount: number, label: string) {
   if (amount > state.cash) throw new Error('当前资金不足。');
   state.cash = round(state.cash - amount);
   state.ledger.expense = round(state.ledger.expense + amount);
-  studioLog(state, label, `支付 ${amount.toFixed(2)} 万。`);
+  studioLog(state, label, `支付 ${moneyText(amount)}。`);
 }
 
 // A person's default work is the item they are best at among their trade's work keys. Coders and
@@ -1657,7 +1663,7 @@ export function promote(state: any, projectId: string, cost: number) {
   project.promoted = value;
   project.promoFollowers = buyers;
   project.invested = round(project.invested + value);
-  studioLog(next, '推广结果', `《${project.name}》投放 ${value.toFixed(2)} 万，新增 ${buyers} 位关注者；关注不等于购买。`);
+  studioLog(next, '推广结果', `《${project.name}》投放 ${moneyText(value)}，新增 ${buyers} 位关注者；关注不等于购买。`);
   return next;
 }
 
@@ -1981,15 +1987,15 @@ export function launchProject(state: any, projectId: string) {
   }
   if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首发售出 ${units} 份`, amount: receipt, book: book.id });
-  if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${best.toFixed(2)} 万`, amount: receipt });
+  if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${moneyText(best)}`, amount: receipt });
   checkMarks(next, book);
   const clashText = clash.works.length ? `${clash.works.map((work: any) => `《${work.name}》`).join('、')}刚发售不久，首发被分流约 ${Math.round((1 - clash.factor) * 100)}%。` : '';
   const shortBoard = metrics.unfinished.length ? `仍有 ${metrics.unfinished.length} 个维度未完成，带着短板上市换回了款，之后可以继续更新。` : '';
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
-  const promoText = promo ? `推广 ${promo.cost} 万带来 ${promo.followers} 位关注，按本作转化约折合首发 ${promo.receipt.toFixed(2)} 万。` : '';
-  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${receipt.toFixed(2)} 万。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  const promoText = promo ? `推广 ${moneyText(promo.cost)}带来 ${promo.followers} 位关注，按本作转化约折合首发 ${moneyText(promo.receipt)}。` : '';
+  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${moneyText(receipt)}。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -1998,7 +2004,7 @@ function checkMarks(state: any, book: any) {
   if (!book.paidBack && book.received >= book.invested) book.paidBack = true;
   if (book.paidBack && !book.paidBackAnnounced) {
     book.paidBackAnnounced = true;
-    announce(state, { kind: 'breakeven', title: `《${book.name}》回本了`, text: `累计回款超过投入 ${book.invested.toFixed(2)} 万`, amount: book.received });
+    announce(state, { kind: 'breakeven', title: `《${book.name}》回本了`, text: `累计回款超过投入 ${moneyText(book.invested)}`, amount: book.received });
     if (state.goals.breakEven === null) state.goals.breakEven = state.day;
   }
   while (book.marks < UNIT_MARKS.length && book.units >= UNIT_MARKS[book.marks]) {
@@ -2072,10 +2078,12 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'topTen', group: 'milestone', title: '全国首周榜前十', text: '作品首周销量在近一年全国新作里排进前十。', reward: '获得 200 位粉丝', check: (s: any) => s.goals.topTen !== null },
   { key: 'award', group: 'milestone', title: '全国年度奖项', text: '获得全国或国际年度评选的任一奖项。', reward: '获奖增加粉丝', check: (s: any) => s.goals.award !== null },
   { key: 'expanded', group: 'milestone', title: '再次扩建', text: `在「公司」页花 ${OFFICES[2].cost} 万扩建。`, reward: `${OFFICES[2].seats} 个工位`, check: (s: any) => s.goals.expanded !== null },
-  { key: 'cash100', group: 'business', title: '百万现金', text: '公司现金达到 100 万。', check: (s: any) => s.cash >= 100, progress: (s: any) => [s.cash, 100] },
-  { key: 'cash1000', group: 'business', title: '千万现金', text: '公司现金达到 1000 万。', check: (s: any) => s.cash >= 1000, progress: (s: any) => [s.cash, 1000] },
+  { key: 'cash100', group: 'business', title: '百万现金', text: '公司现金达到 100 万。', check: (s: any) => s.cash >= 100, progress: (s: any) => [s.cash, 100, 'money'] },
+  { key: 'cash1000', group: 'business', title: '千万现金', text: '公司现金达到 1000 万。', check: (s: any) => s.cash >= 1000, progress: (s: any) => [s.cash, 1000, 'money'] },
+  { key: 'cash10000', group: 'business', title: '资产过亿', text: '公司现金达到 1 亿。', check: (s: any) => s.cash >= 10000, progress: (s: any) => [s.cash, 10000, 'money'] },
   { key: 'team8', group: 'business', title: '八人小队', text: '同时有 8 名员工。', check: (s: any) => s.staff.length >= 8, progress: (s: any) => [s.staff.length, 8] },
   { key: 'team16', group: 'business', title: '座无虚席', text: '16 个工位全部坐满。', check: (s: any) => s.staff.length >= 16, progress: (s: any) => [s.staff.length, 16] },
+  { key: 'team40', group: 'business', title: '四十人团队', text: '同时有 40 名员工。', check: (s: any) => s.staff.length >= 40, progress: (s: any) => [s.staff.length, 40] },
   { key: 'year3', group: 'business', title: '三周年', text: '公司经营满三年。', check: (s: any) => s.day >= 1080, progress: (s: any) => [s.day, 1080] },
   { key: 'books10', group: 'works', title: '十部作品', text: '发售 10 部作品。', check: (s: any) => ownBooks(s).length >= 10, progress: (s: any) => [ownBooks(s).length, 10] },
   { key: 'units10k', group: 'works', title: '万份销量', text: '单部作品累计售出 1 万份。', check: (s: any) => ownBooks(s).some((book: any) => book.units >= 10000) },
@@ -2302,7 +2310,7 @@ export function stepDay(state: any) {
     next.ledger = { opening: next.cash, income: 0, expense: 0, payroll: 0 };
     next.accrued = 0;
     next.over = next.cash < 0;
-    studioLog(next, `${monthText(report.month)}账单`, `收入 ${report.income.toFixed(2)} 万，支出 ${report.expense.toFixed(2)} 万，净变化 ${report.net.toFixed(2)} 万。`);
+    studioLog(next, `${monthText(report.month)}账单`, `收入 ${moneyText(report.income)}，支出 ${moneyText(report.expense)}，净变化 ${moneyText(report.net)}。`);
   }
   next.day += 1;
   return next;
@@ -3233,7 +3241,7 @@ function scheduledCash(state: any) {
     state.cash = round(state.cash + item.amount);
     if (item.amount > 0) state.ledger.income = round(state.ledger.income + item.amount);
     else state.ledger.expense = round(state.ledger.expense - item.amount);
-    studioLog(state, item.title, `${item.amount > 0 ? '到账' : '支付'} ${Math.abs(item.amount).toFixed(2)} 万。`);
+    studioLog(state, item.title, `${item.amount > 0 ? '到账' : '支付'} ${moneyText(Math.abs(item.amount))}。`);
   }
 }
 

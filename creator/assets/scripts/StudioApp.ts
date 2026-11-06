@@ -1232,7 +1232,9 @@ export class StudioApp extends Component {
         for (const item of block.items) {
           const done = item.day !== null;
           const hidden = item.group === 'hidden' && !done;
-          const progress = !done && item.progress ? '\n进度 ' + Math.round(Math.min(item.progress[0], item.progress[1])) + ' / ' + item.progress[1] : '';
+          const progress = !done && item.progress ? '\n进度 ' + (item.progress[2] === 'money'
+            ? content.money(Math.min(item.progress[0], item.progress[1])) + ' / ' + content.money(item.progress[1])
+            : Math.round(Math.min(item.progress[0], item.progress[1])) + ' / ' + item.progress[1]) : '';
           y += this.choice(parent, y, hidden ? '???' : item.title, hidden ? '隐藏成就，达成后揭晓。' : item.text + (item.reward ? '\n奖励：' + item.reward : '') + (done ? '\n' + core.dateText(item.day) + '达成' : progress), () => undefined, { icon: done ? 'Trophy' : hidden ? 'CircleHelp' : 'Lock', tag: done ? '已达成' : '', tagColor: colors.gold, highlight: done && item.group === 'milestone' }) + 8;
         }
         return y + 4;
@@ -1464,12 +1466,15 @@ export class StudioApp extends Component {
       const valueY = (value: number) => bottom - (bottom - top) * value / peak;
       const { node, pen } = this.canvasNode(parent, accumulated ? 'CumulativeIncome' : 'WeeklyIncome', 0, y, width, height);
       pen.rect(left + (selected - start) * slot, top, slot, bottom - top, colors.soft);
-      this.text(node, '万元', 0, 4, left - 6, 18, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+      const inBillions = peak >= 10000;
+      const axisScale = inBillions ? 10000 : 1;
+      this.text(node, inBillions ? '亿元' : '万元', 0, 4, left - 6, 18, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
       for (const fraction of [0, 0.5, 1]) {
         const value = peak * fraction;
         const axisY = valueY(value);
         pen.line(left, axisY, right, axisY, colors.line, 1);
-        this.text(node, value.toFixed(value >= 100 ? 0 : 2), 0, axisY - 8, left - 6, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+        const shown = value / axisScale;
+        this.text(node, shown.toFixed(inBillions ? 2 : shown >= 100 ? 0 : 2), 0, axisY - 8, left - 6, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
       }
       for (let index = start; index < start + count; index++) {
         const center = left + (index - start + 0.5) * slot;
@@ -1534,7 +1539,7 @@ export class StudioApp extends Component {
     if (this.paidOut !== key) {
       this.paidOut = key;
       const counter = { value: 0 };
-      label.string = '+0.00 万';
+      label.string = '+' + content.money(0);
       tween(counter).delay(0.2).to(1.2, { value: block.amount }, { easing: 'quartOut', onUpdate: () => { if (label.isValid) label.string = '+' + content.money(counter.value); } }).start();
       this.burst(node, width / 2, 56, block.amount);
     }
