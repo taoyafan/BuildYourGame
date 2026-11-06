@@ -199,6 +199,21 @@ export function planPreview(state: any, draft: any) {
   return '工作量 ' + workload.toFixed(0) + '，' + time + '预计成本约 ' + money(cost) + '。\n各项占比：' + split + '\n售价 ' + price(type.price * scale.price) + '；市场容量约 ' + number(core.MARKET_SIZE * scale.reach) + ' 份。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
+// Ready-made names: the form shows one, and leaving the field empty keeps it.
+const STUDIO_NAMES = ['日光工作室', '小灯塔工作室', '纸飞机游戏', '橙子味工作室', '晚风游戏', '星屑工作室', '慢火车游戏', '白鸽工作室', '半盏茶游戏', '山海工作室', '萤火虫游戏', '北窗工作室'];
+const TITLE_FIRST = ['星落', '雾港', '回声', '白夜', '潮汐', '灯塔', '风语', '深空', '纸鸢', '霜华', '远航', '浮岛', '琥珀', '钟楼', '萤火', '沙海', '雪原', '花园', '月台', '海盐'];
+const TITLE_LAST = ['物语', '旅人', '回廊', '序章', '日记', '小镇', '彼岸', '方舟', '秘境', '归途', '来信', '之歌'];
+const pickOne = (list: string[]) => list[Math.floor(Math.random() * list.length)];
+export const randomStudioName = () => pickOne(STUDIO_NAMES);
+export function randomTitle(state: any) {
+  const taken = new Set([...state.projects, ...state.catalog].map((item: any) => item.name));
+  for (let tries = 0; tries < 20; tries++) {
+    const name = pickOne(TITLE_FIRST) + pickOne(TITLE_LAST);
+    if (!taken.has(name)) return name;
+  }
+  return pickOne(TITLE_FIRST) + pickOne(TITLE_LAST) + ' ' + (state.catalog.length + 1);
+}
+
 // Known, unfixed defects grouped by the dimension that left them, e.g. "流畅 3 · 画面 1"; '' when none.
 function defectsByDimension(project: any) {
   const counts: any = {};

@@ -1007,7 +1007,8 @@ export class StudioApp extends Component {
     let cursor = 166;
     cursor += this.paragraph(body, '一间小屋、四张空桌子和 ' + content.money(this.state.cash) + ' 积蓄。你是创始人，负责方向、预算与用人。', cursor);
     cursor += this.paragraph(body, '先给工作室起个名字。', cursor, true);
-    this.input(body, '例如：日光工作室', this.draft.name, cursor, 48, value => { this.draft.name = value; });
+    this.draft.suggested = this.draft.suggested || content.randomStudioName();
+    this.input(body, this.draft.suggested, this.draft.name, cursor, 48, value => { this.draft.name = value; });
     cursor += 62;
     this.text(body, '你的出身（决定首作哪几项最拿手）', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 28;
@@ -1025,7 +1026,7 @@ export class StudioApp extends Component {
     cursor += this.paragraph(body, '你一个人也能独立做完第一款游戏；后面招到同事，再补齐其余各项。', cursor, true, 0, inner, 13);
     this.button(body, '成立工作室', 0, cursor, inner, 48, () => {
       const role = founder === 'random' ? founderRoles[Math.floor(Math.random() * founderRoles.length)] : founder;
-      this.apply(core.nameCompany(this.state, this.draft.name, role));
+      this.apply(core.nameCompany(this.state, this.draft.name.trim() || this.draft.suggested, role));
       this.resumeAfterMenu = false;
       this.closeMenu();
     }, true);
@@ -1035,7 +1036,8 @@ export class StudioApp extends Component {
   private renderNewProject(body: Node) {
     const inner = this.width - 40;
     const state = this.state;
-    this.input(body, '作品名称', this.draft.name, 0, 48, value => { this.draft.name = value; });
+    this.draft.suggested = this.draft.suggested || content.randomTitle(state);
+    this.input(body, this.draft.suggested, this.draft.name, 0, 48, value => { this.draft.name = value; });
     let cursor = 64;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作类型与部分关注，玩家期待更高。', cursor, true);
     this.text(body, '类型', 0, cursor, inner, 24, 15, colors.ink, true);
@@ -1832,7 +1834,7 @@ export class StudioApp extends Component {
           break;
         case 'menu': this.openMenu(data.menu, data.id); break;
         case 'form-submit': {
-          const next = core.startProject(this.state, this.draft);
+          const next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
           this.routes = [];
           this.resumeAfterMenu = false;
           this.apply(next);
