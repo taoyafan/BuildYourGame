@@ -1128,7 +1128,8 @@ export class StudioApp extends Component {
       case 'choices': {
         const start = y;
         // Event choices carry their id only; hand it to the dispatcher so the decision has something to resolve.
-        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data || { choice: item.id }), { tag: item.tag || (item.recommended ? '推荐' : ''), highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
+        // Menu choices name themselves with `text`, event choices with `title`.
+        for (const item of block.items) y += this.choice(parent, y, item.text ?? item.title ?? '', item.detail, () => this.dispatch(item.action, item.data || { choice: item.id }), { tag: item.tag || (item.recommended ? '推荐' : ''), highlight: item.recommended, disabled: item.disabled, anchor: item.anchor }) + 10;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }
