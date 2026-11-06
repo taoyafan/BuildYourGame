@@ -1924,6 +1924,7 @@ export function launchProject(state: any, projectId: string) {
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
+  noteClash(book, clash, Math.round(units / clash.factor) - units);
   next.lastRelease = book.id;
   // The project stays on the books after launch: the same people can keep fixing defects and reworking
   // dimensions, which is the patch and update loop. It just cannot be launched a second time.
@@ -1946,7 +1947,7 @@ export function launchProject(state: any, projectId: string) {
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首发售出 ${units} 份`, amount: receipt, book: book.id });
   if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${best.toFixed(2)} 万`, amount: receipt });
   checkMarks(next, book);
-  const clashText = clash.works.length ? `同周还有${clash.works.map((work: any) => `《${work.name}》`).join('、')}发售，首发被分流约 ${Math.round((1 - clash.factor) * 100)}%。` : '';
+  const clashText = clash.works.length ? `${clash.works.map((work: any) => `《${work.name}》`).join('、')}刚发售不久，首发被分流约 ${Math.round((1 - clash.factor) * 100)}%。` : '';
   const shortBoard = metrics.unfinished.length ? `仍有 ${metrics.unfinished.length} 个维度未完成，带着短板上市换回了款，之后可以继续更新。` : '';
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
@@ -2046,7 +2047,7 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'star5', group: 'industry', title: '五星工作室', text: `${RATING_MEDIA}评为五星。`, check: (s: any) => (s.stars || 0) >= 4 },
   { key: 'globalTop10', group: 'industry', title: '走向世界', text: '一部作品进入国际首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.firstRanks && book.firstRanks[2] <= 10) },
   { key: 'expoWin', group: 'industry', title: '展会第一', text: '在任一展会拿到第一名。', check: (s: any) => s.exhibitions.some((entry: any) => entry.result?.rank === 1) },
-  { key: 'awardGlobal', group: 'industry', title: '国际年度作品', text: '获得国际年度作品。', check: (s: any) => s.awards.some((award: any) => award.own && award.tier === 2) },
+  { key: 'awardGlobal', group: 'industry', title: '国际年度作品', text: '获得国际年度作品。', check: (s: any) => s.awards.some((award: any) => award.own && award.tier === 2 && !award.half) },
   { key: 'dream', group: 'hidden', title: '屏幕外的人', text: '创始人过劳后被托梦救回。', check: (s: any) => flag(s, 'dream') },
   { key: 'flawless', group: 'hidden', title: '零缺陷', text: '一部作品发售时没有任何未修缺陷。', check: (s: any) => ownBooks(s).some((book: any) => book.flawless) },
   { key: 'clashWin', group: 'hidden', title: '硬碰硬', text: '和两部以上对手作品同周发售，仍拿到全国首周第一。', check: (s: any) => ownBooks(s).some((book: any) => (book.clash || 0) >= 2 && book.firstRanks && book.firstRanks[1] === 1) },
@@ -2267,7 +2268,10 @@ function salesDay(state: any) {
     const reputationReach = 1 + Math.max(0, book.reviewScore - 70) / 25 * 4;
     const saturation = Math.max(0.05, 1 - book.units / (MARKET_SIZE * SCALES[book.scale].reach * reputationReach));
     book.dailyUnits = Math.max(0, book.dailyUnits * growth * (0.97 + saturation * 0.03) * Math.min(1, saturation * 4));
-    const units = Math.max(0, Math.round(Math.min(book.dailyUnits * (discounted ? 1 + saleReach(state, book, depth) : 1), book.left)));
+    const full = Math.max(0, Math.round(Math.min(book.dailyUnits * (discounted ? 1 + saleReach(state, book, depth) : 1), book.left)));
+    const clash = clashOf(state, state.day, book.followers, book.released);
+    const units = Math.round(full * clash.factor);
+    if (age <= 6) noteClash(book, clash, full - units);
     if (discounted) {
       const remaining = Math.max(0, Math.min(1, book.left / Math.max(1, book.capacity)));
       book.dailyUnits *= 1 - (1 - depth) * 0.02;
@@ -2463,19 +2467,28 @@ export function scheduleOf(state: any) {
   return [...rivals, ...own].sort((left, right) => left.day - right.day);
 }
 
-// Titles out the same week split the launch audience in proportion to their pull.
-export function clashOf(state: any, day: number, followers: number) {
-  const works = (state.works || []).filter((work: any) => Math.abs(work.released - day) <= 3);
+// A rival takes a share of demand only once it is out and while it is in its own launch week, so the
+// title that ships first gets a few days to itself.
+export function clashOf(state: any, day: number, followers: number, released = day) {
+  const works = (state.works || []).filter((work: any) => work.released <= day && day - work.released <= 6 && Math.abs(work.released - released) <= 7);
   if (!works.length) return { factor: 1, works: [] };
   const pressure = sum(works.map((work: any) => work.firstWeek));
   const mine = Math.max(100, followers) * 0.6;
   return { factor: round(clamp(1 - 0.4 * pressure / (pressure + mine * 3), 0.55, 1)), works };
 }
 
+// Units lost to each rival during the first week, split by how big each rival's launch is.
+function noteClash(book: any, clash: any, lost: number) {
+  if (lost <= 0 || !clash.works.length) return;
+  const total = sum(clash.works.map((work: any) => work.firstWeek));
+  book.clashLost = book.clashLost || {};
+  for (const work of clash.works) book.clashLost[work.id] = round((book.clashLost[work.id] || 0) + lost * work.firstWeek / total);
+}
+
 function remindClash(state: any, work: any) {
   if (work.tier !== state.focus && work.tier !== 2) return;
   for (const project of state.projects) {
-    if (project.released || !project.deadline || Math.abs(project.deadline - work.released) > 3) continue;
+    if (project.released || !project.deadline || Math.abs(project.deadline - work.released) > 6) continue;
     announce(state, { kind: 'notice', title: '档期提醒', text: `${work.studioName}的《${work.name}》定档${dueText(state, work.released)}，和《${project.name}》同周。`, amount: 0 });
   }
 }
@@ -2704,7 +2717,7 @@ export function calendarOf(state: any, span = 180) {
       : '报名已截止';
     items.push({ day, kind: 'expo', title: tier.expo, detail, tier: level, own: !!entry, route: { menu: 'market' } });
   })));
-  for (let day = (year + 1) * 360; day <= end; day += 360) items.push({ day, kind: 'awards', title: '年度评选', detail: '城市、全国、国际三级', own: false, route: { menu: 'industry', id: 'awards:first:' + (state.focus || 0) } });
+  for (let day = (Math.floor(state.day / 180) + 1) * 180; day <= end; day += 180) items.push({ day, kind: 'awards', title: day % 360 ? '上半年评选' : '年度评选', detail: '城市、全国、国际三级' + (day % 360 ? '，只作荣誉' : '，成就以年度评选为准'), own: false, route: { menu: 'industry', id: 'awards:first:' + (state.focus || 0) } });
   for (let day = (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD; day <= end; day += RATING_PERIOD) items.push({ day, kind: 'rating', title: `${RATING_MEDIA}季度评级`, detail: '决定公司星级', own: true, route: { menu: 'rating' } });
   for (const item of scheduleOf(state)) {
     if (item.day > end) continue;
@@ -2738,8 +2751,14 @@ function industryDay(state: any) {
     if (book.firstRanks || state.day - book.released < 7) continue;
     book.firstRanks = firstWeekRanks(state, book.firstWeek || 0, book.released, book.id);
     const [local, national, global] = book.firstRanks;
-    news(state, state.focus, false, `《${book.name}》首周售出 ${Math.round(book.firstWeek || 0).toLocaleString('zh-CN')} 份`, `城市第 ${local} 名 · 全国第 ${national} 名 · 国际第 ${global} 名。`, null, true);
-    announce(state, { kind: 'record', title: `《${book.name}》首周成绩`, text: `全国首周榜第 ${national} 名`, amount: 0 });
+    const lost = Object.entries(book.clashLost || {}).map(([id, units]: any) => ({ name: state.works.find((work: any) => work.id === id)?.name || '对手作品', units: Math.round(units) })).filter((item: any) => item.units > 0).sort((left: any, right: any) => right.units - left.units);
+    const firstWeek = Math.round(book.firstWeek || 0);
+    book.clash = lost.length;
+    book.weekOne = { units: firstWeek, lost, without: firstWeek + sum(lost.map((item: any) => item.units)) };
+    const clashText = lost.length ? `被${lost.map((item: any) => `《${item.name}》分流约 ${item.units} 份`).join('、')}；不撞档大约能卖 ${book.weekOne.without} 份。` : '首周没有撞档。';
+    news(state, state.focus, false, `《${book.name}》首周售出 ${firstWeek.toLocaleString('zh-CN')} 份`, `城市第 ${local} 名 · 全国第 ${national} 名 · 国际第 ${global} 名。`, null, true);
+    announce(state, { kind: 'record', title: `《${book.name}》首周总结`, text: `${firstWeek} 份 · 全国首周榜第 ${national} 名。${clashText}`, amount: 0 });
+    studioLog(state, `《${book.name}》首周总结`, `首周售出 ${firstWeek} 份，全国首周榜第 ${national} 名。${clashText}`);
     if (national <= 10 && state.goals.topTen === null) {
       state.goals.topTen = state.day;
       state.fans += 200;
@@ -2812,11 +2831,14 @@ function expoDay(state: any) {
   }
 }
 
+// Awards are honours only. June 30 judges the first half so players learn early where a title stands;
+// December 30 judges the whole year and is the one achievements count.
 function awardsDay(state: any) {
-  if (state.day % 360 !== 0) return;
-  const year = state.day / 360;
-  if (state.awards.some((item: any) => item.year === year)) return;
-  const inYear = (day: number) => day > (year - 1) * 360 && day <= year * 360;
+  if (state.day % 180 !== 0) return;
+  const year = Math.ceil(state.day / 360);
+  const half = state.day % 360 !== 0;
+  if (state.awards.some((item: any) => item.year === year && !!item.half === half)) return;
+  const inYear = (day: number) => day > (year - 1) * 360 && day <= state.day;
   const eligible = state.catalog.filter((book: any) => inYear(book.released));
   TIERS.forEach((tier, level) => tier.awards.forEach((category, index) => {
     const rivalScore = (work: any) => category === '年度作品' ? work.score : category === '创意奖' ? work.creativity : work.presentation;
@@ -2825,11 +2847,11 @@ function awardsDay(state: any) {
     const ranking = [...rivals, ...eligible.map((book: any) => ({ name: `《${book.name}》`, id: book.id, score: ownScore(book), own: true }))].sort((left, right) => right.score - left.score);
     const winner: any = ranking[0];
     if (!winner) return;
-    const title = `${tier.name}${category}`;
-    state.awards.push({ year, tier: level, category: title, winner: winner.name, book: winner.own ? winner.id : null, own: winner.own, ranking: ranking.slice(0, 8) });
+    const title = tier.name + (half ? (category === '年度作品' ? '上半年最佳作品' : '上半年' + category) : category);
+    state.awards.push({ year, half, tier: level, category: title, winner: winner.name, book: winner.own ? winner.id : null, own: winner.own, ranking: ranking.slice(0, 8) });
     if (winner.own) {
-      state.fans += tier.fans[index];
-      if (level >= 1 && state.goals.award === null) state.goals.award = state.day;
+      state.fans += half ? Math.round(tier.fans[index] / 2) : tier.fans[index];
+      if (!half && level >= 1 && state.goals.award === null) state.goals.award = state.day;
       announce(state, { kind: 'record', title: `获得${title}`, text: `第 ${year} 年 · ${winner.name} · 新增粉丝`, amount: 0 });
     }
     news(state, level, level === 2 || winner.own, `第 ${year} 年${title}：${winner.name}`, winner.own ? '本社获奖。' : '', null, winner.own);

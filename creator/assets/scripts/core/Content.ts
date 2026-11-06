@@ -516,7 +516,7 @@ function marketMenu(state: any, id?: string) {
     const left = offer.deadline - state.day;
     const cutoff = left > 0 ? '报名截止还有 ' + left + ' 天' : left === 0 ? '今天报名截止' : '报名已截止';
     return [offer.name + ' · 报名 ' + money(offer.fee), core.dateText(offer.day) + ' · ' + cutoff];
-  }), ['年度评奖', core.dueText(state, Math.ceil(state.day / 360) * 360)]] });
+  }), ['评选', core.dueText(state, Math.ceil(state.day / 180) * 180)]] });
   blocks.push({ type: 'buttons', anchor: 'exhibitions', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
   blocks.push({ type: 'actions', items: [
     { text: '日历', detail: '展会、年度评选、媒体评级与已公布的发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry', id: 'schedule' } },
@@ -577,6 +577,7 @@ function bookMenu(state: any, id: string) {
       ] },
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
       { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['补丁', (book.updates || 0) + ' 次']] },
+      ...(book.weekOne?.lost.length ? [{ type: 'lines', title: '首周撞档', items: [...book.weekOne.lost.map((item: any) => ['被《' + item.name + '》分流', '约 ' + number(item.units) + ' 份']), ['不撞档大约能卖', number(book.weekOne.without) + ' 份']] }] : []),
       ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', money(book.promo.cost)], ['带来关注', number(book.promo.followers) + ' 人'], ['按本作转化约折合首发', money(book.promo.receipt)]] }] : []),
       ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
@@ -938,7 +939,7 @@ function industryMenu(state: any, id?: string) {
   } else {
     blocks.push(levelTabs);
     const awards = [...state.awards].reverse().filter((award: any) => (award.tier ?? 1) === level).slice(0, 9);
-    if (!awards.length) blocks.push({ type: 'text', text: '年度评选在每年 12 月 30 日举行。' });
+    if (!awards.length) blocks.push({ type: 'text', text: '评选每年两次：6 月 30 日评上半年，12 月 30 日评全年。获奖增加粉丝并上新闻，不计入媒体评级；成就以年度评选为准。' });
     for (const award of awards) {
       blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
       blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
