@@ -6,7 +6,7 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawDesk, drawHead, drawWork, seatLayout, roomProps } from './ui/Art';
+import { Pen, drawRoom, drawDesk, drawAvatar, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
 
 const { ccclass } = _decorator;
@@ -78,6 +78,8 @@ export class StudioApp extends Component {
   private menuAck: string | null = null;
   private helpKey = '';
   private chartSelection: { id: string; index: number } | null = null;
+  private officePage = 0;
+  private officeSwiped = false;
   private activeTouches = new Set<number>();
   private renderPending = false;
   // timeUp clears both: a storage warning shares the toast with normal notices, so if it were left
@@ -353,7 +355,8 @@ export class StudioApp extends Component {
     const background = node.addComponent(Graphics);
     let cursor = 12;
     if (options.icon) this.image(node, 'icons/' + options.icon, 14, 14, 20, 20, options.disabled ? colors.muted : colors.green);
-    const left = options.icon ? 44 : 14;
+    if (options.avatar) drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar);
+    const left = options.icon || options.avatar ? 44 : 14;
     // A person card carries a small ability radar on the right; the text column makes room for it.
     const side = options.radar ? 70 : 0;
     this.text(node, title, left, cursor, width - left - side - (options.tag ? 70 : 14), 22, 15, options.disabled ? colors.muted : colors.ink, true);
@@ -611,7 +614,7 @@ export class StudioApp extends Component {
     const rating = core.ratingOf(state);
     const achievements = core.achievementsOf(state);
     drawRoom(pen, inner, height, state.office, { cups: Math.min(3, Math.ceil(achievements.count / 6)), books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] });
-    this.clickable(node, () => this.openMenu('team'));
+    this.clickable(node, () => { if (!this.officeSwiped) this.openMenu('team'); });
     const props = roomProps(inner, height, state.office);
     // Big screen with the work the main screen is looking at, or the last release. The work art is drawn
     // at its design height and scaled down to the screen, and the screen clips anything at the edges.
@@ -635,8 +638,12 @@ export class StudioApp extends Component {
     const working = this.playing && core.liveProjects(state).length > 0;
     const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
     const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
-    const shown = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0)).slice(0, 8);
-    const layout = seatLayout(Math.min(8, core.seats(state)), inner, height);
+    const sorted = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0));
+    // Up to 20 desks fit one picture; a bigger team pages sideways, the watched project's people first.
+    const pages = Math.max(1, Math.ceil(sorted.length / 20));
+    const page = Math.min(this.officePage, pages - 1);
+    const shown = sorted.slice(page * 20, page * 20 + 20);
+    const layout = seatLayout(Math.min(20, Math.max(shown.length, core.seats(state) - page * 20)), inner, height);
     const desks = new Pen(this.box(node, 'Desks', 0, 0, inner, height).addComponent(Graphics));
     layout.forEach((seat, index) => {
       const person = shown[index];
@@ -644,13 +651,27 @@ export class StudioApp extends Component {
       if (!person) return;
       const head = this.box(node, 'Head', seat.x, seat.y - 42 * seat.scale, 1, 1);
       const face = new Pen(head.addComponent(Graphics));
-      drawHead(face, seat.scale, person.role);
+      drawAvatar(face, 0, 0, 11 * seat.scale, person.id);
       if (person.stressTags.length) face.circle(8 * seat.scale, -12 * seat.scale, 3, colors.danger);
       if (working && person.leaveUntil <= state.day) tween(head).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
     });
-    // One chip in the bottom corner: room, seats, and how many people the picture leaves out.
-    const hidden = state.staff.length - shown.length;
-    const label = hidden > 0 ? '共 ' + state.staff.length + ' 人 · 图中 ' + shown.length + ' 人' : core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state);
+    if (pages > 1) {
+      let startX = 0;
+      node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { startX = event.getUILocation().x; this.officeSwiped = false; });
+      node.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => { if (Math.abs(event.getUILocation().x - startX) > 30) this.officeSwiped = true; });
+      node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+        const dx = event.getUILocation().x - startX;
+        if (Math.abs(dx) <= 30) return;
+        this.officePage = (page + (dx < 0 ? 1 : pages - 1)) % pages;
+        this.scheduleOnce(() => this.render(), 0);
+      });
+      const pager = '‹ ' + (page + 1) + '/' + pages + ' ›';
+      const pageChip = this.box(node, 'Pager', 6, height - 22, 54, 18, colors.night, 9, 200);
+      this.text(pageChip, pager, 0, 0, 54, 18, 10, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.clickable(pageChip, () => { this.officePage = (page + 1) % pages; this.render(); });
+    }
+    // One chip in the bottom corner: room, people and seats.
+    const label = core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state);
     const chipWidth = label.length * 10 + 14;
     const chip = this.box(node, 'Room', inner - chipWidth - 6, height - 22, chipWidth, 18, colors.night, 9, 200);
     this.text(chip, label, 7, 0, chipWidth - 14, 18, 10, '#ffffff');
@@ -988,20 +1009,23 @@ export class StudioApp extends Component {
     cursor += this.paragraph(body, '先给工作室起个名字。', cursor, true);
     this.input(body, '例如：日光工作室', this.draft.name, cursor, 48, value => { this.draft.name = value; });
     cursor += 62;
-    this.text(body, '你的出身（决定首作哪一维最拿手）', 0, cursor, inner, 24, 15, colors.ink, true);
-    cursor += 30;
+    this.text(body, '你的出身（决定首作哪几项最拿手）', 0, cursor, inner, 24, 15, colors.ink, true);
+    cursor += 28;
+    cursor += this.paragraph(body, content.ABILITY_INTRO, cursor, true, 0, inner, 12);
     const founder = this.draft.founder || 'code';
     const founderRoles = Object.keys(core.ROLES);
-    founderRoles.forEach((role: string, index: number) => {
-      const cell = (inner - 16) / 3;
-      const col = index % 3;
-      const row = Math.floor(index / 3);
-      this.button(body, core.ROLES[role].name, col * (cell + 8), cursor + row * 50, cell, 42, () => { this.draft.founder = role; this.render(); }, founder === role, false);
-    });
-    cursor += Math.ceil(founderRoles.length / 3) * 50;
+    for (const role of [...founderRoles, 'random']) {
+      const intro = content.FOUNDER_INTRO[role];
+      const typical: any = {};
+      if (intro) for (const key of core.ABILITY_KEYS) typical[key] = (core.ROLES[role].prior[key][0] + core.ROLES[role].prior[key][1]) / 2;
+      const detail = intro ? '擅长' + intro.good + '\n适合' + intro.fit + '\n首作建议搭' + intro.partner : '从五种出身里随机抽一个，成立后揭晓。';
+      cursor += this.choice(body, cursor, role === 'random' ? '随机' : core.ROLES[role].name, detail, () => { this.draft.founder = role; this.render(); }, { radar: intro ? typical : null, highlight: founder === role, tag: founder === role ? '已选' : '', tagColor: colors.green, icon: role === 'random' ? 'Sparkles' : '' }) + 8;
+    }
+    cursor += 4;
     cursor += this.paragraph(body, '你一个人也能独立做完第一款游戏；后面招到同事，再补齐其余各项。', cursor, true, 0, inner, 13);
     this.button(body, '成立工作室', 0, cursor, inner, 48, () => {
-      this.apply(core.nameCompany(this.state, this.draft.name, this.draft.founder || 'code'));
+      const role = founder === 'random' ? founderRoles[Math.floor(Math.random() * founderRoles.length)] : founder;
+      this.apply(core.nameCompany(this.state, this.draft.name, role));
       this.resumeAfterMenu = false;
       this.closeMenu();
     }, true);
@@ -1169,7 +1193,7 @@ export class StudioApp extends Component {
           const bestAbility = core.primaryAbility(person);
           const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + Math.round(person.abilities[bestAbility]);
           const detail = `月薪 ${content.money(person.wage)} · 速度 ${person.speed}\n最强：${bestText} · 潜力${core.potentialBand(person)}`;
-          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person) }) + 10;
+          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person), avatar: person.id }) + 10;
         });
         this.anchors.set('candidates', this.box(parent, 'CandidatesAnchor', 0, start, width, y - start - 10));
         return y;
@@ -1182,9 +1206,14 @@ export class StudioApp extends Component {
           const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);
           const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 外出中' : ''}${person.mentor ? ' · 带教中' : ''}`;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips }) + 10;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: person.id }) + 10;
         }
         return y;
+      case 'avatar': {
+        drawAvatar(this.canvasNode(parent, 'Avatar', 0, y, 56, 56).pen, 28, 28, 22, block.id);
+        this.text(parent, block.text, 68, y + 8, width - 68, 40, 14, colors.ink, true);
+        return y + 64;
+      }
       case 'ability-radar': {
         const values = this.abilityValues(block.abilities);
         const labels = core.ABILITIES.map(ability => ability.name);

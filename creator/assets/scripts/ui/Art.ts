@@ -53,17 +53,21 @@ export const palette = {
   desk: '#a7774c', deskTop: '#c4925f', screenOn: '#cfeee0', screenArt: '#f6e2b8', screenOff: '#5c6a66'
 };
 
-// Fixed seat layout so desks stay put as people join. Desks sit on the floor, below the wall props.
+// Fixed seat layout so desks stay put as people join. Desks sit on the floor, below the wall props;
+// up to four rows, back rows smaller, so twenty desks still fit the picture.
 export function seatLayout(seats: number, w: number, h: number) {
-  const rows = seats > 4 ? 2 : 1;
+  const rows = seats <= 4 ? 1 : seats <= 10 ? 2 : seats <= 15 ? 3 : 4;
   const perRow = Math.ceil(seats / rows);
   const result: { x: number; y: number; scale: number }[] = [];
   for (let index = 0; index < seats; index++) {
     const row = Math.floor(index / perRow);
     const column = index % perRow;
     const gap = w / (perRow + 0.4);
-    const scale = Math.min(rows === 2 ? (row === 0 ? 0.78 : 0.92) : 1, gap / 62, h / 150);
-    result.push({ x: gap * (column + 0.7), y: rows === 2 ? (row === 0 ? h * 0.72 : h * 0.93) : h * 0.88, scale });
+    const depth = rows === 1 ? 1 : rows === 2 ? (row === 0 ? 0.78 : 0.92) : 0.7 + 0.2 * row / (rows - 1);
+    const spacing = rows > 2 ? h * 0.27 / (rows - 1) / 34 : 1;
+    const scale = Math.min(depth, gap / 62, h / 150, spacing * depth / 0.9);
+    const y = rows === 1 ? h * 0.88 : rows === 2 ? (row === 0 ? h * 0.72 : h * 0.93) : h * (0.66 + 0.27 * row / (rows - 1));
+    result.push({ x: gap * (column + 0.7), y, scale });
   }
   return result;
 }
@@ -155,15 +159,55 @@ export function drawDesk(pen: Pen, x: number, y: number, scale: number, occupied
   pen.rect(x + 21 * s, y - 6 * s, 4 * s, 16 * s, palette.desk, 0);
 }
 
-export function drawHead(pen: Pen, scale: number, role: string) {
-  const s = scale;
-  pen.circle(0, 0, 9 * s, palette.skin);
-  pen.rect(-9 * s, -10 * s, 18 * s, 7 * s, role === 'art' ? '#7a4b2a' : palette.hair, 4 * s);
-}
-
 function seeded(seed: number) {
   let value = seed >>> 0;
   return () => { value = (Math.imul(value, 1664525) + 1013904223) >>> 0; return value / 4294967296; };
+}
+
+const SKINS = ['#f7dcc4', '#f1cfb0', '#e5b892', '#c9956f', '#9c6a4b'];
+const HAIRS = ['#2b2523', '#4a3328', '#7a4b2a', '#b5833f', '#e2d2a8', '#8a8f94', '#a2443a', '#3b4f7a'];
+const EXTRAS = ['#2f7d63', '#c8574f', '#497899', '#e0a526', '#9b6fb0'];
+
+// A simple face built from the person's id, so the same person always looks the same everywhere.
+export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < id.length; index++) hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
+  const rand = seeded(hash);
+  const pick = <T>(list: T[]) => list[Math.floor(rand() * list.length)];
+  const skin = pick(SKINS);
+  const hair = pick(HAIRS);
+  const extra = pick(EXTRAS);
+  const face = Math.floor(rand() * 3);
+  const style = Math.floor(rand() * 5);
+  const accessory = Math.floor(rand() * 6);
+  const w = r * (face === 1 ? 1.5 : face === 2 ? 1.4 : 1.6);
+  const h = r * (face === 2 ? 1.85 : 1.6);
+  const top = cy - h / 2;
+  if (style === 2) pen.rect(cx - w / 2 - r * 0.15, top, w + r * 0.3, h * 0.95, hair, r * 0.5);
+  if (style === 3) pen.circle(cx, top - r * 0.12, r * 0.38, hair);
+  pen.rect(cx - w / 2, top, w, h, skin, face === 0 ? w / 2 : r * 0.45);
+  if (style !== 4) pen.rect(cx - w / 2 - r * 0.05, top - r * 0.08, w + r * 0.1, h * (style === 1 ? 0.42 : 0.3), hair, r * 0.45);
+  if (style === 1) { pen.rect(cx - w / 2 - r * 0.08, top + h * 0.15, r * 0.3, h * 0.55, hair, r * 0.12); pen.rect(cx + w / 2 - r * 0.22, top + h * 0.15, r * 0.3, h * 0.55, hair, r * 0.12); }
+  if (style === 4) pen.rect(cx - w / 2, top, w, h * 0.16, hair, r * 0.3, 150);
+  const eyeY = top + h * 0.55;
+  pen.circle(cx - w * 0.2, eyeY, Math.max(0.8, r * 0.1), '#2b2523');
+  pen.circle(cx + w * 0.2, eyeY, Math.max(0.8, r * 0.1), '#2b2523');
+  pen.rect(cx - r * 0.18, top + h * 0.76, r * 0.36, Math.max(0.8, r * 0.08), '#a5584a', r * 0.04);
+  if (accessory === 1) {
+    pen.line(cx - w * 0.38, eyeY, cx + w * 0.38, eyeY, '#2b3532', Math.max(0.8, r * 0.08));
+    pen.frame(cx - w * 0.36, eyeY - r * 0.18, w * 0.3, r * 0.36, '#2b3532', Math.max(0.8, r * 0.08), r * 0.1);
+    pen.frame(cx + w * 0.06, eyeY - r * 0.18, w * 0.3, r * 0.36, '#2b3532', Math.max(0.8, r * 0.08), r * 0.1);
+  } else if (accessory === 2) {
+    pen.rect(cx - w / 2 - r * 0.12, top - r * 0.2, w + r * 0.24, r * 0.2, '#3f4a47', r * 0.1);
+    pen.rect(cx - w / 2 - r * 0.25, eyeY - r * 0.3, r * 0.3, r * 0.55, extra, r * 0.12);
+    pen.rect(cx + w / 2 - r * 0.05, eyeY - r * 0.3, r * 0.3, r * 0.55, extra, r * 0.12);
+  } else if (accessory === 3) {
+    pen.rect(cx - w / 2 - r * 0.05, top - r * 0.12, w + r * 0.1, h * 0.28, extra, r * 0.35);
+    pen.rect(cx - w / 2 - r * 0.05, top + h * 0.12, w * 0.75, r * 0.14, extra, r * 0.07);
+  } else if (accessory === 4) {
+    pen.circle(cx - w / 2, eyeY + h * 0.14, Math.max(0.8, r * 0.1), '#e0a526');
+    pen.circle(cx + w / 2, eyeY + h * 0.14, Math.max(0.8, r * 0.1), '#e0a526');
+  }
 }
 
 // Prototype art: content count follows progress, colors and details follow visual quality.

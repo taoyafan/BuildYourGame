@@ -710,6 +710,7 @@ function personMenu(state: any, id: string) {
   return {
     title: person.name + (person.founder ? ' · 创始人' : ''),
     blocks: [
+      { type: 'avatar', id: person.id, text: (person.founder ? '创始人 · ' : '') + core.ROLES[person.role].name },
       { type: 'ability-radar', abilities: person.abilities },
       { type: 'lines', items: [
         ['岗位', core.ROLES[person.role].name],
@@ -808,6 +809,7 @@ function candidateMenu(state: any, id: string) {
   return {
     title: person.name,
     blocks: [
+      { type: 'avatar', id: person.id, text: core.ROLES[person.role].name + '候选人' + (person.fame ? ' · 名人' : '') },
       { type: 'ability-radar', abilities: person.abilities },
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['潜力', core.potentialBand(person), potentialTone(core.potentialBand(person))], ['月薪', money(person.wage)], ['工作速度', String(person.speed)]] },
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人：某一项接近顶尖，其余普通；入职前 30 天需要磨合，产出打八折，要价也高。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' 还记得吗？' + person.story : '') }] : []),
@@ -975,6 +977,15 @@ export type GuideStep = { anchor: string; text: string; ack?: string; tap?: stri
 // Reading the raw ability numbers instead kept answering "design" for a programmer, because design
 // is the stat they score lowest on — but design is work they can still carry, visuals are not.
 const PARTNER: any = { code: 'art', design: 'art', art: 'code' };
+
+export const ABILITY_INTRO = '每人有六项能力，对应作品的六个维度：创意（新意与辨识度）、深度（系统与策略）、流畅（手感与性能）、画面、声音，以及发现缺陷（决定作品稳定）。';
+export const FOUNDER_INTRO: any = {
+  code: { good: '流畅、深度', fit: '操作型、思考型', partner: '美术，补上画面' },
+  design: { good: '创意、深度', fit: '思考型、叙事型', partner: '美术，补上画面' },
+  art: { good: '画面，创意也不差', fit: '叙事型、操作型', partner: '程序，补上流畅与深度' },
+  audio: { good: '声音，创意也不差', fit: '叙事型', partner: '美术，再补程序或策划' },
+  test: { good: '发现缺陷，作品更稳定', fit: '操作型', partner: '策划或美术，先补内容' }
+};
 
 export function weakestRole(state: any) {
   const founder = state.staff[0];
