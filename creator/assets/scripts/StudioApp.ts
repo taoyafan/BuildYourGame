@@ -193,7 +193,7 @@ export class StudioApp extends Component {
       const report = this.state.report;
       if (changed && report && report.month !== settledMonth) {
         if (report.income > 0) this.playSound('income');
-        this.celebrations.push({ kind: 'settle', title: `第 ${report.month} 月结算`, text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
+        this.celebrations.push({ kind: 'settle', title: core.monthText(report.month) + '结算', text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
       }
       if (changed) { this.save(); this.render(); this.celebrate(); }
       if (changed && report && report.month !== settledMonth) this.floatAt(this.anchors.get('finance'), (report.net >= 0 ? '+' : '') + content.money(report.net), report.net >= 0 ? colors.green : colors.danger, 0.13);
@@ -443,8 +443,8 @@ export class StudioApp extends Component {
       this.box(node, 'Key', x, bottom + 16, 10, 4, lineColors[index], 2);
       this.text(node, ability.name, x + 12, bottom + 10, 40, 16, 10, colors.muted);
     });
-    this.text(node, '第 ' + first + ' 天', left, height - 14, 80, 14, 9, colors.muted);
-    this.text(node, '第 ' + last + ' 天 · 橙点为档案事件', right - 160, height - 14, 160, 14, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    this.text(node, core.dateText(first), left, height - 14, 120, 14, 9, colors.muted);
+    this.text(node, core.dateText(last) + ' · 橙点为档案事件', right - 200, height - 14, 200, 14, 9, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     return height;
   }
 
@@ -524,7 +524,6 @@ export class StudioApp extends Component {
     const state = this.state;
     const width = this.width;
     const inner = width - 40;
-    const month = Math.floor((state.day - 1) / 30) + 1;
     const header = platform.header();
     const top = header.top;
     const headerRight = width - Math.max(20, header.capsule);
@@ -535,7 +534,7 @@ export class StudioApp extends Component {
     const controlsLeft = controlsRight - 4 * 40;
     const companyName = state.company || '日光工作室';
     this.text(this.stage, companyName, 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
-    this.text(this.stage, `第 ${month} 月 ${(state.day - 1) % 30 + 1} 日`, 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
+    this.text(this.stage, core.dateText(state.day), 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
     [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
     const financesY = top + 52;
@@ -1039,8 +1038,8 @@ export class StudioApp extends Component {
 
   private renderHistory(body: Node) {
     let cursor = 0;
-    for (const report of [...this.state.reports].reverse().slice(0, 24)) cursor = this.drawBlock(body, { type: 'lines', title: '第 ' + report.month + ' 月', items: [['收入', content.money(report.income)], ['支出', content.money(report.expense)], ['月末资金', content.money(report.closing)]] }, cursor);
-    for (const record of this.state.history.slice(0, 60)) cursor += this.paragraph(body, `第 ${record.day} 天 · ${record.title}：${record.text}`, cursor, true, 0, this.width - 40, 12);
+    for (const report of [...this.state.reports].reverse().slice(0, 24)) cursor = this.drawBlock(body, { type: 'lines', title: core.monthText(report.month), items: [['收入', content.money(report.income)], ['支出', content.money(report.expense)], ['月末资金', content.money(report.closing)]] }, cursor);
+    for (const record of this.state.history.slice(0, 60)) cursor += this.paragraph(body, `${core.dateText(record.day)} · ${record.title}：${record.text}`, cursor, true, 0, this.width - 40, 12);
     if (!cursor) cursor += this.paragraph(body, '经营记录会在实际工作和收支发生后出现。', cursor, true);
     return cursor;
   }
@@ -1202,7 +1201,7 @@ export class StudioApp extends Component {
           const done = item.day !== null;
           const hidden = item.group === 'hidden' && !done;
           const progress = !done && item.progress ? '\n进度 ' + Math.round(Math.min(item.progress[0], item.progress[1])) + ' / ' + item.progress[1] : '';
-          y += this.choice(parent, y, hidden ? '???' : item.title, hidden ? '隐藏成就，达成后揭晓。' : item.text + (item.reward ? '\n奖励：' + item.reward : '') + (done ? '\n第 ' + item.day + ' 天达成' : progress), () => undefined, { icon: done ? 'Trophy' : hidden ? 'CircleHelp' : 'Lock', tag: done ? '已达成' : '', tagColor: colors.gold, highlight: done && item.group === 'milestone' }) + 8;
+          y += this.choice(parent, y, hidden ? '???' : item.title, hidden ? '隐藏成就，达成后揭晓。' : item.text + (item.reward ? '\n奖励：' + item.reward : '') + (done ? '\n' + core.dateText(item.day) + '达成' : progress), () => undefined, { icon: done ? 'Trophy' : hidden ? 'CircleHelp' : 'Lock', tag: done ? '已达成' : '', tagColor: colors.gold, highlight: done && item.group === 'milestone' }) + 8;
         }
         return y + 4;
       case 'dream': {

@@ -210,7 +210,7 @@ function projectMenu(state: any, id?: string) {
   // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
   const finished = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
   const idleRows = forecast.rows.filter((row: any) => row.key !== 'stability' && row.remaining > 0.0001 && row.days === null);
-  const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）';
+  const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
   const order = core.projectOrder(state);
   const rank = order.findIndex((item: any) => item.id === project.id);
   const demo = project.checkpoints.demo;
@@ -230,7 +230,7 @@ function projectMenu(state: any, id?: string) {
       ] }
     ] : []),
     { type: 'note', icon: 'Users', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) },
-    ...(project.deadline !== null ? [{ type: 'text', text: '已公布：第 ' + project.deadline + ' 天发售。到期未发会损失关注。', muted: true }] : []),
+    ...(project.deadline !== null ? [{ type: 'text', text: '已公布：' + core.dueText(state, project.deadline) + '发售。到期未发会损失关注。', muted: true }] : []),
     { type: 'actions', items: [
       { text: '调整分工', detail: '谁做哪几项工作；做满后自动修复已发现的缺陷。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
@@ -264,11 +264,11 @@ function patchProjectMenu(state: any, project: any) {
     blocks: [
       ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
       { type: 'lines', items: [
-        ['《' + project.name + '》补丁', '第 ' + project.patch.started + ' 天开始'],
+        ['《' + project.name + '》补丁', core.dateText(project.patch.started) + '开始'],
         ['修复', forecast.fixed + ' / ' + forecast.targets + ' 项已报告缺陷'],
         ...(rework ? [['返工' + rework, Math.round(forecast.reworkDone / Math.max(0.001, forecast.reworkTotal) * 100) + '%']] : []),
         ['剩余', forecast.left.toFixed(1) + ' 人日'],
-        ['预计上线', forecast.days === null ? '还没有人做' : forecast.days === 0 ? '即将上线' : '第 ' + forecast.eta + ' 天（约 ' + forecast.days + ' 天）'],
+        ['预计上线', forecast.days === null ? '还没有人做' : forecast.days === 0 ? '即将上线' : core.dueText(state, forecast.eta)],
         ['人手', crew.length ? crew.map((person: any) => person.name).join('、') : '无']
       ] },
       { type: 'radar', metrics: core.projectMetrics(project), genre: project.type, projectId: project.id },
@@ -423,7 +423,7 @@ function testReport(state: any, project: any) {
     blocks.push({ type: 'text', text: '试玩玩家给出体验评价，并会碰到一部分测试漏掉的缺陷；这些缺陷修好后稳定就会提高。' });
     return blocks;
   }
-  blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · 第 ' + project.test.day + ' 天 · 新发现 ' + project.test.found + ' 项缺陷' });
+  blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · ' + core.dateText(project.test.day) + ' · 新发现 ' + project.test.found + ' 项缺陷' });
   // Comparing with the previous run is the whole point of a retest: a bare score cannot tell you
   // whether the last round of work helped.
   const history = project.testLog || [];
@@ -431,7 +431,7 @@ function testReport(state: any, project: any) {
     const last = history[history.length - 1];
     const previous = history[history.length - 2];
     const delta = last.score - previous.score;
-    const base = '（第 ' + previous.day + ' 天 ' + previous.score.toFixed(1) + ' 分）';
+    const base = '（' + core.dateText(previous.day) + ' ' + previous.score.toFixed(1) + ' 分）';
     blocks.push({ type: 'text', text: Math.abs(delta) < 0.05 ? '与上次' + base + '持平。' : '比上次' + base + (delta > 0 ? '高 ' : '低 ') + Math.abs(delta).toFixed(1) + ' 分。' });
   }
   blocks.push({ type: 'note', icon: 'Target', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) });
@@ -440,7 +440,7 @@ function testReport(state: any, project: any) {
   blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   if (history.length > 1) {
     blocks.push({ type: 'section', title: '试玩历史' });
-    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => ['第 ' + entry.day + ' 天 · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
+    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => [core.dateText(entry.day) + ' · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
   }
   return blocks;
 }
@@ -455,7 +455,7 @@ function outingReport(state: any, record: any) {
   const rows = [...record.results].sort((left: any, right: any) => (right.cleared.length + (right.gain ? 1 : 0)) - (left.cleared.length + (left.gain ? 1 : 0)));
   return [
     { type: 'stats', tone: 'plain', items: [['团建', record.days + ' 天 · ' + money(record.cost)], ['清掉标签', cleared + ' 个'], ['有收获', gained + ' 人']] },
-    { type: 'text', text: '第 ' + record.day + ' 天出发，第 ' + record.back + ' 天回来。', muted: true },
+    { type: 'text', text: core.dateText(record.day) + '出发，' + core.dateText(record.back) + '回来。', muted: true },
     { type: 'lines', items: rows.map((item: any) => {
       const parts = [...item.cleared.map((key: string) => '清掉「' + core.STRESS_TAGS[key].name + '」'), ...(item.gain ? [gainText(item.gain)] : [])];
       return [item.name, parts.length ? parts.join(' · ') : '没有变化', item.gain ? gainTone(item.gain) : parts.length ? 'green' : 'muted'];
@@ -469,7 +469,7 @@ function outingsMenu(state: any) {
   return { title: '团建记录', blocks: [{ type: 'choices', items: history.map((record: any, index: number) => {
     const cleared = record.results.reduce((sum: number, item: any) => sum + item.cleared.length, 0);
     const gained = record.results.filter((item: any) => item.gain).length;
-    return { text: '第 ' + record.day + ' 天 · 团建 ' + record.days + ' 天', detail: '花费 ' + money(record.cost) + ' · 清掉 ' + cleared + ' 个标签 · ' + gained + ' 人有收获', action: 'menu', data: { menu: 'outing', id: String(index) } };
+    return { text: core.dateText(record.day) + ' · 团建 ' + record.days + ' 天', detail: '花费 ' + money(record.cost) + ' · 清掉 ' + cleared + ' 个标签 · ' + gained + ' 人有收获', action: 'menu', data: { menu: 'outing', id: String(index) } };
   }) }] };
 }
 
@@ -485,7 +485,7 @@ function dreamLines(state: any) {
     '创始人在工位上写好了解散公告：「' + state.company + '到此为止。」',
     '他趴在键盘上睡着了，梦见一块发光的屏幕。屏幕那头，有一个看不见的人。',
     '「是你吧？一直替我按着加班键的那个人。」',
-    '「我们一起熬了第 ' + state.day + ' 天。你那边，大概陪了我 ' + span + '。」',
+    '「我们一起熬了 ' + state.day + ' 天。你那边，大概陪了我 ' + span + '。」',
     late ? '「你那边现在是 ' + clock + '，这么晚了，你也该睡了。」' : '「你那边现在是 ' + clock + '。记得起来走走，喝口水。」',
     '「答应我一件事，好吗？」'
   ];
@@ -515,8 +515,8 @@ function marketMenu(state: any, id?: string) {
   blocks.push({ type: 'lines', items: [...offers.map((offer: any) => {
     const left = offer.deadline - state.day;
     const cutoff = left > 0 ? '报名截止还有 ' + left + ' 天' : left === 0 ? '今天报名截止' : '报名已截止';
-    return [offer.name + ' · 报名 ' + money(offer.fee), '第 ' + offer.day + ' 天 · ' + cutoff];
-  }), ['年度评奖', '第 ' + Math.ceil(state.day / 360) * 360 + ' 天']] });
+    return [offer.name + ' · 报名 ' + money(offer.fee), core.dateText(offer.day) + ' · ' + cutoff];
+  }), ['年度评奖', core.dueText(state, Math.ceil(state.day / 360) * 360)]] });
   blocks.push({ type: 'buttons', anchor: 'exhibitions', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
   blocks.push({ type: 'actions', items: [
     { text: '日历', detail: '展会、年度评选、媒体评级与已公布的发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry', id: 'schedule' } },
@@ -578,7 +578,7 @@ function bookMenu(state: any, id: string) {
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
       { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['补丁', (book.updates || 0) + ' 次']] },
       ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', money(book.promo.cost)], ['带来关注', number(book.promo.followers) + ' 人'], ['按本作转化约折合首发', money(book.promo.receipt)]] }] : []),
-      ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => ['第 ' + patch.day + ' 天' + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
+      ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
       { type: 'actions', items: [
         project?.patch
@@ -624,7 +624,7 @@ function ratingMenu(state: any) {
       ['升星线', rating.up === null ? '已是最高星级' : star(rating.tier + 1) + ' ' + rating.up + ' 分'],
       ['保星线', rating.keep === null ? '一星不会再降' : star(rating.tier) + ' ' + rating.keep + ' 分'],
       ['状态', rating.watch ? '观察名单：下一期低于保星线就降级' : rating.safe ? '刚升星，本期不评降级' : '正常'],
-      ['下次评级', '第 ' + rating.next + ' 天']
+      ['下次评级', core.dueText(state, rating.next)]
     ] },
     ...(rating.watch ? [{ type: 'note', icon: 'Target', text: core.RATING_MEDIA + '把公司列入了观察名单。下一期评级前发售一部成绩好的作品，可以把分数拉回保星线以上。' }] : []),
     { type: 'text', text: core.RATING_MEDIA + '每 ' + core.RATING_PERIOD + ' 天发布一次工作室评级，只看最近三部作品（资料片不算），越新的作品权重越高：每部主要看首周名次（按够得着的最高一级榜单，全国、国际榜分数更高），其次是玩家口碑；获奖只是荣誉，不计分。最新一部发售满两年后，评级每季度下滑一点。', muted: true },
@@ -637,7 +637,7 @@ function ratingMenu(state: any) {
   blocks.push({ type: 'lines', items: core.STAR_NAMES.map((_name: string, index: number) => [star(index) + (index === rating.tier ? ' · 当前' : ''), (index ? '升星线 ' + core.RATING_UP[index] + ' 分 · ' : '') + '关注' + core.TIERS[core.STAR_RANGE[index]].name + '范围' + (core.MEDIA_BONUS[index] ? ' · 媒体曝光 +' + Math.round(core.MEDIA_BONUS[index] * 100) + '%' : '') + (core.FAME_CHANCE[index] ? ' · 名人出现率 ' + Math.round(core.FAME_CHANCE[index] * 100) + '%' : '')]) });
   if (rating.history.length) {
     blocks.push({ type: 'section', title: '历次评级' });
-    blocks.push({ type: 'lines', items: [...rating.history].reverse().map((entry: any) => ['第 ' + entry.day + ' 天', Math.round(entry.score) + ' 分 · ' + star(entry.tier)]) });
+    blocks.push({ type: 'lines', items: [...rating.history].reverse().map((entry: any) => [core.dateText(entry.day), Math.round(entry.score) + ' 分 · ' + star(entry.tier)]) });
   }
   return { title: '媒体评级', blocks };
 }
@@ -682,13 +682,13 @@ function teamMenu(state: any, sort = 'joined') {
       { type: 'section', title: '团建' },
       { type: 'text', text: '团建是清掉「疲惫」「想走」的唯一办法：全队停工，工资照付，另付费用。每个负面标签按概率被清掉（先清「想走」），天数越长越可能清掉，但不保证；每人还有机会有收获：觉醒一个正面性格，或获得、提升一档团队增益，越稀有的越难出。团建期间暂停加班，回来后恢复原来的安排。', muted: true },
       { type: 'lines', items: [
-        ['可用次数', outing.charges + ' / ' + core.OUTING_MAX + (outing.next !== null ? ' · 第 ' + outing.next + ' 天恢复 1 次' : '')],
-        ['最早可去', offers[0].offer.earliest > state.day ? '第 ' + offers[0].offer.earliest + ' 天（两次至少隔 ' + core.OUTING_GAP + ' 天）' : '现在'],
+        ['可用次数', outing.charges + ' / ' + core.OUTING_MAX + (outing.next !== null ? ' · ' + core.dueText(state, outing.next) + '恢复 1 次' : '')],
+        ['最早可去', offers[0].offer.earliest > state.day ? core.dueText(state, offers[0].offer.earliest) + '，两次至少隔 ' + core.OUTING_GAP + ' 天' : '现在'],
         ['有负面标签的人', stressed + ' 人']
       ] },
       { type: 'lines', items: offers.map((item: any) => [item.days + ' 天 · ' + money(item.offer.cost), '清标签约 ' + Math.round(item.chance.clear * 100) + '% · 收获约 ' + Math.round(item.chance.awaken * 100) + '%']) },
       { type: 'buttons', columns: 3, items: offers.map((item: any) => ({ text: '团建 ' + item.days + ' 天', action: 'outing', icon: 'Plane', data: { days: item.days }, disabled: !item.offer.available, anchor: 'outing-' + item.days })) },
-      ...(outing.pending ? [{ type: 'note', icon: 'Plane', text: '团队正在团建，第 ' + outing.resume + ' 天回来公布结果。' }] : []),
+      ...(outing.pending ? [{ type: 'note', icon: 'Plane', text: '团队正在团建，' + core.dueText(state, outing.resume) + '回来公布结果。' }] : []),
       ...((outing.history || []).length ? [{ type: 'actions', items: [{ text: '团建记录', detail: '历次团建每个人清掉了什么、有什么收获。', icon: 'ScrollText', action: 'menu', data: { menu: 'outings' } }] }] : []),
       { type: 'text', text: (offers[0].offer.available ? '' : offers[0].offer.reason + ' ') + '「合群」的人概率更高。加班按人在员工页设置：产出更高，但缺陷更多，也会累积负面标签。', muted: true }
     ]
@@ -715,9 +715,9 @@ function personMenu(state: any, id: string) {
         ['潜力', core.potentialBand(person) + '（练到接近上限后成长变慢）', potentialTone(core.potentialBand(person))],
         ['月薪', money(person.wage)],
         ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比他的工资高 ' + money(market - person.wage) : ''), market > person.wage ? 'green' : 'muted'],
-        ['入职', '第 ' + (person.joined || 1) + ' 天 · 在职 ' + Math.max(0, state.day - (person.joined || 1)) + ' 天'],
+        ['入职', core.dateText(person.joined || 1) + ' · 在职 ' + Math.max(0, state.day - (person.joined || 1)) + ' 天'],
         ['工作速度', String(person.speed)],
-        ['在岗', person.leaveUntil > state.day ? '外出至第 ' + person.leaveUntil + ' 天（团建或活动），工资照付' : '正常在岗']
+        ['在岗', person.leaveUntil > state.day ? '外出至' + core.dueText(state, person.leaveUntil) + '，团建或活动，工资照付' : '正常在岗']
       ] },
       { type: 'lines', title: '六项能力', items: abilityLines(person) },
       ...(core.personTags(person).length ? [{ type: 'tags', items: core.personTags(person) }] : []),
@@ -733,8 +733,8 @@ function personMenu(state: any, id: string) {
       ...(person.founder ? [] : [{ type: 'buttons', items: [{ text: '裁员（N+1）', action: 'menu', icon: 'UserMinus', data: { menu: 'dismiss', id: person.id } }] }]),
       { type: 'section', title: '员工档案' },
       ...((person.trace || []).length > 1 ? [{ type: 'trace', trace: person.trace, history: person.history || [] }] : [{ type: 'text', text: '每月记录一次六项能力，满两个月后在这里画出成长曲线。', muted: true }]),
-      ...(books.length ? [{ type: 'lines', title: '参与的作品', items: books.map((book: any) => ['《' + book.name + '》', '第 ' + book.released + ' 天发售 · 口碑 ' + book.reviewScore.toFixed(0)]) }] : []),
-      ...((person.history || []).length ? [{ type: 'lines', title: '经历', items: [...person.history].reverse().slice(0, 12).map((item: any) => ['第 ' + item.day + ' 天', item.text]) }] : []),
+      ...(books.length ? [{ type: 'lines', title: '参与的作品', items: books.map((book: any) => ['《' + book.name + '》', core.dateText(book.released) + '发售 · 口碑 ' + book.reviewScore.toFixed(0)]) }] : []),
+      ...((person.history || []).length ? [{ type: 'lines', title: '经历', items: [...person.history].reverse().slice(0, 12).map((item: any) => [core.dateText(item.day), item.text]) }] : []),
       { type: 'text', text: '工资在招聘时定下，不随成长上调；裁员的遣散费 = 月薪 ×（服务年数 + 1）。', muted: true }
     ]
   };
@@ -845,7 +845,7 @@ function financeMenu(state: any) {
       { type: 'lines', items: [['现在', core.OFFICES[state.office].name + ' · ' + core.seats(state) + ' 个工位 · 月租 ' + money(core.OFFICES[state.office].rent)], ...(nextOffice ? [['下一档', nextOffice.name + ' · ' + nextOffice.seats + ' 个工位 · 月租 ' + money(nextOffice.rent)]] : [])] },
       ...(nextOffice ? [{ type: 'buttons', anchor: 'move', items: [{ text: (state.office === 0 ? '搬进' : '扩建为') + nextOffice.name + ' · ' + money(moveCost), action: 'move', icon: 'Building2', disabled: state.cash < moveCost }] }, { type: 'text', text: '搬家一次性花 ' + money(moveCost) + '，之后月租从 ' + money(core.OFFICES[state.office].rent) + ' 变为 ' + money(nextOffice.rent) + '，月开支约 ' + money(core.monthlyCost(state) - core.OFFICES[state.office].rent + nextOffice.rent) + '。什么时候搬由你决定。' + (state.office === 0 ? '正式办公室还会开放行业推荐、猎头与大型作品。' : ''), muted: true }] : [{ type: 'text', text: '已经是最大的办公室了。', muted: true }]),
       { type: 'actions', items: [
-        { text: core.STAR_MARKS[rating.tier] + ' ' + core.STAR_NAMES[rating.tier] + '工作室 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · 下次第 ' + rating.next + ' 天', icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
+        { text: core.STAR_MARKS[rating.tier] + ' ' + core.STAR_NAMES[rating.tier] + '工作室 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · 下次' + core.dueText(state, rating.next), icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
         { text: '成就', detail: core.achievementsOf(state).count + ' / ' + core.ACHIEVEMENTS.length + ' · 里程碑与荣誉', icon: 'Trophy', action: 'menu', data: { menu: 'achievements' } },
         { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
@@ -877,9 +877,9 @@ function rankText(ranks: any) {
 }
 
 function exhibitionsMenu(state: any) {
-  const blocks: any[] = [{ type: 'text', text: '城市独立游戏展每年第 90、270 天，全国游戏展第 150 天，国际游戏展第 300 天，都提前七天截止报名。完成体验版才能报名，名次决定换来的关注。', muted: true }];
+  const blocks: any[] = [{ type: 'text', text: '城市独立游戏展每年 3 月 30 日与 9 月 30 日，全国游戏展 5 月 30 日，国际游戏展 10 月 30 日，都提前七天截止报名。完成体验版才能报名，名次决定换来的关注。', muted: true }];
   for (const entry of [...state.exhibitions].reverse()) {
-    blocks.push({ type: 'section', title: '第 ' + entry.day + ' 天 · ' + core.TIERS[entry.tier ?? 0].expo + ' · 《' + entry.name + '》' });
+    blocks.push({ type: 'section', title: core.dateText(entry.day) + ' · ' + core.TIERS[entry.tier ?? 0].expo + ' · 《' + entry.name + '》' });
     if (!entry.result) blocks.push({ type: 'text', text: '已报名，等待展会。期间继续完善会影响名次。' });
     else {
       blocks.push({ type: 'note', icon: 'Megaphone', text: entry.result.media + '：第 ' + entry.result.rank + ' 名，获得 ' + number(entry.result.followers) + ' 人关注。' });
@@ -925,7 +925,7 @@ function industryMenu(state: any, id?: string) {
     blocks.push({ type: 'text', text: '未来半年的日子：展会、年度评选、媒体评级与已公布的发售日。小作品通常不提前公布；同一周发售的作品会分流首发关注。点条目可以跳到对应页面。', muted: true });
     if (!calendar.length) blocks.push({ type: 'text', text: '近期没有安排。' });
     else blocks.push({ type: 'choices', items: calendar.map((item: any) => ({
-      text: '第 ' + item.day + ' 天 · ' + item.title,
+      text: core.dateText(item.day) + ' · ' + item.title,
       detail: (item.day === state.day ? '今天' : '还有 ' + (item.day - state.day) + ' 天') + ' · ' + item.detail,
       action: item.route ? 'menu' : 'none', data: item.route || {},
       tag: item.own ? '本社' : { expo: '展会', awards: '评选', rating: '', release: '' }[item.kind as string] || ''
@@ -934,11 +934,11 @@ function industryMenu(state: any, id?: string) {
     const list = core.newsFor(state).slice(0, 30);
     blocks.push({ type: 'text', text: '主要报道' + core.TIERS[focus].name + '范围的动态（由公司星级决定），更高范围只报头条。', muted: true });
     if (!list.length) blocks.push({ type: 'text', text: '暂时没有新闻。' });
-    else blocks.push({ type: 'choices', items: list.map((item: any) => rivalChoice(item.title, '第 ' + item.day + ' 天' + (item.text ? ' · ' + item.text : ''), item.studio, item.own)) });
+    else blocks.push({ type: 'choices', items: list.map((item: any) => rivalChoice(item.title, core.dateText(item.day) + (item.text ? ' · ' + item.text : ''), item.studio, item.own)) });
   } else {
     blocks.push(levelTabs);
     const awards = [...state.awards].reverse().filter((award: any) => (award.tier ?? 1) === level).slice(0, 9);
-    if (!awards.length) blocks.push({ type: 'text', text: '年度评选在每年第 360 天举行。' });
+    if (!awards.length) blocks.push({ type: 'text', text: '年度评选在每年 12 月 30 日举行。' });
     for (const award of awards) {
       blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
       blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
@@ -956,9 +956,9 @@ function rivalMenu(state: any, id: string) {
   return {
     title: studio.name,
     blocks: [
-      { type: 'lines', items: [['层级', core.TIERS[studio.tier].name], ['擅长', core.TYPES[studio.type].name], ['势头', trend], ['状态', studio.closed !== null ? '第 ' + studio.closed + ' 天解散' : '经营中'], ['作品数', String(works.filter((work: any) => work.released <= state.day).length)]] },
+      { type: 'lines', items: [['层级', core.TIERS[studio.tier].name], ['擅长', core.TYPES[studio.type].name], ['势头', trend], ['状态', studio.closed !== null ? core.dateText(studio.closed) + '解散' : '经营中'], ['作品数', String(works.filter((work: any) => work.released <= state.day).length)]] },
       { type: 'section', title: '作品' },
-      ...(works.length ? [{ type: 'lines', items: works.slice(0, 12).map((work: any) => ['《' + work.name + '》', work.released > state.day ? '定档第 ' + work.released + ' 天' : '第 ' + work.released + ' 天 · 首周 ' + number(work.firstWeek) + ' 份' + (rankOf(work) ? ' · ' + core.TIERS[work.tier].name + '第 ' + rankOf(work) + ' 名' : '')]) }] : [{ type: 'text', text: '还没有作品。' }]),
+      ...(works.length ? [{ type: 'lines', items: works.slice(0, 12).map((work: any) => ['《' + work.name + '》', work.released > state.day ? '定档' + core.dueText(state, work.released) : core.dateText(work.released) + ' · 首周 ' + number(work.firstWeek) + ' 份' + (rankOf(work) ? ' · ' + core.TIERS[work.tier].name + '第 ' + rankOf(work) + ' 名' : '')]) }] : [{ type: 'text', text: '还没有作品。' }]),
       { type: 'section', title: '和本社的交锋' },
       ...(clashes.length ? [{ type: 'lines', items: clashes.map((item: any) => ['《' + item.work.name + '》 vs 《' + item.book.name + '》', '首周 ' + number(item.work.firstWeek) + ' : ' + number(item.book.firstWeek || 0)]) }] : [{ type: 'text', text: '还没有同周发售过。', muted: true }])
     ]

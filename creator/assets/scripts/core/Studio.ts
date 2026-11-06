@@ -103,17 +103,24 @@ export const ROLES: any = {
 // Audio and test unlock after the first release; operations and publishing have no standing post.
 export const LOCKED_ROLES = ['audio', 'test'];
 
-// Ability tags only summarise what the numbers already say. Personality tags change what happens.
+// Ability tags only summarise what the numbers already say, and only for high values: purple from 80,
+// gold from 90. Old keys stay so saves that stored them still load; the label comes from the number.
 export const ABILITY_TAGS: any = {
-  music: { name: '音乐突出', ability: 'sound', text: '声音能力在同行中偏高。' },
-  ear: { name: '听感敏锐', ability: 'sound', text: '对声音细节很挑剔。' },
-  vision: { name: '画面感好', ability: 'picture', text: '画面能力偏高。' },
-  polish: { name: '精益求精', ability: 'depth', text: '深度能力偏高，耐得住打磨。' },
-  inventor: { name: '点子很多', ability: 'creativity', text: '创意能力偏高。' },
-  engineer: { name: '工程扎实', ability: 'fluidity', text: '流畅能力偏高。' },
-  hunter: { name: '毒辣眼光', ability: 'discover', text: '发现缺陷的能力偏高。' },
-  steady: { name: '稳扎稳打', ability: 'stability', text: '稳扎稳打，做出来的东西很少出问题。' }
+  creativity: { ability: 'creativity', word: '创意' },
+  depth: { ability: 'depth', word: '深度' },
+  fluidity: { ability: 'fluidity', word: '流畅' },
+  picture: { ability: 'picture', word: '画面' },
+  sound: { ability: 'sound', word: '声音' },
+  discover: { ability: 'discover', word: '查错' },
+  music: { ability: 'sound' }, ear: { ability: 'sound' }, vision: { ability: 'picture' }, polish: { ability: 'depth' },
+  inventor: { ability: 'creativity' }, engineer: { ability: 'fluidity' }, hunter: { ability: 'discover' }, steady: { ability: 'stability' }
 };
+function abilityTag(ability: string, value: number) {
+  const rank = clamp(valueRank(value), 2, 3);
+  const word = ABILITY_TAGS[ability].word;
+  return { name: word + (rank >= 3 ? '顶尖' : '出众'), text: word + (rank >= 3 ? '能力 90 以上，行业顶尖。' : '能力 80 以上，明显高于同行。'), kind: '能力', rank, tone: RARITY_TONES[rank], rarity: RARITY_NAMES[rank] };
+}
+// Personality tags change what happens.
 export const PERSONALITY_TAGS: any = {
   iron: { name: '抗压', text: '加班不太会积累负面标签。', rarity: 2 },
   eager: { name: '拼命', text: '产出更高，但更容易积累负面标签。', rarity: 1 },
@@ -148,6 +155,13 @@ export const BOOST_GRADES = ['一档', '二档', '三档'];
 // Colour means rarity only: green → blue → purple → gold. Harmful labels are dark grey with a "!".
 export const RARITY_TONES = ['green', 'blue', 'purple', 'gold'];
 export const RARITY_NAMES = ['普通', '优秀', '稀有', '传说'];
+// Every random way of getting a tag draws by these weights, so the colour also says how often it turns up.
+export const RARITY_WEIGHT = [1, 1, 0.35, 0.12];
+function pickByRarity(state: any, options: any[]) {
+  const total = options.reduce((sum: number, item: any) => sum + RARITY_WEIGHT[item.rank], 0);
+  let roll = random(state) * total;
+  return options.find((item: any) => (roll -= RARITY_WEIGHT[item.rank]) < 0) || options[options.length - 1];
+}
 // The same bands colour ability numbers; below the first band an ability earns no tag at all.
 export function valueRank(value: number) {
   return value >= 90 ? 3 : value >= 80 ? 2 : value >= 70 ? 1 : value >= 60 ? 0 : -1;
@@ -158,8 +172,8 @@ export function tagInfo(tag: any, person: any = null) {
   const graded = (info: any, kind: string, rank: number) => ({ ...info, kind, rank, tone: RARITY_TONES[clamp(rank, 0, 3)], rarity: RARITY_NAMES[clamp(rank, 0, 3)] });
   if (has(STRESS_TAGS, key)) return { ...STRESS_TAGS[key], kind: '状态', rank: -1, tone: 'stress' };
   if (has(ABILITY_TAGS, key)) {
-    const value = person ? person.abilities[ABILITY_TAGS[key].ability] : null;
-    return graded(ABILITY_TAGS[key], '能力', typeof value === 'number' ? valueRank(value) : 0);
+    const ability = ABILITY_TAGS[key].ability;
+    return ABILITY_TAGS[ability] ? abilityTag(ability, person ? person.abilities[ability] : 80) : { name: '', text: '', kind: '', rank: 0, tone: 'green' };
   }
   if (has(PERSONALITY_TAGS, key)) {
     const info = PERSONALITY_TAGS[key];
@@ -174,17 +188,13 @@ export function tagInfo(tag: any, person: any = null) {
 }
 
 // Everything shown on a person: stress first, then the rest by rarity. Ability tags follow the numbers —
-// only notable abilities show (at most two), and the colour climbs as the ability grows.
+// only abilities of 80 or more show (at most two), purple, then gold from 90.
 export function personTags(person: any) {
   const out: any[] = [];
   if (person.boost) out.push(tagInfo(person.boost, person));
   for (const tag of person.tags || []) if (tag.kind !== 'ability' && !has(ABILITY_TAGS, tag.key)) out.push(tagInfo(tag, person));
-  const notable = ABILITY_KEYS.filter(ability => valueRank(person.abilities[ability]) >= 0).sort((left, right) => person.abilities[right] - person.abilities[left]).slice(0, 2);
-  for (const ability of notable) {
-    const stored = (person.tags || []).find((tag: any) => has(ABILITY_TAGS, tag.key) && ABILITY_TAGS[tag.key].ability === ability);
-    const key = stored?.key || Object.keys(ABILITY_TAGS).find(item => ABILITY_TAGS[item].ability === ability);
-    if (key) out.push(tagInfo(key, person));
-  }
+  const notable = ABILITY_KEYS.filter(ability => valueRank(person.abilities[ability]) >= 2).sort((left, right) => person.abilities[right] - person.abilities[left]).slice(0, 2);
+  for (const ability of notable) out.push(abilityTag(ability, person.abilities[ability]));
   const good = out.filter(item => item.tone !== 'stress').sort((left, right) => right.rank - left.rank);
   return [...(person.stressTags || []).map((key: string) => tagInfo(key, person)), ...out.filter(item => item.tone === 'stress'), ...good];
 }
@@ -416,21 +426,15 @@ function potentialFor(state: any, abilities: any, channel: string) {
   return Math.round(clamp(peak + 4 + random(state) * (POTENTIAL_ROOM[channel] || 20), peak + 4, 98));
 }
 
-function rollTags(state: any, abilities: any, channel = 'friends') {
-  const count = random(state) < 0.45 ? 1 : random(state) < 0.7 ? 2 : 3;
-  let abilityKeys = Object.keys(ABILITY_TAGS).filter(key => ABILITY_KEYS.includes(ABILITY_TAGS[key].ability) && abilities[ABILITY_TAGS[key].ability] >= 55);
-  const personalityKeys = Object.keys(PERSONALITY_TAGS);
+// Ability labels come from the numbers, so a new hire only rolls character: rarer traits less often.
+function rollTags(state: any, channel = 'friends') {
+  const count = random(state) < 0.25 ? 0 : random(state) < 0.67 ? 1 : 2;
   const tags: any[] = [];
-  if (random(state) < (RARE_CHANCE[channel] || 0.02)) tags.push({ kind: 'rare', key: pick(state, Object.keys(RARE_TAGS)) });
-  while (abilityKeys.length && tags.length < count && random(state) < 0.65) {
-    const key = abilityKeys[Math.floor(random(state) * abilityKeys.length)];
-    const ability = ABILITY_TAGS[key].ability;
-    tags.push({ kind: 'ability', key });
-    abilityKeys = abilityKeys.filter(item => ABILITY_TAGS[item].ability !== ability);
-  }
-  while (tags.length < count) {
-    const key = personalityKeys[Math.floor(random(state) * personalityKeys.length)];
-    if (!tags.some(tag => tag.key === key)) tags.push({ kind: 'personality', key });
+  if (random(state) < (RARE_CHANCE[channel] || 0.02)) tags.push({ kind: 'rare', key: pickByRarity(state, Object.keys(RARE_TAGS).map(key => ({ key, rank: RARE_TAGS[key].rarity }))).key });
+  const personality = Object.keys(PERSONALITY_TAGS).map(key => ({ key, rank: PERSONALITY_TAGS[key].warn ? 1 : PERSONALITY_TAGS[key].rarity }));
+  for (let index = 0; index < count; index += 1) {
+    const options = personality.filter(item => !tags.some(tag => tag.key === item.key));
+    tags.push({ kind: 'personality', key: pickByRarity(state, options).key });
   }
   return tags;
 }
@@ -482,7 +486,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   spend(next, recruitFee(next, channel), `${source.name}招聘${ROLES[role].name}`);
   const people = Array.from({ length: 3 }, (_, index) => {
     const abilities = pickAbilities(next, role, channel);
-    const tags = rollTags(next, abilities, channel);
+    const tags = rollTags(next, channel);
     const speed = Math.round(source.speed[0] + random(next) * (source.speed[1] - source.speed[0]));
     const strongest = ABILITY_KEYS.reduce((best, item) => abilities[item] > abilities[best] ? item : best, ABILITY_KEYS[0]);
     const name = FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)];
@@ -498,7 +502,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     // A free agent the player has read about in the news is the one who turns up.
     const talent = (next.talents || []).find((item: any) => item.status === 'free' && item.role === role);
     star.abilities = starFrom(next, role, talent);
-    if (talent) { star.name = talent.name; star.talent = talent.id; star.story = `第 ${talent.since} 天新闻：${talent.title}`; }
+    if (talent) { star.name = talent.name; star.talent = talent.id; star.story = `${dateText(talent.since)}新闻：${talent.title}`; }
     star.potential = Math.max(...ABILITY_KEYS.map(item => star.abilities[item])) + 2;
     star.speed = Math.min(140, star.speed + 12);
     star.wage = round(star.wage * 1.6);
@@ -510,7 +514,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     star.condition = random(next) < 0.5 ? 'crew' : 'type:' + Object.keys(TYPES)[Math.floor(random(next) * Object.keys(TYPES).length)];
   }
   next.candidates[key] = { batch, people };
-  studioLog(next, '发布招聘', `${source.name}送来 ${people.length} 份${ROLES[role].name}简历，名单保持到第 ${(batch + 1) * 14} 天。`);
+  studioLog(next, '发布招聘', `${source.name}送来 ${people.length} 份${ROLES[role].name}简历，名单保持到${dateText((batch + 1) * 14)}。`);
   return next;
 }
 
@@ -1062,7 +1066,8 @@ function staffDay(state: any) {
       person.trace = [...(person.trace || []), { day: state.day, a: { ...person.abilities } }].slice(-48);
       const tenure = state.day - (person.joined || 0);
       if (!person.boost && tenure >= 90 && random(state) < clamp((tenure - 90) / 360 * 0.06, 0, 0.1)) gainBoost(state, person, '');
-      else if (person.boost && (person.boostLevel || 1) < 3 && tenure >= 270 && random(state) < clamp((tenure - 270) / 360 * 0.04, 0, 0.06)) gainBoost(state, person, '');
+      // Each grade up is drawn at its rarity weight, so gold comes up about a third as often as purple.
+      else if (person.boost && (person.boostLevel || 1) < 3 && tenure >= 270 && random(state) < clamp((tenure - 270) / 360 * 0.04, 0, 0.06) * RARITY_WEIGHT[(person.boostLevel || 1) + 1] / RARITY_WEIGHT[2]) gainBoost(state, person, '');
     }
   }
 }
@@ -1119,8 +1124,8 @@ export function outingOffer(state: any, days = 3) {
   const cost = outingCost(state, days);
   let reason = '';
   if (!state.staff.length) reason = '还没有员工。';
-  else if (outing.charges < 1) reason = `团建次数已用完，第 ${outing.next} 天恢复 1 次。`;
-  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，第 ${earliest} 天起可以再去。`;
+  else if (outing.charges < 1) reason = `团建次数已用完，${dueText(state, outing.next)}恢复 1 次。`;
+  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，${dueText(state, earliest)}起可以再去。`;
   else if (state.cash < cost) reason = '资金不足。';
   return { available: !reason, reason, cost, charges: outing.charges, next: outing.next, earliest: Math.max(state.day, earliest) };
 }
@@ -1190,13 +1195,12 @@ export function teamOuting(state: any, days = 3) {
     plans.push({ id: person.id, clear, gain: random(next) < chance.awaken ? outingGain(next, person) : null });
   }
   outing.pending = { day: next.day, days, cost: offer.cost, plans };
-  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，第 ${next.day + days} 天回来公布结果；加班安排回来后恢复。`);
+  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，${dateText(next.day + days)}回来公布结果；加班安排回来后恢复。`);
   return next;
 }
 
 // What an outing can bring someone, drawn by rarity: an unowned positive trait, a first team boost, or
 // the next grade of the boost they hold. Rarer outcomes come up less often.
-const RARITY_WEIGHT = [1, 1, 0.35, 0.12];
 function outingGain(state: any, person: any) {
   const options: any[] = Object.keys(PERSONALITY_TAGS)
     .filter(key => !PERSONALITY_TAGS[key].warn && !person.tags.some((tag: any) => tag.key === key))
@@ -1204,9 +1208,7 @@ function outingGain(state: any, person: any) {
   if (!person.boost) options.push({ boost: true, rank: 1 });
   else if ((person.boostLevel || 1) < 3) options.push({ boost: true, rank: (person.boostLevel || 1) + 1 });
   if (!options.length) return null;
-  const total = options.reduce((sum: number, item: any) => sum + RARITY_WEIGHT[item.rank], 0);
-  let roll = random(state) * total;
-  const choice = options.find((item: any) => (roll -= RARITY_WEIGHT[item.rank]) < 0) || options[options.length - 1];
+  const choice = pickByRarity(state, options);
   return choice.boost ? boostChoice(state, person) : { kind: 'trait', key: choice.key };
 }
 
@@ -2215,7 +2217,7 @@ export function stepDay(state: any) {
     next.ledger = { opening: next.cash, income: 0, expense: 0, payroll: 0 };
     next.accrued = 0;
     next.over = next.cash < 0;
-    studioLog(next, `第 ${report.month} 月账单`, `收入 ${report.income.toFixed(2)} 万，支出 ${report.expense.toFixed(2)} 万，净变化 ${report.net.toFixed(2)} 万。`);
+    studioLog(next, `${monthText(report.month)}账单`, `收入 ${report.income.toFixed(2)} 万，支出 ${report.expense.toFixed(2)} 万，净变化 ${report.net.toFixed(2)} 万。`);
   }
   next.day += 1;
   return next;
@@ -2379,7 +2381,7 @@ export function setDeadline(state: any, projectId: string, days: number) {
   const exposure = Math.round(project.followers * MEDIA_BONUS[next.stars || 0]);
   project.followers += 150 + exposure;
   const extra = exposure ? `（含${STAR_NAMES[next.stars || 0]}工作室的媒体曝光 ${exposure} 人）` : '';
-  studioLog(next, '公布发售日', `计划第 ${project.deadline} 天发售《${project.name}》，新增 ${150 + exposure} 人关注${extra}；延期会损失关注。`);
+  studioLog(next, '公布发售日', `计划${dateText(project.deadline)}发售《${project.name}》，新增 ${150 + exposure} 人关注${extra}；延期会损失关注。`);
   const near = scheduleOf(next).filter((item: any) => !item.own && Math.abs(item.day - project.deadline) <= 3);
   if (near.length) announce(next, { kind: 'notice', title: '档期提醒', text: `同周已有${near.map((item: any) => item.name).join('、')}定档，首发可能被分流。`, amount: 0 });
   return next;
@@ -2474,7 +2476,7 @@ function remindClash(state: any, work: any) {
   if (work.tier !== state.focus && work.tier !== 2) return;
   for (const project of state.projects) {
     if (project.released || !project.deadline || Math.abs(project.deadline - work.released) > 3) continue;
-    announce(state, { kind: 'notice', title: '档期提醒', text: `${work.studioName}的《${work.name}》定档第 ${work.released} 天，和《${project.name}》同周。`, amount: 0 });
+    announce(state, { kind: 'notice', title: '档期提醒', text: `${work.studioName}的《${work.name}》定档${dueText(state, work.released)}，和《${project.name}》同周。`, amount: 0 });
   }
 }
 
@@ -2553,7 +2555,7 @@ function industryTick(state: any, quiet: boolean) {
     state.works.push(work);
     studio.pending = work.id;
     if (big && !quiet) {
-      news(state, studio.tier, studio.tier === 2, `${studio.name}公布新作《${work.name}》`, `定档第 ${work.released} 天，${TYPES[work.type].name}·${SCALES[work.scale].name}。`, studio.id);
+      news(state, studio.tier, studio.tier === 2, `${studio.name}公布新作《${work.name}》`, `定档${dateText(work.released)}，${TYPES[work.type].name}·${SCALES[work.scale].name}。`, studio.id);
       remindClash(state, work);
     }
   }
@@ -2624,7 +2626,7 @@ export function poachOffer(state: any, talentId: string, bid: number) {
   const wage = round(base * POACH_BIDS[bid]);
   const trend = studio ? rivalProfile(state, studio.id)?.trend : '平稳';
   const chance = round(clamp(0.2 + [0, 0.15, 0.3][bid] + ((state.focus || 0) - (studio?.tier ?? 1)) * 0.15 + (trend === '下滑' ? 0.1 : trend === '上升' ? -0.1 : 0), 0.05, 0.85));
-  const reason = talent.status !== 'employed' ? '此人现在不在对手那里' : state.office < 1 ? '搬进正式办公室后才能找猎头' : (talent.cooldown || 0) > state.day ? `被拒后要到第 ${talent.cooldown} 天才肯再谈` : state.staff.length >= seats(state) ? '工位已满' : state.cash < POACH_FEE ? `猎头费需要 ${POACH_FEE} 万` : '';
+  const reason = talent.status !== 'employed' ? '此人现在不在对手那里' : state.office < 1 ? '搬进正式办公室后才能找猎头' : (talent.cooldown || 0) > state.day ? `被拒后要到${dueText(state, talent.cooldown)}才肯再谈` : state.staff.length >= seats(state) ? '工位已满' : state.cash < POACH_FEE ? `猎头费需要 ${POACH_FEE} 万` : '';
   return { talent, studio, wage, chance, fee: POACH_FEE, reason, available: !reason };
 }
 
@@ -2667,6 +2669,22 @@ export function bulletinOf(state: any) {
   const own = list.filter((item: any) => item.own);
   const rest = list.filter((item: any) => !item.own);
   return [...own.slice(0, 3), ...rest].slice(0, 6);
+}
+
+// A year is 12 months of 30 days; day 1 is year 1, month 1, day 1.
+export function dateText(day: number) {
+  const index = Math.max(0, day - 1);
+  return `第 ${Math.floor(index / 360) + 1} 年 ${Math.floor(index % 360 / 30) + 1} 月 ${index % 30 + 1} 日`;
+}
+
+// Month-end reports count months from the start of play.
+export function monthText(month: number) {
+  return `第 ${Math.floor((month - 1) / 12) + 1} 年 ${(month - 1) % 12 + 1} 月`;
+}
+
+export function dueText(state: any, day: number) {
+  const left = day - state.day;
+  return dateText(day) + (left > 0 ? `（还有 ${left} 天）` : left === 0 ? '（今天）' : '');
 }
 
 // Everything dated in the next half year: expos, the awards, the media rating, announced releases.
@@ -2762,7 +2780,7 @@ export function enterExhibition(state: any, projectId?: string, tier = 0) {
   project.invested = round(project.invested + offer.fee);
   next.exhibitions.push({ day: offer.day, tier, project: project.id, name: project.name, metrics: projectMetrics(project), result: null });
   next.exhibitions = next.exhibitions.slice(-30);
-  studioLog(next, '展会报名成功', `《${project.name}》参加第 ${offer.day} 天${offer.name}。`);
+  studioLog(next, '展会报名成功', `《${project.name}》参加${dateText(offer.day)}的${offer.name}。`);
   return next;
 }
 
