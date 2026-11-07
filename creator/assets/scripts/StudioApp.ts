@@ -19,6 +19,15 @@ const navigation = [
   ['project', '项目', 'FolderKanban'], ['team', '团队', 'Users'],
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
 ];
+// A tip must bring its anchor into view from either direction. On the market page the promotion
+// cards are far down the list, so the tip before the exhibition one leaves the page scrolled down;
+// `current` is the restored offset at render time, `offset` the anchor's distance from the top.
+export function guideScrollTarget(current: number, offset: number, size: number, view: number): number | null {
+  const margin = 12;
+  if (offset < current + margin) return Math.max(0, offset - 16);
+  if (offset + size > current + view - margin) return Math.max(0, offset - view / 3);
+  return null;
+}
 const tierColors = ['#2f7d63', '#3b6ea5', '#7b55b8', '#d39a1e', '#d39a1e'];
 // One rarity ramp for tags and values: green → blue → purple → gold. Red is only for warnings.
 const toneColors: any = {
@@ -638,8 +647,11 @@ export class StudioApp extends Component {
       this.text(this.stage, '这一页没能画出来：' + (error?.message || error), 20, this.top + 70, this.width - 40, 60, 13, colors.danger);
       this.button(this.stage, '返回工作室', 20, this.top + 130, this.width - 40, 44, () => { this.routes = []; this.playing = false; this.render(); }, true);
     }
-    this.renderGuide();
+    // Restore the player's scroll position before measuring the guide anchor: renderGuide() may need
+    // to scroll back up to a tip near the top (the exhibition buttons right after the promotion
+    // cards), and a restore after it would silently undo that scroll and misplace the highlight.
     if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
+    this.renderGuide();
     this.scrollKey = key;
     if (this.notice || this.storageIssue) {
       const message = this.notice || this.storageIssue;
@@ -1783,7 +1795,8 @@ export class StudioApp extends Component {
       if (this.scrollView && target.parent === this.scrollBody) {
         const offset = -target.position.y;
         const size = target.getComponent(UITransform).height;
-        if (offset + size > this.scrollHeight - 10) this.scrollView.scrollToOffset(new Vec2(0, Math.max(0, offset - this.scrollHeight / 3)), 0);
+        const goal = guideScrollTarget(this.scrollView.getScrollOffset().y, offset, size, this.scrollHeight);
+        if (goal !== null) this.scrollView.scrollToOffset(new Vec2(0, goal), 0);
       }
       const bounds = target.getComponent(UITransform).getBoundingBoxToWorld();
       const local = this.stage.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(bounds.x, bounds.y, 0));
