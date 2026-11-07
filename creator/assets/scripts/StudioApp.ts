@@ -82,6 +82,8 @@ export class StudioApp extends Component {
   private officeSwiped = false;
   private activeTouches = new Set<number>();
   private renderPending = false;
+  // Wall-clock gap since the last daily redraw, so 12x speed does not rebuild the whole screen every frame.
+  private tickGap = 0;
   // timeUp clears both: a storage warning shares the toast with normal notices, so if it were left
   // behind, every later render would bring the old warning back and it could never be dismissed.
   private clearNotice = () => { this.notice = ''; this.storageIssue = ''; this.render(); };
@@ -174,7 +176,9 @@ export class StudioApp extends Component {
     // Real time with the game open, for the founder's dream; not scaled by game speed.
     if (this.state?.company) this.state.playSeconds = (this.state.playSeconds || 0) + Math.min(delta, 1);
     if (this.activeTouches.size || !this.playing || this.routes.length || this.inputRequest || this.state?.event || this.state?.over) return;
-    this.elapsed += Math.min(delta, 0.25) * this.speed;
+    const frame = Math.min(delta, 0.25);
+    this.elapsed += frame * this.speed;
+    this.tickGap += frame;
     let changed = false;
     const settledMonth = this.state.report?.month;
     try {
@@ -197,7 +201,17 @@ export class StudioApp extends Component {
         if (report.income > 0) this.playSound('income');
         this.celebrations.push({ kind: 'settle', title: core.monthText(report.month) + '结算', text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
       }
-      if (changed) { this.save(); this.render(); this.celebrate(); }
+      if (changed) {
+        this.save();
+        // At 12x a day can tick almost every frame, and each render destroys and rebuilds the whole
+        // main screen (hundreds of Graphics commands plus an animation per desk). State still advances
+        // every day; only the redraw is capped. Events, game over and stopping must appear at once.
+        if (this.tickGap >= 0.2 || !this.playing || this.state.event || this.state.over || this.routes.length) {
+          this.tickGap = 0;
+          this.render();
+        }
+        this.celebrate();
+      }
       if (changed && report && report.month !== settledMonth) this.floatAt(this.anchors.get('finance'), (report.net >= 0 ? '+' : '') + content.money(report.net), report.net >= 0 ? colors.green : colors.danger, 0.13);
     } catch (error) {
       this.playing = false;
@@ -645,16 +659,26 @@ export class StudioApp extends Component {
     const shown = sorted.slice(page * 20, page * 20 + 20);
     const layout = seatLayout(Math.min(20, Math.max(shown.length, core.seats(state) - page * 20)), inner, height);
     const desks = new Pen(this.box(node, 'Desks', 0, 0, inner, height).addComponent(Graphics));
+    // One node, one Graphics and one forever tween per head used to mean twenty live tweens and twenty
+    // extra Graphics components, all torn down and rebuilt on every daily redraw while the clock runs.
+    // Draw the faces into two shared Graphics instead: the working ones bob together, the rest stay put.
+    const bobbing = this.box(node, 'Heads', 0, 0, inner, height);
+    const bobbingPen = new Pen(bobbing.addComponent(Graphics));
+    const still = this.box(node, 'HeadsStill', 0, 0, inner, height);
+    const stillPen = new Pen(still.addComponent(Graphics));
+    let anyBobbing = false;
     layout.forEach((seat, index) => {
       const person = shown[index];
       drawDesk(desks, seat.x, seat.y, seat.scale, !!person, person?.role, working && person && person.leaveUntil <= state.day);
       if (!person) return;
-      const head = this.box(node, 'Head', seat.x, seat.y - 42 * seat.scale, 1, 1);
-      const face = new Pen(head.addComponent(Graphics));
-      drawAvatar(face, 0, 0, 11 * seat.scale, person.id);
-      if (person.stressTags.length) face.circle(8 * seat.scale, -12 * seat.scale, 3, colors.danger);
-      if (working && person.leaveUntil <= state.day) tween(head).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
+      const active = working && person.leaveUntil <= state.day;
+      const face = active ? bobbingPen : stillPen;
+      if (active) anyBobbing = true;
+      const cy = seat.y - 42 * seat.scale;
+      drawAvatar(face, seat.x, cy, 11 * seat.scale, person.id);
+      if (person.stressTags.length) face.circle(seat.x + 8 * seat.scale, cy - 12 * seat.scale, 3, colors.danger);
     });
+    if (anyBobbing) tween(bobbing).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
     if (pages > 1) {
       let startX = 0;
       node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { startX = event.getUILocation().x; this.officeSwiped = false; });
