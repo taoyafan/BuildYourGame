@@ -1118,7 +1118,10 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => introduce('goal', 'shelf', '欢迎！你是工作室的创始人。办公室里的奖杯架是成就墙：点开看看公司要走的里程碑。'),
       () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
       () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项；首作选小型就够。', tap: 'navProject' } : null,
-      () => project && !seen.track ? explain('track', 'track', '五项内容加测试各有工作量，六项里最慢的一项就是瓶颈；完成度只算五项内容，稳定还要看缺陷找没找到、修没修完。完成度 55% 解锁体验版、试玩与发售；做满后仍可返工。') : null,
+      // First look at development: only the bar and what its four milestones open. Work items,
+      // testing and defects are not on screen yet, so naming them here is a wall of jargon. The key
+      // changed with the wording so saves that dismissed the old tip see the corrected one.
+      () => project && !seen.trackIntro ? explain('trackIntro', 'track', '这条进度条显示作品做了多少，团队每天的工作都会推着它往前走。立项是开工；25% 出原型，作品有了雏形，也第一次看得到成绩；55% 完成体验版，能请玩家试玩、做推广，从这时起就能发售；100% 是全部做满，发售不必等到这一步。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
       // A hire is only useful against a short board, so the tip names the trade that covers the
