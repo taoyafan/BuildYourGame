@@ -82,8 +82,16 @@ export class StudioApp extends Component {
   private officeSwiped = false;
   private activeTouches = new Set<number>();
   private renderPending = false;
-  // Wall-clock gap since the last daily redraw, so 12x speed does not rebuild the whole screen every frame.
+  // Wall-clock gap since the last daily redraw, so the fastest speed does not rebuild the whole screen every frame.
   private tickGap = 0;
+  // Menus used to give every card, chip, divider and button its own Graphics component. One shared
+  // canvas per menu body draws all those static shapes in one mesh instead, which is what made the
+  // team and achievement pages slow to open. `ax`/`ay` live on each node as body-relative coords.
+  private shapePen: Pen | null = null;
+  private shapeRoot: Node | null = null;
+  // Wrapped text height only depends on the string, the width and the font size. Measuring it forces
+  // a synchronous Label layout, so keep the result across renders instead of repeating it.
+  private textHeights = new Map<string, number>();
   // timeUp clears both: a storage warning shares the toast with normal notices, so if it were left
   // behind, every later render would bring the old warning back and it could never be dismissed.
   private clearNotice = () => { this.notice = ''; this.storageIssue = ''; this.render(); };
@@ -203,10 +211,10 @@ export class StudioApp extends Component {
       }
       if (changed) {
         this.save();
-        // At 12x a day can tick almost every frame, and each render destroys and rebuilds the whole
-        // main screen (hundreds of Graphics commands plus an animation per desk). State still advances
-        // every day; only the redraw is capped. Events, game over and stopping must appear at once.
-        if (this.tickGap >= 0.2 || !this.playing || this.state.event || this.state.over || this.routes.length) {
+        // Even at 4x a day can tick on most frames, and each render rebuilds the whole main screen.
+        // State still advances every day; only the redraw is capped. Events, game over and stopping
+        // must appear at once.
+        if (this.tickGap >= 0.3 || !this.playing || this.state.event || this.state.over || this.routes.length) {
           this.tickGap = 0;
           this.render();
         }
@@ -262,7 +270,16 @@ export class StudioApp extends Component {
     transform.setAnchorPoint(0, 1);
     transform.setContentSize(width, height);
     node.setPosition(x, -y);
-    if (fill) new Pen(node.addComponent(Graphics)).rect(0, 0, width, height, fill, radius, alpha);
+    const ax = ((parent as any).ax ?? 0) + x;
+    const ay = ((parent as any).ay ?? 0) + y;
+    (node as any).ax = ax;
+    (node as any).ay = ay;
+    const batched = !!this.shapePen && (parent === this.shapeRoot || !!(parent as any).inBatch);
+    (node as any).inBatch = batched;
+    if (fill) {
+      if (batched) this.shapePen!.rect(ax, ay, width, height, fill, radius, alpha);
+      else new Pen(node.addComponent(Graphics)).rect(0, 0, width, height, fill, radius, alpha);
+    }
     return node;
   }
 
@@ -290,8 +307,20 @@ export class StudioApp extends Component {
     const label = this.text(parent, value, x, y, width, 28, size, color || (muted ? colors.muted : colors.ink));
     label.overflow = Label.Overflow.RESIZE_HEIGHT;
     label.verticalAlign = VerticalTextAlignment.TOP;
-    label.updateRenderData(true);
-    return Math.max(size + 12, label.node.getComponent(UITransform).height) + 10;
+    const key = `${width}|${size}|${value}`;
+    let measured = this.textHeights.get(key);
+    if (measured === undefined) {
+      // A new string has to be laid out now because everything below it is positioned from its height.
+      label.updateRenderData(true);
+      measured = label.node.getComponent(UITransform).height;
+      if (this.textHeights.size > 1500) this.textHeights.clear();
+      this.textHeights.set(key, measured);
+    } else {
+      // Already measured on a previous render: let the normal render pass build the label's render
+      // data, and just reserve the known height so the rest of the page keeps its layout.
+      label.node.getComponent(UITransform).setContentSize(width, measured);
+    }
+    return Math.max(size + 12, measured) + 10;
   }
 
   private image(parent: Node, resource: string, x: number, y: number, width: number, height: number, tint?: string) {
@@ -366,16 +395,27 @@ export class StudioApp extends Component {
   private choice(parent: Node, y: number, title: string, detail: string, callback: () => void, options: any = {}) {
     const width = this.width - 40;
     const node = this.box(parent, title, 0, y, width, 60);
-    const background = node.addComponent(Graphics);
+    // In a menu all card art goes onto one shared canvas. Keep the drawing order: card background
+    // first, then the tag / chips / avatar / radar that sit on top of it.
+    const batched = !!this.shapePen && (parent === this.shapeRoot || !!(parent as any).inBatch);
+    const pen = batched ? this.shapePen! : new Pen(node.addComponent(Graphics));
+    const ox = batched ? (node as any).ax : 0;
+    const oy = batched ? (node as any).ay : 0;
+    const shapes: (() => void)[] = [];
     let cursor = 12;
     if (options.icon) this.image(node, 'icons/' + options.icon, 14, 14, 20, 20, options.disabled ? colors.muted : colors.green);
-    if (options.avatar) drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar);
+    if (options.avatar) {
+      if (batched) shapes.push(() => drawAvatar(pen, ox + 25, oy + 25, 12, options.avatar));
+      else drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar);
+    }
     const left = options.icon || options.avatar ? 44 : 14;
     // A person card carries a small ability radar on the right; the text column makes room for it.
     const side = options.radar ? 70 : 0;
     this.text(node, title, left, cursor, width - left - side - (options.tag ? 70 : 14), 22, 15, options.disabled ? colors.muted : colors.ink, true);
     if (options.tag) {
-      const tag = this.box(node, 'Tag', width - 62 - side, cursor + 1, 50, 20, options.tagColor || colors.gold, 10);
+      const tagFill = options.tagColor || colors.gold;
+      const tag = this.box(node, 'Tag', width - 62 - side, cursor + 1, 50, 20, batched ? undefined : tagFill, 10);
+      if (batched) shapes.push(() => pen.rect((tag as any).ax, (tag as any).ay, 50, 20, tagFill, 10));
       this.text(tag, options.tag, 0, 0, 50, 20, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
     }
     cursor += 26;
@@ -383,29 +423,38 @@ export class StudioApp extends Component {
       this.text(node, detail, left, cursor - 2, width - left - 14 - side, 18, 12, colors.muted);
       cursor += 20;
     } else if (detail) cursor += this.paragraph(node, detail, cursor, true, left, width - left - 14 - side, 12) - 4;
-    if (options.chips?.length) cursor = this.chips(node, options.chips, left, cursor, width - left - 14 - side) + 4;
-    if (options.radar) cursor = Math.max(cursor, 74);
+    if (options.chips?.length) cursor = this.chips(node, options.chips, left, cursor, width - left - 14 - side, batched ? { pen, ox, oy, shapes } : undefined) + 4;
+    if (options.radar) {
+      cursor = Math.max(cursor, 74);
+      if (batched) shapes.push(() => this.miniRadar(null, ox + width - side + 4, oy + 8, 60, options.radar, pen));
+      else this.miniRadar(node, width - side + 4, 8, 60, options.radar);
+    }
     const height = cursor + 8;
-    if (options.radar) this.miniRadar(node, width - side + 4, 8, 60, options.radar);
     node.getComponent(UITransform).setContentSize(width, height);
-    const pen = new Pen(background);
-    pen.rect(0, 0, width, height, options.highlight ? '#fff8e6' : colors.paper, 10);
-    pen.frame(0, 0, width, height, options.highlight ? colors.gold : colors.line, options.highlight ? 2 : 1, 10);
+    pen.rect(ox, oy, width, height, options.highlight ? '#fff8e6' : colors.paper, 10);
+    pen.frame(ox, oy, width, height, options.highlight ? colors.gold : colors.line, options.highlight ? 2 : 1, 10);
+    shapes.forEach(draw => draw());
     this.clickable(node, callback, !options.disabled);
     if (options.anchor) this.anchors.set(options.anchor, node);
     return height;
   }
 
   // Tag chips coloured by rarity (green → blue → purple → gold); anything harmful is dark grey with a "!".
-  private chips(parent: Node, items: any[], x: number, y: number, width: number) {
+  private chips(parent: Node, items: any[], x: number, y: number, width: number, shared?: { pen: Pen; ox: number; oy: number; shapes: (() => void)[] }) {
     let cursorX = x;
     let cursorY = y;
     for (const item of items) {
       const label = (item.warn ? '! ' : '') + item.name;
       const chipWidth = item.name.length * 12 + 14 + (item.warn ? 10 : 0);
       if (cursorX + chipWidth > x + width && cursorX > x) { cursorX = x; cursorY += 22; }
-      const chip = this.box(parent, 'Chip', cursorX, cursorY, chipWidth, 18, toneColors[item.tone] || colors.green, 9);
-      this.text(chip, label, 0, 0, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      const cx = cursorX, cy = cursorY, fill = toneColors[item.tone] || colors.green;
+      if (shared) {
+        shared.shapes.push(() => shared.pen.rect(shared.ox + cx, shared.oy + cy, chipWidth, 18, fill, 9));
+        this.text(parent, label, cx, cy, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      } else {
+        const chip = this.box(parent, 'Chip', cx, cy, chipWidth, 18, fill, 9);
+        this.text(chip, label, 0, 0, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      }
       cursorX += chipWidth + 6;
     }
     return cursorY + 22;
@@ -418,14 +467,16 @@ export class StudioApp extends Component {
     return out;
   }
 
-  private miniRadar(parent: Node, x: number, y: number, size: number, abilities: any) {
-    const { pen } = this.canvasNode(parent, 'MiniRadar', x, y, size, size);
+  private miniRadar(parent: Node | null, x: number, y: number, size: number, abilities: any, shared?: Pen) {
+    const pen = shared || this.canvasNode(parent!, 'MiniRadar', x, y, size, size).pen;
+    const baseX = shared ? x : 0;
+    const baseY = shared ? y : 0;
     const values = this.abilityValues(abilities);
     const center = size / 2;
     const radius = size / 2 - 4;
     const point = (index: number, value: number) => {
       const angle = -Math.PI / 2 + index * Math.PI * 2 / 6;
-      return [center + Math.cos(angle) * radius * value / 100, center + Math.sin(angle) * radius * value / 100];
+      return [baseX + center + Math.cos(angle) * radius * value / 100, baseY + center + Math.sin(angle) * radius * value / 100];
     };
     const ring = core.DIM_KEYS.map((_key: string, index: number) => point(index, 100));
     pen.poly(([] as number[]).concat(...ring), colors.pale);
@@ -468,6 +519,8 @@ export class StudioApp extends Component {
   private clear() {
     this.anchors.clear();
     this.groupTops.clear();
+    this.shapePen = null;
+    this.shapeRoot = null;
     this.scrollView = null;
     this.scrollBody = null;
     for (const child of [...this.stage.children]) { child.removeFromParent(); child.destroy(); }
@@ -548,12 +601,15 @@ export class StudioApp extends Component {
     // best-effort guess, so keep the play/speed buttons a little further in rather than let the
     // last speed chip touch the capsule on devices whose capsule is wider than reported.
     const controlsRight = headerRight - (platform.mini ? 22 : 8);
-    const controlsLeft = controlsRight - 4 * 40;
+    // Play/pause plus the two speed caps (1x and 4x). The 12x button was removed: it made the clock
+    // outrun the interface and left no time to read what was happening.
+    const SPEEDS = [1, 4];
+    const controlsLeft = controlsRight - (SPEEDS.length + 1) * 40;
     const companyName = state.company || '日光工作室';
     this.text(this.stage, companyName, 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
     this.text(this.stage, core.dateText(state.day), 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');
-    [1, 4, 12].forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
+    SPEEDS.forEach((value, index) => this.button(this.stage, value + '×', controlsLeft + 40 + index * 40, top + 2, 38, 40, () => { this.speed = value; this.render(); }, this.speed === value));
     const financesY = top + 52;
     const finance = this.box(this.stage, 'Finance', 20, financesY, inner, 42, colors.paper, 10);
     this.anchors.set('finance', finance);
@@ -1013,11 +1069,27 @@ export class StudioApp extends Component {
     this.box(this.stage, 'Divider', 20, y + 54, this.width - 40, 1, colors.line);
     const footer = this.resumeAfterMenu && this.state.company && !this.state.event ? 64 : 0;
     const scroll = this.scroller(y + 68, this.height - y - 68 - this.bottom - footer);
+    // One Graphics for every static rectangle on this page. It is the first child of the scroll body,
+    // so all labels and buttons drawn afterwards stay on top of it. Body-relative coordinates start
+    // at zero here, which is what box() records on every descendant as ax/ay.
+    const body = scroll.body;
+    (body as any).ax = 0;
+    (body as any).ay = 0;
+    this.shapeRoot = body;
+    const shapes = this.box(body, 'Shapes', 0, 0, this.width - 40, 1);
+    shapes.setSiblingIndex(0);
+    this.shapePen = new Pen(shapes.addComponent(Graphics));
     let cursor = 0;
-    if (route.menu === 'setup') cursor = this.renderSetup(scroll.body);
-    else if (route.menu === 'new-project') cursor = this.renderNewProject(scroll.body);
-    else if (route.menu === 'history') cursor = this.renderHistory(scroll.body);
-    else for (const block of model.blocks) cursor = this.drawBlock(scroll.body, block, cursor);
+    try {
+      if (route.menu === 'setup') cursor = this.renderSetup(body);
+      else if (route.menu === 'new-project') cursor = this.renderNewProject(body);
+      else if (route.menu === 'history') cursor = this.renderHistory(body);
+      else for (const block of model.blocks) cursor = this.drawBlock(body, block, cursor);
+    } finally {
+      shapes.getComponent(UITransform).setContentSize(this.width - 40, Math.max(1, cursor));
+      this.shapePen = null;
+      this.shapeRoot = null;
+    }
     scroll.finish(cursor);
     if (footer) this.button(this.stage, '返回工作室，继续经营', 20, this.height - this.bottom - 54, this.width - 40, 46, () => this.closeMenu(), true, false, 'Play');
   }
@@ -1118,7 +1190,8 @@ export class StudioApp extends Component {
         const node = this.box(parent, 'Note', 0, y, width, 40);
         const height = this.paragraph(node, block.text, 10, false, 40, width - 52, 13) + 10;
         node.getComponent(UITransform).setContentSize(width, height);
-        new Pen(node.addComponent(Graphics)).rect(0, 0, width, height, '#fff8e6', 8);
+        if (this.shapePen && (node as any).inBatch) this.shapePen.rect((node as any).ax, (node as any).ay, width, height, '#fff8e6', 8);
+        else new Pen(node.addComponent(Graphics)).rect(0, 0, width, height, '#fff8e6', 8);
         this.image(node, 'icons/' + (block.icon || 'Star'), 12, 10, 18, 18, colors.amber);
         return y + height + 12;
       }
@@ -1814,21 +1887,27 @@ export class StudioApp extends Component {
     this.celebrate();
   }
 
+  private setNotice(message: string) {
+    this.notice = String(message || '操作未完成');
+    this.noticeFresh = true;
+    this.unschedule(this.clearNotice);
+    this.scheduleOnce(this.clearNotice, 2.5);
+  }
+
   private apply(next: any, message?: string) {
     this.state = this.drain(next);
     this.save();
     if (next.event) { this.playing = false; this.resumeAfterMenu = false; this.routes = [{ menu: 'event' }]; }
     if (next.over) { this.playing = false; this.resumeAfterMenu = false; }
+    // Put the toast on the page before drawing it. Calling notify() afterwards rebuilt the entire
+    // screen a second time for every action that showed a message.
+    if (message) this.setNotice(message);
     this.render();
-    if (message) this.notify(message);
     this.celebrate();
   }
 
   private notify(message: string) {
-    this.notice = String(message || '操作未完成');
-    this.noticeFresh = true;
-    this.unschedule(this.clearNotice);
-    this.scheduleOnce(this.clearNotice, 2.5);
+    this.setNotice(message);
     this.render();
   }
 
