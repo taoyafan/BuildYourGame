@@ -125,6 +125,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'slot-delete': return slotDeleteMenu(slots, route.id);
     case 'new-project': return newProjectMenu(state);
     case 'project': return projectMenu(state, route.id);
+    case 'launch-confirm': return launchConfirmMenu(state, route.id);
     case 'dimension': return dimensionMenu(state, route.id, route.dim);
     case 'assign': return assignMenu(state, route.id);
     case 'testing': return testingMenu(state, route.id);
@@ -280,7 +281,6 @@ function projectMenu(state: any, id?: string) {
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '已推广 ' + money(project.promoted) + ' · 报名展会' : '每作推广一次 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
       ...(demo && project.deadline === null ? [{ text: '公布 ' + core.RELEASE_LEAD_DAYS + ' 天后发售', detail: '换一笔关注' + (state.stars ? '，' + core.STAR_NAMES[state.stars] + '工作室的媒体曝光更多' : '') + '；延期或取消会损失关注。', icon: 'CalendarDays', action: 'deadline', data: { id: project.id, days: core.RELEASE_LEAD_DAYS }, anchor: 'deadline' }] : []),
-      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '' },
       { text: '再开一个项目', detail: '多项目并行时，排在后面的项目有协调成本。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
     ] },
     ...(project.work.sound.done < project.work.sound.total - 0.001 && project.soundOut == null ? [
@@ -288,9 +288,36 @@ function projectMenu(state: any, id?: string) {
       { type: 'buttons', items: core.SOUND_OUTSOURCE.map((plan: any, index: number) => ({ text: plan.name + ' · ' + money(plan.cost), action: 'outsource', data: { id: project.id, tier: index }, disabled: state.cash < plan.cost, anchor: 'outsource-' + index })) },
       { type: 'text', text: '外包能立刻完成一部分声音工作，代价是这一维做不高；之后可由音频岗返工提高。' + core.SOUND_OUTSOURCE[0].text, muted: true }
     ] : []),
-    { type: 'checklist', items: core.launchChecklist(state, project) }
+    { type: 'checklist', items: core.launchChecklist(state, project) },
+    // Shipping is irreversible. Keep the button below the five self-check rows so the player reads
+    // them first and cannot hit it while scrolling through the action cards.
+    { type: 'section', title: '发售（不可撤销）' },
+    { type: 'actions', items: [
+      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '' }
+    ] }
   ];
   return { title: '项目', blocks };
+}
+
+// A second step before an irreversible release: name the work, show what is unfinished, and make the
+// confirming press a different action from the one that opened this page.
+function launchConfirmMenu(state: any, id?: string) {
+  const project = core.activeProject(state, id);
+  // The project page already disables the launch button before the trial build; do not add a second
+  // progress gate here, since two different metrics would let the button open a page that refuses it.
+  if (!project || project.released) return { title: '确认发售', blocks: [{ type: 'text', text: '这部作品现在不能发售。' }] };
+  const metrics = core.visibleMetrics(project);
+  const early = metrics.unfinished.length > 0;
+  const blocks: any[] = [
+    { type: 'note', icon: 'Rocket', text: '《' + project.name + '》发售后立即结算首发成绩，转入作品履历，不能再继续制作、返工或推广。' },
+    { type: 'text', text: early ? '还有 ' + metrics.unfinished.length + ' 维没做满（完成度 ' + metrics.progress.toFixed(0) + '%），提前发售会带着这些短板上架，评分与首发收入都会受影响。' : '内容已做满（完成度 ' + metrics.progress.toFixed(0) + '%）。', muted: true },
+    { type: 'text', text: '发售前自查：计划内容、试玩、待修缺陷、六维估计、关注人数，都列在项目页。', muted: true },
+    { type: 'buttons', items: [
+      { text: '再想想', action: 'launch-cancel' },
+      { text: early ? '确认提前发售' : '确认发售', action: 'launch-final', data: { id: project.id }, icon: 'Rocket' }
+    ] }
+  ];
+  return { title: early ? '确认提前发售？' : '确认发售？', blocks };
 }
 
 // A running patch is a small project of its own: its scope, crew, progress and launch date.
@@ -1147,7 +1174,9 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
 function unlockStep(state: any, route: any): GuideStep | null {
   const seen = state.tutorial.seen;
   const once = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };
-  const project = core.projectOpen(state)[0];
+  // Explain the project actually on screen. Sorting-first made a tip point at a button that belongs
+  // to another project (or one that is not on this page at all) once several games run at once.
+  const project = core.activeProject(state, route?.id) || core.projectOpen(state)[0];
   const demo = !!project?.checkpoints?.demo;
   if (!route) {
     if (state.event) return null;
@@ -1188,7 +1217,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
 
 function tutorialStep(state: any, route: any, playing: boolean): GuideStep | null {
   const seen = state.tutorial.seen;
-  const project = core.projectOpen(state)[0];
+  const project = core.activeProject(state, route?.id) || core.projectOpen(state)[0];
   const hasTeammate = state.staff.some((person: any) => !person.founder);
   const complete = !!project && project.progress >= 100;
   const explain = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };

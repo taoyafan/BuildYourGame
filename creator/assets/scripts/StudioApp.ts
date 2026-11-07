@@ -72,6 +72,10 @@ export class StudioApp extends Component {
   private notice = '';
   private noticeFresh = false;
   private scrollKey = '';
+  // The offset this render restored, before the guide may scroll to its anchor. A freshly rebuilt
+  // ScrollView has not laid out its boundaries yet, so getScrollOffset() right after clear() is not
+  // a trustworthy "where was the page" answer; `keep` is the offset the player actually left behind.
+  private scrollKeep = 0;
   private storageIssue = '';
   private anchors = new Map<string, Node>();
   private scrollView: ScrollView | null = null;
@@ -635,6 +639,7 @@ export class StudioApp extends Component {
     // clock ran snapped back to the top every tick. A different screen starts at the top again.
     const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>');
     const keep = key === this.scrollKey && this.scrollView ? this.scrollView.getScrollOffset().y : 0;
+    this.scrollKeep = keep;
     this.clear();
     this.box(this.stage, 'Paper', 0, 0, this.width, this.height, colors.bg);
     // A screen that throws half-way used to leave a blank page with no way back. Draw the reason on
@@ -1795,7 +1800,7 @@ export class StudioApp extends Component {
       if (this.scrollView && target.parent === this.scrollBody) {
         const offset = -target.position.y;
         const size = target.getComponent(UITransform).height;
-        const goal = guideScrollTarget(this.scrollView.getScrollOffset().y, offset, size, this.scrollHeight);
+        const goal = guideScrollTarget(this.scrollKeep, offset, size, this.scrollHeight);
         if (goal !== null) this.scrollView.scrollToOffset(new Vec2(0, goal), 0);
       }
       const bounds = target.getComponent(UITransform).getBoundingBoxToWorld();
@@ -2068,7 +2073,11 @@ export class StudioApp extends Component {
           this.apply(next, '推广带来 ' + content.number(core.activeProject(next, data.id)?.promoFollowers || 0) + ' 位关注。');
           break;
         }
-        case 'launch': this.apply(core.launchProject(this.state, data.id)); break;
+        // Releasing is irreversible. The project-page button only opens a confirmation screen; the
+        // confirming press is a separate action so a stray tap can never ship the game.
+        case 'launch': this.openMenu('launch-confirm', data.id); break;
+        case 'launch-cancel': this.routes.pop(); this.render(); break;
+        case 'launch-final': this.apply(core.launchProject(this.state, data.id)); break;
         case 'decision': this.decide(data.choice); break;
         case 'review':
           this.apply(core.resolveStudioEvent(this.state, 'continue'));
