@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.46';
+export const VERSION = '0.1.47';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -3462,4 +3462,41 @@ function validStudio(state: any) {
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
   if (!object(state.goals) || !object(state.tutorial) || !object(state.overtime) || !Array.isArray(state.rankings) || !Array.isArray(state.exhibitions) || !Array.isArray(state.awards) || !Array.isArray(state.history) || !Array.isArray(state.reports)) return false;
   return true;
+}
+
+// ---- Save slots ----------------------------------------------------------------
+// There used to be one save, and moving it between devices meant copying a huge JSON blob through a
+// text box. Each playthrough now gets its own storage key; a small index remembers the active one.
+export const SAVE_SLOT_LIMIT = 5;
+export const SAVE_INDEX_KEY = 'sunlight-studio-slots';
+export const SAVE_LEGACY_KEY = 'sunlight-studio-v2';
+export const SAVE_LEGACY_BACKUP_KEY = 'sunlight-studio-v2-backup';
+export const SAVE_RECOVERY_KEY = 'sunlight-studio-slot-recovery';
+export const SAVE_SLOT_KEY = (id: number) => 'sunlight-studio-slot-' + id;
+
+export function normalizeSaveIndex(value: any) {
+  if (!value || !Array.isArray(value.slots)) return null;
+  const slots = Array.from(new Set<number>(value.slots.map(Number).filter((id: number) => Number.isInteger(id) && id > 0))).slice(0, SAVE_SLOT_LIMIT);
+  if (!slots.length) return null;
+  const active = slots.includes(Number(value.active)) ? Number(value.active) : slots[0];
+  return { active, nextId: Math.max(Math.max(...slots) + 1, Number(value.nextId) || 1), slots };
+}
+
+// Reading the raw save keeps the index tiny: a daily autosave never has to rewrite slot metadata.
+export function slotSummary(raw: string | null, id: number, index: number, active: boolean) {
+  const empty = { id, index, active, empty: true, error: false, company: '', day: 1, cash: 0, works: 0, staff: 0 };
+  if (!raw) return empty;
+  try {
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return { ...empty, error: true };
+    return {
+      id, index, active, error: false,
+      empty: !saved.company,
+      company: String(saved.company || ''),
+      day: Number(saved.day) || 1,
+      cash: Number(saved.cash) || 0,
+      works: Array.isArray(saved.catalog) ? saved.catalog.length : 0,
+      staff: Array.isArray(saved.staff) ? saved.staff.length : 0
+    };
+  } catch { return { ...empty, error: true }; }
 }

@@ -28,8 +28,9 @@ const toneColors: any = {
 const actionIcons: any = {
   menu: 'ChevronRight', test: 'FlaskConical', exhibition: 'Award', outsource: 'Music', recruit: 'UserPlus', hire: 'UserPlus',
   dismiss: 'UserMinus', outing: 'Plane', deadline: 'CalendarDays', launch: 'Rocket', review: 'ChartNoAxesCombined',
-  move: 'Building2', export: 'Download', import: 'Upload', 'restart-confirm': 'RotateCcw', promote: 'Megaphone', mentor: 'GraduationCap',
-  poach: 'Briefcase', sale: 'Coins', dlc: 'Gift', sequel: 'Sparkles'
+  move: 'Building2', 'restart-confirm': 'RotateCcw', promote: 'Megaphone', mentor: 'GraduationCap',
+  poach: 'Briefcase', sale: 'Coins', dlc: 'Gift', sequel: 'Sparkles',
+  'new-slot': 'Sparkles', 'load-slot': 'Play', 'delete-slot': 'UserMinus'
 };
 
 @ccclass('StudioApp')
@@ -56,7 +57,9 @@ export class StudioApp extends Component {
   private policy = -1;
   private frames = new Map<string, SpriteFrame>();
   private frameLoads = new Map<string, Array<(frame: SpriteFrame) => void>>();
-  private inputRequest: any = null;
+  // Every playthrough lives in its own storage key; `slot` is the one currently being played.
+  private slot = 1;
+  private slotIndex: any = null;
   private notice = '';
   private noticeFresh = false;
   private scrollKey = '';
@@ -183,7 +186,7 @@ export class StudioApp extends Component {
   update(delta: number) {
     // Real time with the game open, for the founder's dream; not scaled by game speed.
     if (this.state?.company) this.state.playSeconds = (this.state.playSeconds || 0) + Math.min(delta, 1);
-    if (this.activeTouches.size || !this.playing || this.routes.length || this.inputRequest || this.state?.event || this.state?.over) return;
+    if (this.activeTouches.size || !this.playing || this.routes.length || this.state?.event || this.state?.over) return;
     const frame = Math.min(delta, 0.25);
     this.elapsed += frame * this.speed;
     this.tickGap += frame;
@@ -228,24 +231,88 @@ export class StudioApp extends Component {
   }
 
   private load() {
+    let index: any = null;
     try {
-      const raw = platform.read();
+      const rawIndex = platform.read(core.SAVE_INDEX_KEY);
+      if (rawIndex) index = core.normalizeSaveIndex(JSON.parse(rawIndex));
+    } catch { index = null; }
+    if (!index) {
+      // Upgrading from the single-save build: move the old save into slot 1 and keep a backup copy,
+      // so nobody loses a company just because the save format grew slots.
+      let legacy: string | null = null;
+      try { legacy = platform.read(core.SAVE_LEGACY_KEY); } catch { /* storage unreadable */ }
+      index = { active: 1, nextId: 2, slots: [1] };
+      try {
+        // An interrupted migration can leave slot 1 written but the index missing. Never overwrite an
+        // existing slot in that case, or a second launch would erase the very progress we moved.
+        const existing = platform.read(core.SAVE_SLOT_KEY(1));
+        if (legacy && !existing) {
+          platform.write(legacy, core.SAVE_SLOT_KEY(1));
+          platform.write(legacy, core.SAVE_LEGACY_BACKUP_KEY);
+          platform.remove(core.SAVE_LEGACY_KEY);
+        } else if (!legacy && !existing) {
+          platform.write(JSON.stringify(core.createStudio()), core.SAVE_SLOT_KEY(1));
+        }
+        platform.write(JSON.stringify(index), core.SAVE_INDEX_KEY);
+      } catch { this.storageIssue = '设备存储不可用，进度可能无法保存。'; }
+    }
+    this.slotIndex = index;
+    this.slot = index.active;
+    try {
+      const raw = platform.read(core.SAVE_SLOT_KEY(this.slot));
       if (raw) return core.restoreStudio(JSON.parse(raw));
     } catch {
       // Keep the unreadable copy aside, then start fresh. The warning is shown once and can be dismissed;
       // it must not come back on every render, or the player can never get rid of it.
       try {
-        const raw = platform.read();
-        if (raw) platform.write(raw, 'sunlight-studio-v2-recovery');
-      } catch { this.storageIssue = '本地存档不可用，请及时导出进度。'; }
-      this.storageIssue ||= '旧存档无法读取，已另存为恢复副本，新开了一局。';
+        const raw = platform.read(core.SAVE_SLOT_KEY(this.slot));
+        if (raw) platform.write(raw, core.SAVE_RECOVERY_KEY);
+      } catch { this.storageIssue = '设备存储不可用，进度可能无法保存。'; }
+      this.storageIssue ||= '这份存档无法读取，已另存为恢复副本，新开了一局。';
     }
     return core.createStudio();
   }
 
   private save() {
-    try { platform.write(JSON.stringify(this.state)); }
-    catch { this.storageIssue = '本地保存失败，请从公司菜单导出进度。'; }
+    try { platform.write(JSON.stringify(this.state), core.SAVE_SLOT_KEY(this.slot)); }
+    catch { this.storageIssue = '保存失败，请检查设备存储空间。'; }
+  }
+
+  private writeSlotIndex() {
+    try { platform.write(JSON.stringify(this.slotIndex), core.SAVE_INDEX_KEY); }
+    catch { this.storageIssue = '存档列表保存失败，请检查设备存储空间。'; }
+  }
+
+  private slotSummaries() {
+    return (this.slotIndex?.slots || []).map((id: number, index: number) => {
+      let raw: string | null = null;
+      try { raw = platform.read(core.SAVE_SLOT_KEY(id)); } catch { /* unreadable slot */ }
+      return core.slotSummary(raw, id, index + 1, id === this.slot);
+    });
+  }
+
+  // Switching saves changes every id on screen, so drop all per-playthrough view state first.
+  private enterSlot(next: any, message: string) {
+    this.playing = false;
+    this.resumeAfterMenu = false;
+    this.guidePaused = false;
+    this.elapsed = 0;
+    this.celebrations = [];
+    this.shown = null;
+    this.watching = null;
+    this.draft = { name: '', type: '', scale: 0 };
+    this.notice = '';
+    this.officePage = 0;
+    this.chartSelection = null;
+    this.scrollKey = '';
+    this.menuAck = null;
+    this.routes = [];
+    this.state = this.drain(next);
+    this.save();
+    if (!next.company) this.routes = [{ menu: 'setup' }];
+    else if (next.event) this.routes = [{ menu: 'event' }];
+    this.setNotice(message);
+    this.render();
   }
 
   // Moves milestone announcements out of the save into the on-screen queue.
@@ -550,29 +617,28 @@ export class StudioApp extends Component {
     if (!this.stage || !this.state) return;
     if (this.activeTouches.size) { this.renderPending = true; return; }
     this.renderPending = false;
-    if (this.playing && !this.routes.length && !this.inputRequest && !this.state.event && !this.state.over && content.guide(this.state, null, true)?.ack) {
+    if (this.playing && !this.routes.length && !this.state.event && !this.state.over && content.guide(this.state, null, true)?.ack) {
       this.guidePaused = true;
       this.playing = false;
       this.elapsed = 0;
     }
     // A day tick re-renders the whole page. Without carrying the offset over, scrolling down while the
     // clock ran snapped back to the top every tick. A different screen starts at the top again.
-    const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>') + (this.inputRequest ? '#' : '');
+    const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>');
     const keep = key === this.scrollKey && this.scrollView ? this.scrollView.getScrollOffset().y : 0;
     this.clear();
     this.box(this.stage, 'Paper', 0, 0, this.width, this.height, colors.bg);
     // A screen that throws half-way used to leave a blank page with no way back. Draw the reason on
     // the page instead, and keep the bottom navigation alive so the player can still move around.
     try {
-      if (this.inputRequest) this.renderInput();
-      else if (this.routes.length) this.renderMenu();
+      if (this.routes.length) this.renderMenu();
       else this.renderStudio();
     } catch (error: any) {
       console.error('Render failed:', error);
       this.text(this.stage, '这一页没能画出来：' + (error?.message || error), 20, this.top + 70, this.width - 40, 60, 13, colors.danger);
-      this.button(this.stage, '返回工作室', 20, this.top + 130, this.width - 40, 44, () => { this.routes = []; this.inputRequest = null; this.playing = false; this.render(); }, true);
+      this.button(this.stage, '返回工作室', 20, this.top + 130, this.width - 40, 44, () => { this.routes = []; this.playing = false; this.render(); }, true);
     }
-    if (!this.inputRequest) this.renderGuide();
+    this.renderGuide();
     if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
     this.scrollKey = key;
     if (this.notice || this.storageIssue) {
@@ -1057,7 +1123,9 @@ export class StudioApp extends Component {
   private renderMenu() {
     const route = this.routes[this.routes.length - 1];
     const custom = ['setup', 'new-project', 'history'].includes(route.menu);
-    const model = custom ? null : content.menu(this.state, route);
+    // Save pages need the slot list, which lives in device storage rather than in the state.
+    const slotPage = ['slots', 'new-slot-confirm', 'slot', 'slot-delete'].includes(route.menu);
+    const model = custom ? null : content.menu(this.state, route, slotPage ? this.slotSummaries() : []);
     const title = route.menu === 'setup' ? '成立工作室' : route.menu === 'new-project' ? '新作立项' : route.menu === 'history' ? '经营记录' : model.title;
     const y = this.top;
     if (this.routes.length > 1) this.button(this.stage, '', 20, y, 40, 40, () => { this.routes.pop(); this.render(); }, false, false, 'ArrowLeft');
@@ -1666,7 +1734,7 @@ export class StudioApp extends Component {
 
   // Non-blocking banner for milestones; does not pause the game.
   private celebrate() {
-    if (this.celebrating || !this.celebrations.length || this.routes.length || this.inputRequest) return;
+    if (this.celebrating || !this.celebrations.length || this.routes.length) return;
     const item = this.celebrations.shift();
     this.celebrating = true;
     const width = this.width - 40;
@@ -1692,7 +1760,7 @@ export class StudioApp extends Component {
     const next = content.guide(this.state, null, false);
     if (next?.ack) return;
     this.guidePaused = false;
-    if (!this.routes.length && !this.inputRequest && !this.state.event && !this.state.over) {
+    if (!this.routes.length && !this.state.event && !this.state.over) {
       this.playing = true;
       this.elapsed = 0;
     }
@@ -1813,7 +1881,9 @@ export class StudioApp extends Component {
     }
   }
 
-  private input(parent: Node, placeholder: string, value: string, y: number, height: number, changed: (value: string) => void, multiline = false) {
+  // Only short names go through an EditBox. Feeding a whole save JSON into one made the label lay out
+  // tens of thousands of characters on the UI thread, which is what froze the export screen.
+  private input(parent: Node, placeholder: string, value: string, y: number, height: number, changed: (value: string) => void) {
     const width = this.width - 40;
     const field = this.box(parent, 'InputBackground', 0, y, width, height, colors.paper, 8);
     const node = this.box(field, 'Input', 12, 5, width - 24, height - 10);
@@ -1821,33 +1891,17 @@ export class StudioApp extends Component {
     node.setPosition(width / 2, -height / 2);
     node.active = false;
     const edit = node.addComponent(EditBox);
-    edit.inputMode = multiline ? EditBox.InputMode.ANY : EditBox.InputMode.SINGLE_LINE;
+    edit.inputMode = EditBox.InputMode.SINGLE_LINE;
     for (const child of [...node.children]) { child.removeFromParent(); child.destroy(); }
-    edit.textLabel = this.text(node, '', -(width - 24) / 2, -(height - 10) / 2, width - 24, height - 10, multiline ? 16 : 15, colors.ink);
+    edit.textLabel = this.text(node, '', -(width - 24) / 2, -(height - 10) / 2, width - 24, height - 10, 15, colors.ink);
     edit.placeholderLabel = this.text(node, placeholder, -(width - 24) / 2, -(height - 10) / 2, width - 24, height - 10, 15, colors.muted);
     edit.textLabel.overflow = Label.Overflow.CLAMP;
     edit.placeholderLabel.overflow = Label.Overflow.CLAMP;
-    edit.maxLength = multiline ? 1048576 : 24;
+    edit.maxLength = 24;
     edit.string = value;
     node.on('text-changed', (box: EditBox) => changed(box.string));
     node.active = true;
     return edit;
-  }
-
-  private renderInput() {
-    const request = this.inputRequest;
-    this.text(this.stage, request.title, 20, this.top, this.width - 40, 40, 22, colors.ink, true);
-    const container = this.box(this.stage, 'InputForm', 20, this.top + 67, this.width - 40, this.height - this.top - 100);
-    const height = request.multiline ? Math.max(100, Math.min(300, this.height - this.top - this.bottom - 240)) : 54;
-    this.input(container, request.multiline ? '粘贴存档 JSON' : '请输入', request.value || '', 0, height, value => { request.value = value; }, request.multiline);
-    this.button(container, request.readonly ? '复制到剪贴板' : '确认', 0, height + 20, this.width - 40, 48, () => {
-      try {
-        const result = request.accept(request.value || '');
-        if (result?.catch) result.catch(error => this.notify(error.message));
-        if (!request.readonly) { this.inputRequest = null; this.render(); }
-      } catch (error) { this.notify(error.message); }
-    }, true);
-    this.button(container, '返回', 0, height + 81, this.width - 40, 44, () => { this.inputRequest = null; this.render(); });
   }
 
   private openMenu(menu: string, id?: string, critical = false, dim?: string) {
@@ -1879,7 +1933,6 @@ export class StudioApp extends Component {
       return;
     }
     this.routes = [];
-    this.inputRequest = null;
     this.playing = this.resumeAfterMenu && !this.state.over;
     this.resumeAfterMenu = false;
     this.elapsed = 0;
@@ -2010,34 +2063,45 @@ export class StudioApp extends Component {
           this.openMenu('book', data.id);
           break;
         case 'move': this.apply(core.moveOffice(this.state)); this.closeMenu(); this.celebrate(); break;
-        case 'export': {
-          const raw = JSON.stringify(this.state);
-          this.inputRequest = { title: '导出存档', value: raw, multiline: true, readonly: true, accept: () => platform.copy(raw).then(() => this.notify('存档已复制。')) };
-          this.render();
-          platform.download(raw).catch(error => this.notify(error.message));
+        case 'load-slot': {
+          const id = Number(data.id);
+          if (id === this.slot) break;
+          if (!this.slotIndex.slots.includes(id)) throw new Error('这份存档不存在。');
+          const raw = platform.read(core.SAVE_SLOT_KEY(id));
+          if (!raw) throw new Error('这份存档是空的，无法加载。');
+          const next = core.restoreStudio(JSON.parse(raw));
+          this.save();
+          this.slot = id;
+          this.slotIndex.active = id;
+          this.writeSlotIndex();
+          this.enterSlot(next, '已加载存档 ' + (this.slotIndex.slots.indexOf(id) + 1) + '，时间保持暂停。');
           break;
         }
-        case 'import':
-          this.inputRequest = { title: '导入存档', value: '', multiline: true, accept: (raw: string) => {
-            if (raw.length > 1048576) throw new Error('存档文件过大。');
-            const next = core.restoreStudio(JSON.parse(raw));
-            this.playing = false;
-            this.resumeAfterMenu = false;
-            this.routes = [];
-            this.shown = null;
-            this.apply(next, '存档已恢复，时间保持暂停。');
-            if (!next.company) this.routes = [{ menu: 'setup' }];
-          } };
-          this.render();
+        case 'new-slot': {
+          if (this.slotIndex.slots.length >= core.SAVE_SLOT_LIMIT) throw new Error('存档已满，请先删除一个存档。');
+          this.save();
+          const id = this.slotIndex.nextId++;
+          this.slotIndex.slots.push(id);
+          this.slotIndex.active = id;
+          this.slot = id;
+          this.writeSlotIndex();
+          this.enterSlot(core.createStudio(), '新存档已建好，先给工作室起个名字。');
           break;
+        }
+        case 'delete-slot': {
+          const id = Number(data.id);
+          if (id === this.slot) throw new Error('正在游玩的存档不能删除。');
+          if (!this.slotIndex.slots.includes(id)) throw new Error('这份存档不存在。');
+          try { platform.remove(core.SAVE_SLOT_KEY(id)); } catch { /* already gone */ }
+          this.slotIndex.slots = this.slotIndex.slots.filter((item: number) => item !== id);
+          this.writeSlotIndex();
+          const at = this.routes.findIndex((route: any) => route.menu === 'slots');
+          this.routes = at >= 0 ? this.routes.slice(0, at + 1) : [{ menu: 'slots' }];
+          this.notify('存档已删除。');
+          break;
+        }
         case 'restart-confirm':
-          this.playing = false;
-          this.resumeAfterMenu = false;
-          this.celebrations = [];
-          this.shown = null;
-          this.draft = { name: '', type: '', scale: 0 };
-          this.routes = [{ menu: 'setup' }];
-          this.apply(core.createStudio());
+          this.enterSlot(core.createStudio(), '新的一局开始了，先给工作室起个名字。');
           break;
       }
     } catch (error) { this.notify(error.message || '本次操作未执行。'); }

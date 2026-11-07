@@ -2,7 +2,6 @@ import { sys, view } from 'cc';
 
 const host: any = globalThis as any;
 const api = host.wx || host.tt;
-const key = 'sunlight-studio-v2';
 
 // Browser notch/home-indicator insets in CSS pixels (0 when the page is not edge-to-edge).
 function webSafeArea() {
@@ -21,13 +20,17 @@ export const platform = {
   // True on the mini program (wx/tt), where the native capsule sits on top of the canvas and the
   // layout has to leave room for it. Web builds are only constrained by the notch safe area.
   get mini(): boolean { return !!api; },
-  read(name = key): string | null {
+  read(name: string): string | null {
     const value = api ? api.getStorageSync(name) : sys.localStorage.getItem(name);
     return value === '' || value == null ? null : String(value);
   },
-  write(value: string, name = key) {
+  write(value: string, name: string) {
     if (api) api.setStorageSync(name, value);
     else sys.localStorage.setItem(name, value);
+  },
+  remove(name: string) {
+    if (api) api.removeStorageSync(name);
+    else sys.localStorage.removeItem(name);
   },
   insets() {
     const visible = view.getVisibleSize();
@@ -70,21 +73,5 @@ export const platform = {
   },
   onHide(callback: () => void) {
     api?.onHide?.(callback);
-  },
-  async copy(text: string): Promise<void> {
-    if (api) {
-      return new Promise((resolve, reject) => api.setClipboardData({ data: text, success: () => resolve(), fail: reject }));
-    }
-    if (host.navigator?.clipboard) return host.navigator.clipboard.writeText(text);
-    throw new Error('剪贴板不可用，请使用存档窗口中的文本。');
-  },
-  async download(text: string) {
-    if (api || !host.document) return this.copy(text);
-    const url = host.URL.createObjectURL(new host.Blob([text], { type: 'application/json' }));
-    const link = host.document.createElement('a');
-    link.href = url;
-    link.download = 'sunlight-studio-save.json';
-    link.click();
-    host.setTimeout(() => host.URL.revokeObjectURL(url), 1000);
   }
 };

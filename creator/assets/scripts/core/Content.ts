@@ -40,7 +40,7 @@ export function bestChannel(state: any) {
 export function advice(state: any, projectId?: string) {
   const shown = projectId ? state.projects.find((item: any) => item.id === projectId) || null : null;
   const project = shown || core.liveProjects(state)[0] || core.projectOpen(state)[0] || null;
-  if (state.over) return { title: '公司未能支付月底开支', text: '可在公司菜单导出或重新创业。', menu: 'finance' };
+  if (state.over) return { title: '公司未能支付月底开支', text: '可在「存档管理」加载别的存档，或者重新创业。', menu: 'finance' };
   if (state.event) return { title: state.event.title, text: '需要你做个决定，时间已暂停。', menu: 'event' };
   const worker = state.staff[0];
   if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: 'code:' + bestChannel(state) };
@@ -115,10 +115,14 @@ function recruitMenu(state: any, id: string) {
   return { title: '招聘' + core.ROLES[role].name, blocks };
 }
 
-export function menu(state: any, route: any) {
+export function menu(state: any, route: any, slots: any[] = []) {
   if (!route) return null;
   switch (route.menu) {
     case 'setup': return { title: '成立工作室', blocks: [] };
+    case 'slots': return slotsMenu(slots);
+    case 'new-slot-confirm': return newSlotConfirmMenu(slots);
+    case 'slot': return slotMenu(slots, route.id);
+    case 'slot-delete': return slotDeleteMenu(slots, route.id);
     case 'new-project': return newProjectMenu(state);
     case 'project': return projectMenu(state, route.id);
     case 'dimension': return dimensionMenu(state, route.id, route.dim);
@@ -140,10 +144,9 @@ export function menu(state: any, route: any) {
     case 'archive':
     case 'finance': return financeMenu(state);
     case 'restart': return { title: '确认重新创业？', blocks: [
-      { type: 'note', icon: 'Target', text: '重新创业会覆盖当前存档，公司、员工、作品和经营记录都会清空，且无法撤销。' },
-      { type: 'text', text: '如果还想保留当前进度，请先导出存档。' },
+      { type: 'note', icon: 'Target', text: '重新创业会清空当前存档的公司、员工、作品和经营记录，且无法撤销；其它存档不受影响。' },
+      { type: 'text', text: '想保留当前进度，可以先到「存档管理」新建一个存档，把这份留着。' },
       { type: 'buttons', items: [
-        { text: '先导出存档', action: 'export' },
         { text: '取消，返回公司', action: 'menu', data: { menu: 'finance' } },
         { text: '确认清空并重新创业', action: 'restart-confirm' }
       ] }
@@ -908,10 +911,11 @@ function financeMenu(state: any) {
       ...(state.catalog.length ? [{ type: 'catalog' }] : [{ type: 'text', text: '作品发售后，在这里查看销量、回款、复盘与参与的人。', muted: true }]),
       { type: 'section', title: '存档与设置' },
       { type: 'buttons', columns: 3, items: [
-        { text: '导出存档', action: 'export' },
-        { text: '导入存档', action: 'import' },
+        { text: '存档管理', action: 'menu', data: { menu: 'slots' } },
+        { text: '新游戏', action: 'menu', data: { menu: 'new-slot-confirm' } },
         { text: '重新创业', action: 'menu', data: { menu: 'restart' } }
       ] },
+      { type: 'text', text: '进度自动保存在当前存档；存档管理里可以加载、删除或新建存档。', muted: true },
       { type: 'toggle', text: '音效', value: state.sound, action: 'sound' },
       // The build number lives here instead of on the studio header: it is a "which build am I on"
       // question you ask once, not something worth a line of the main screen every session.
@@ -922,6 +926,85 @@ function financeMenu(state: any) {
 
 function historyMenu(state: any) {
   return { title: '经营记录', blocks: [] };
+}
+
+// Save slots are read by the UI layer (they live in device storage), so the menu only receives their
+// summaries. Keeping the page here means it renders exactly like every other menu.
+function slotOf(slots: any[], id: any) {
+  return slots.find((slot: any) => String(slot.id) === String(id)) || null;
+}
+
+function slotsMenu(slots: any[]) {
+  const full = slots.length >= core.SAVE_SLOT_LIMIT;
+  return {
+    title: '存档',
+    blocks: [
+      { type: 'text', text: '进度会自动保存在当前存档。切换、删除或新建存档前，当前进度都会先保存好；最多保留 ' + core.SAVE_SLOT_LIMIT + ' 个存档。', muted: true },
+      { type: 'actions', items: slots.map(slot => ({
+        text: '存档 ' + slot.index + ' · ' + (slot.error ? '读取失败' : slot.empty ? '空白存档' : slot.company),
+        detail: slot.error ? '这份存档读不出来，可以删掉腾出位置' : slot.empty ? '还没有成立工作室' : core.dateText(slot.day) + ' · ' + money(slot.cash) + ' · 发售 ' + slot.works + ' 部 · ' + slot.staff + ' 名员工',
+        icon: slot.active ? 'Play' : 'ScrollText',
+        tag: slot.active ? '当前' : '',
+        action: 'menu', data: { menu: 'slot', id: String(slot.id) }
+      })) },
+      { type: 'buttons', columns: 2, items: [
+        { text: '新游戏', action: 'menu', data: { menu: 'new-slot-confirm' }, disabled: full },
+        { text: '返回公司', action: 'menu', data: { menu: 'finance' } }
+      ] },
+      { type: 'text', text: full ? '存档已满，先删除一个才能开新游戏。' : '还能新建 ' + (core.SAVE_SLOT_LIMIT - slots.length) + ' 个存档。', muted: true }
+    ]
+  };
+}
+
+function newSlotConfirmMenu(slots: any[]) {
+  const full = slots.length >= core.SAVE_SLOT_LIMIT;
+  return {
+    title: '开一局新游戏？',
+    blocks: [
+      { type: 'note', icon: 'Sparkles', text: full ? '存档已满，先到「存档管理」删除一个存档，才能开新游戏。' : '会新建一个存档，当前进度先自动保存、不会被覆盖。新游戏从给工作室起名字开始。' },
+      { type: 'buttons', items: [
+        { text: '开始新游戏', action: 'new-slot', disabled: full },
+        { text: '取消，返回公司', action: 'menu', data: { menu: 'finance' } },
+        { text: '看看所有存档', action: 'menu', data: { menu: 'slots' } }
+      ] }
+    ]
+  };
+}
+
+function slotMenu(slots: any[], id: any) {
+  const slot = slotOf(slots, id);
+  if (!slot) return { title: '存档不存在', blocks: [
+    { type: 'text', text: '这份存档已经不在列表里了。', muted: true },
+    { type: 'buttons', items: [{ text: '返回存档列表', action: 'menu', data: { menu: 'slots' } }] }
+  ] };
+  return {
+    title: '存档 ' + slot.index,
+    blocks: [
+      ...(slot.empty || slot.error ? [] : [{ type: 'lines', title: slot.company, items: [
+        ['游戏内日期', core.dateText(slot.day)],
+        ['现金', money(slot.cash)],
+        ['已发售作品', slot.works + ' 部'],
+        ['团队', slot.staff + ' 人']
+      ] }]),
+      { type: 'note', icon: 'Star', text: slot.error ? '这份存档无法读取，删除后可以腾出位置。' : slot.empty ? '这份存档还没成立工作室，加载后从起名开始。' : '加载前会先保存当前进度，然后切到这份存档，时间保持暂停。' },
+      { type: 'buttons', items: [
+        { text: slot.active ? '正在游玩' : '加载此存档', action: 'load-slot', data: { id: String(slot.id) }, disabled: slot.active || slot.error },
+        { text: slot.active ? '当前存档不能删除' : '删除此存档', action: 'menu', data: { menu: 'slot-delete', id: String(slot.id) }, disabled: slot.active },
+        { text: '返回存档列表', action: 'menu', data: { menu: 'slots' } }
+      ] }
+    ]
+  };
+}
+
+function slotDeleteMenu(slots: any[], id: any) {
+  const slot = slotOf(slots, id);
+  return { title: '删除存档？', blocks: [
+    { type: 'note', icon: 'Lock', text: '存档 ' + (slot ? slot.index : '?') + '（' + (slot && slot.company ? slot.company : '空白存档') + '）的公司、员工、作品和经营记录都会清空，无法撤销。' },
+    { type: 'buttons', items: [
+      { text: '确认删除', action: 'delete-slot', data: { id: String(id) } },
+      { text: '取消，返回', action: 'menu', data: { menu: 'slot', id: String(id) } }
+    ] }
+  ] };
 }
 
 function rankText(ranks: any) {
