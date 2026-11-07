@@ -622,7 +622,7 @@ function bookMenu(state: any, id: string) {
       ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', money(book.promo.cost)], ['带来关注', number(book.promo.followers) + ' 人'], ['按本作转化约折合首发', money(book.promo.receipt)]] }] : []),
       ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
-      { type: 'actions', items: [
+      { type: 'actions', anchor: 'book-ops', items: [
         project?.patch
           ? { text: '查看进行中的补丁', detail: '修复与返工进度、人手和预计上线日。', icon: 'Hammer', action: 'menu', data: { menu: 'project', id }, anchor: 'patch-book' }
           : { text: '开补丁', detail: (project ? project.defects.filter((defect: any) => defect.found && !defect.fixed).length : 0) + ' 项玩家报告的缺陷待修；也可以返工某一项做更新。', icon: 'Hammer', action: 'menu', data: { menu: 'patch', id }, disabled: !project, anchor: 'patch-book' },
@@ -729,7 +729,7 @@ function teamMenu(state: any, sort = 'joined') {
       { type: 'section', title: '团建' },
       { type: 'text', text: '团建是清掉「疲惫」「想走」的唯一办法：全队停工，工资照付，另付费用。每个负面标签按概率被清掉（先清「想走」），天数越长越可能清掉，但不保证；每人还有机会有收获：觉醒一个正面性格，或获得、提升一档团队增益，越稀有的越难出。团建期间暂停加班，回来后恢复原来的安排。', muted: true },
       { type: 'lines', items: [
-        ['可用次数', outing.charges + ' / ' + core.OUTING_MAX + (outing.next !== null ? ' · ' + core.dueText(state, outing.next) + '恢复 1 次' : '')],
+        ['可用次数', outing.charges + ' 次' + (outing.next !== null ? ' · ' + core.dueText(state, outing.next) + '恢复 1 次' : '')],
         ['最早可去', offers[0].offer.earliest > state.day ? core.dueText(state, offers[0].offer.earliest) + '，两次至少隔 ' + core.OUTING_GAP + ' 天' : '现在'],
         ['有负面标签的人', stressed + ' 人']
       ] },
@@ -1096,7 +1096,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
     case 'market': return demo ? once('expoIntro', 'exhibitions', '展会按日历举办，报名需要体验版：级别越高报名费越贵、对手越强，名次靠前能换来关注和报道。') : null;
     case 'book': {
       const book = state.catalog.find((item: any) => item.id === route.id);
-      return book ? once('bookOps', 'patch-book', '已发售的作品还能继续经营：开补丁修玩家报告的缺陷或返工、开促销、做资料片（DLC），口碑达到 70 分还能开续作。') : null;
+      return book ? once('bookOpsAll', 'book-ops', '已发售的作品还能继续经营：这一组入口可以开补丁（修玩家报告的问题或返工）、开启促销、做资料片（DLC）；口碑达到 70 分还能开发续作。') : null;
     }
     case 'rating': return once('ratingIntro', 'rating', '媒体每季度给工作室评一次星级（最高五星），主要看最近三部作品的首周名次，其次是口碑；要升到高星，得在全国、国际榜上打出成绩。星级越高，媒体曝光越多、名人越常出现；成绩下滑也会降星。');
     default: return null;
@@ -1134,10 +1134,13 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       // The radar only appears once a prototype exists, so its explanation has to wait for that moment
       // too — teaching six axes before they are on screen is a wall of words with nothing to point at.
       () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '原型出来了，六维评分也解锁：创意、深度、流畅、画面、声音、稳定。实线是现在的分数，虚线是按当前团队的水平能到哪；综合评分是六项按玩家口味加权。', ack: 'dimensions' } : null,
-      // On the main screen these stay forced taps: opening the page is the lesson. Only the tip inside
-      // each page is a "知道了" explanation, because acting there costs money.
+      // "知道了" notes are optional everywhere, the main screen included: the highlighted control stays
+      // live, so acting on it and dismissing the tip are both valid. Only the steps below are forced taps —
+      // there, opening the page is the lesson itself.
       () => project?.checkpoints.prototype && !seen.scene ? explain('scene', 'scene', '办公室也是入口：墙上的大屏幕是当前作品，点开进项目；星级铭牌是媒体评级；白板是日历；奖杯架是成就；下方公告栏是行业新闻；点工位打开团队。') : null,
       () => project?.checkpoints.demo && !seen.testing && !seen.navTesting ? { anchor: 'nav-project', text: '体验版完成：点「项目」，在里面打开「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
+      // Optional tip: 市场 stays live under the highlight, 知道了 dismisses it. Keep this an ack step —
+      // a forced tap removes the 知道了 button and makes promoting feel compulsory.
       () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投放推广。每部作品只推广一次，只换关注、不保证销量；首作可以投最小一档，也可以不投。') : null,
       () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '待修缺陷是测试和玩家发现、还没修的问题。员工负责的工作做满后自动消耗工时修复；没测到的缺陷会在发售后被玩家发现。') : null,
       () => complete && !project.released ? explain('launchBook', 'nav-project', '各评分项都做满了。想发售时在「项目」里正式发售，也可以继续返工提高评分。') : null,
@@ -1154,6 +1157,9 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     case 'candidate': return hasTeammate ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
     case 'project':
       if (!project) return null;
+      // Before sending the player to the assignment page, show what the six rows are for. Stay with
+      // what is on screen — work left and the estimated day — instead of systems taught later.
+      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着还剩多少工作、预计几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
       if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
       if (project.checkpoints.demo && !seen.testing && !seen.testingEntry) return { anchor: 'testing', text: '点「试玩」，招一批玩家来找缺陷、听评价。', tap: 'testingEntry' };
@@ -1161,7 +1167,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       if (project.checkpoints.demo && !project.released && !seen.launchBook) return { anchor: 'launch', text: '体验版已经能卖了：做好准备后点这里发售，也可以继续制作、返工提高评分。', ack: 'launchBook' };
       return null;
     case 'assign': {
-      if (!seen.assign) return { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。做别的岗位的工作照样推进工期，只是评分更低、缺陷更多。', ack: 'assign' };
+      if (!seen.assign) return { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。一个人同时做几项，每天的时间会分摊到各项上，每项都慢一些；做不擅长的工作，评分也会低一些。', ack: 'assign' };
       if (hasTeammate && !seen.reassign) {
         const mate = state.staff.findIndex((person: any) => !person.founder);
         return { anchor: 'person-assign-' + Math.max(0, mate), text: '新同事默认只做他最擅长的一项。也可以点其它工作让他多担几项，做完会自动空出手。', ack: 'reassign' };

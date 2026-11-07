@@ -1315,6 +1315,7 @@ export class StudioApp extends Component {
       case 'dimensions': {
         // Each dimension shows its remaining person-days and estimated finish; the slowest staffed one
         // is the bottleneck, and dimensions nobody works on are called out instead of pencilled in.
+        const start = y;
         for (const item of block.items) {
           const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
           const idle = item.key !== 'stability' && item.remaining > 0.0001 && item.days === null;
@@ -1330,6 +1331,8 @@ export class StudioApp extends Component {
           this.clickable(row, () => this.openMenu('dimension', block.projectId, false, item.key));
           y += 50;
         }
+        // One ring for all six rows: the tutorial explains the whole scoreboard, not just the first row.
+        this.anchors.set('project-dimensions', this.box(parent, 'DimensionsAnchor', 0, start, width, y - start - 4));
         return y + 4;
       }
       case 'person-assign': {
@@ -1410,15 +1413,9 @@ export class StudioApp extends Component {
           this.apply(core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]));
           this.notify(target.name + '：所有工作都接手。');
         }, false);
-        // Idle on purpose: kept on payroll, produces nothing. An explicit empty list is what says so.
-        this.button(card, '空闲', chipX(2), header + rows * 50 + 2, chip, 36, () => {
-          const route = this.routes[this.routes.length - 1] || {};
-          const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
-          const target = this.state.staff.find((item: any) => item.id === block.personId);
-          if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
-          this.apply(core.assign(this.state, project.id, target.id, []));
-          this.notify(target.name + '：已空闲，不做任何工作，工资照付。');
-        }, false);
+        // No idle shortcut: the two buttons above fill the row exactly. A third one used to sit at
+        // chipX(2), which started past the card's right edge and showed up as a sliver of a button.
+        // Turning off the last work box is still how a player idles someone.
         return y + height + 12;
       }
       default: return y;
@@ -1610,10 +1607,11 @@ export class StudioApp extends Component {
     const route = this.routes.length ? this.routes[this.routes.length - 1] : null;
     const step = content.guide(this.state, route, this.playing);
     if (!step) return;
-    // In a menu the tip has nothing to forward to: its anchor is usually a whole group of rows, not a
-    // button, so an overlay would swallow the press and the real buttons underneath would go dead.
-    // Instead the tip rides on the click: whatever the player presses counts as having read it.
-    if (route && (step.ack || step.tap)) this.menuAck = step.ack || step.tap;
+    // A "知道了" tip is optional: the highlighted control stays live, so the player may act on it or
+    // simply dismiss the tip. Never shield the highlight itself. Whatever the player presses counts
+    // as having read it — on the main screen as well as inside menus, where anchors are often whole
+    // groups of rows with no button of their own.
+    if (step.ack || (route && step.tap)) this.menuAck = step.ack || step.tap;
     const target = this.anchors.get(step.anchor);
     let rect = null;
     if (target) {
@@ -1633,8 +1631,9 @@ export class StudioApp extends Component {
     };
     const acknowledge = () => { this.apply(core.markSeen(this.state, step.ack)); this.resumeFromGuide(); };
     const targetEnabled = !target || !target.getComponent(Button) || target.getComponent(Button).interactable;
-    // Main screen: everything outside the highlight is swallowed (explanations close only via "知道了").
-    // Menus stay free so players can still pick non-recommended choices.
+    // Main screen: only what is outside the highlight is swallowed. The highlight itself always stays
+    // clickable — shielding it made a "知道了" tip pointing at a navigation button look broken (the
+    // press did nothing and 知道了 was the only way out). Menus stay free so players can pick any choice.
     const shield = (x: number, y: number, w: number, h: number) => {
       if (w <= 0 || h <= 0 || this.confirmSkip || this.routes.length) return;
       if (!step.ack && !targetEnabled) return;
@@ -1650,10 +1649,9 @@ export class StudioApp extends Component {
       shield(0, rect.y + rect.h, this.width, this.height - rect.y - rect.h);
       shield(0, rect.y, rect.x, rect.h);
       shield(rect.x + rect.w, rect.y, this.width - rect.x - rect.w, rect.h);
-      if (step.ack) shield(rect.x, rect.y, rect.w, rect.h);
-      // The tap forwarder exists for the main screen only: there the highlight sits on a navigation
-      // button and the tip has to hand the press over. Menus are already interactive, so the rows keep
-      // the press themselves — no overlay, no dead buttons.
+      // The tap forwarder exists for forced steps on the main screen only: there the highlight sits on
+      // a navigation button and the tip has to hand the press over. "知道了" steps need no forwarder —
+      // the real button receives the press itself and menuAck marks the tip as read.
       if (step.tap && !this.confirmSkip && !this.routes.length && target?.getComponent(Button)) {
         const anchor = step.anchor;
         this.clickable(this.box(this.stage, 'GuideTap', rect.x, rect.y, rect.w, rect.h), () => {
