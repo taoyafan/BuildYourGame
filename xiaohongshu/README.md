@@ -49,6 +49,14 @@ python xiaohongshu/build_minitool.py
 
 **禁止改 Cocos 源码**。所有适配只在 `xiaohongshu/build/minitool/` 这份复制出来的 H5 里做，`creator/assets/scripts/` 保持原样。
 
+## 版本号
+
+小红书的 `version` 有三条硬规则：三段数字、每段不以 0 开头（`0` 本身可以）、不能带 `beta` 后缀。
+
+**约定：直接用仓库 `VERSION`，和游戏内版本号保持一致**，不另编一套。`0.1.54` 就填 `0.1.54`，游戏升到 `0.1.55` 小红书就用 `0.1.55`。`build_minitool.py` 结尾会读 `VERSION` 并做格式断言，输出「送审 version = 0.1.54」。
+
+更新已有小工具时必须用**没用过的新版本号**，否则后端拒绝。
+
 ## 上传
 
 前置：`minitool-zip-builder` 与 `redapp-cli` 两个 Skill 已装在 `~/.workbuddy/skills/`，`redapp` 已登录（`redapp whoami`）。
@@ -63,13 +71,39 @@ redapp upload --file xiaohongshu/build/minitool.zip --type pkg --confirm <planHa
 
 # 2. 生成预览二维码（preview.json 里填上一步的 fileId 与 md5）
 cat > /tmp/preview.json <<'EOF'
-{ "pkgFileId": "red_app/xxxx.zip", "md5": "<md5>", "appName": "日光工作室", "version": "1.0.0" }
+{ "pkgFileId": "red_app/xxxx.zip", "md5": "<md5>", "appName": "造游工坊", "version": "0.1.54" }
 EOF
 redapp preview --source thirdAgent --file /tmp/preview.json --dry-run --agent
 redapp preview --source thirdAgent --file /tmp/preview.json --confirm <planHash> --qr-out ./qr.png --agent
 ```
 
 扫码进的是**开发版**，只有自己能看到；要别人也能玩必须送审发布。
+
+## 送审
+
+送审除代码包外还要**图标**（JPG/PNG，1:1，≤5 MiB）和**封面**（JPG/PNG，3:4 竖版，≤10 MiB），CLI 不会自动裁剪。
+
+```json
+{
+  "appName": "造游工坊",
+  "slogan": "开一家游戏工作室",
+  "iconFileId": "<ICON_FILE_ID>",
+  "coverFileId": "<COVER_FILE_ID>",
+  "version": "0.1.54",
+  "pkgFileId": "red_app/xxxx.zip",
+  "md5": "<md5>",
+  "categories": ["casual_game"],
+  "authorizations": []
+}
+```
+
+`redapp submit --source thirdAgent --file submit.json --dry-run --agent` 之后再加 `--confirm <planHash>`。
+
+必填规则：`appName` / `slogan` 各 ≤14 字符；`categories` 只能一个；`authorizations` 无需求就是空数组（本游戏无相册/摄像头/定位/录音/头像昵称需求）；新建不传 `appId`。
+
+更新已有小工具时 `version` 必须是没用过的号，`edit` 改基础信息则**每次都必须同时传 `appName`、`slogan`、`iconFileId` 三项**。
+
+送审前必须走一遍扫码预览并明确通过；`status` 里 `0 未发布 / 1 审核中 / 2 已发布 / 3 未通过 / 4 已下架`。
 
 ## 排查顺序（踩过的坑）
 

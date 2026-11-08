@@ -225,4 +225,16 @@ print('  ->', ZIP_PATH)
 if size > 10 * 1048576:
     fail('超过 10 MiB 上限')
 
+# ------------------------------------------- 7. 版本号
+# 小红书的 version 必须三段数字、每段不以 0 开头、不带 beta 后缀。
+# 约定：直接用仓库 VERSION，和游戏内版本保持一致，不另编一套号。
+step('核对版本号')
+ver = open(os.path.join(ROOT, 'VERSION'), encoding='utf-8').read().strip()
+parts = ver.split('.')
+if len(parts) != 3 or not all(p.isdigit() for p in parts):
+    fail(f'VERSION「{ver}」不是三段数字，小红书不接受')
+if any(len(p) > 1 and p.startswith('0') for p in parts):
+    fail(f'VERSION「{ver}」有段以 0 开头，小红书不接受')
+print(f'  送审 version = {ver}（与源码一致）')
+
 print('\nOK。上传：见 xiaohongshu/README.md')
