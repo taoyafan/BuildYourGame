@@ -98,6 +98,10 @@ export class StudioApp extends Component {
   private officeSwiped = false;
   private activeTouches = new Set<number>();
   private renderPending = false;
+  // A text field has the focus. Every render() destroys and rebuilds the whole screen, which also
+  // destroys the EditBox and closes the soft keyboard. On some devices a deferred redraw lands just
+  // as the keyboard opens, so the field looks like it vanishes before the player can type.
+  private editing = false;
   // Wall-clock gap since the last daily redraw, so the fastest speed does not rebuild the whole screen every frame.
   private tickGap = 0;
   // Menus used to give every card, chip, divider and button its own Graphics component. One shared
@@ -179,6 +183,8 @@ export class StudioApp extends Component {
 
   private background() {
     this.activeTouches.clear();
+    // Leaving the app always closes the soft keyboard; do not keep the input guard armed.
+    this.editing = false;
     this.playing = false;
     this.guidePaused = false;
     this.resumeAfterMenu = false;
@@ -193,7 +199,8 @@ export class StudioApp extends Component {
 
   private touchFinished(event: EventTouch) {
     this.activeTouches.delete(event.getID());
-    if (!this.activeTouches.size && this.renderPending) this.scheduleOnce(() => this.render(), 0);
+    // If the player is typing, let editing-did-ended decide when to apply the deferred redraw.
+    if (!this.activeTouches.size && this.renderPending && !this.editing) this.scheduleOnce(() => this.render(), 0);
   }
 
   update(delta: number) {
@@ -629,6 +636,12 @@ export class StudioApp extends Component {
   private render() {
     if (!this.stage || !this.state) return;
     if (this.activeTouches.size) { this.renderPending = true; return; }
+    const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>');
+    // Keep the focused EditBox alive: defer redraws of the same page until editing ends. A route
+    // change still redraws immediately and clears a stale guard (a few platforms do not dispatch
+    // editing-did-ended), so the screen can never stay frozen on an old page.
+    if (this.editing && key === this.scrollKey) { this.renderPending = true; return; }
+    if (this.editing) this.editing = false;
     this.renderPending = false;
     if (this.playing && !this.routes.length && !this.state.event && !this.state.over && content.guide(this.state, null, true)?.ack) {
       this.guidePaused = true;
@@ -637,7 +650,6 @@ export class StudioApp extends Component {
     }
     // A day tick re-renders the whole page. Without carrying the offset over, scrolling down while the
     // clock ran snapped back to the top every tick. A different screen starts at the top again.
-    const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>');
     const keep = key === this.scrollKey && this.scrollView ? this.scrollView.getScrollOffset().y : 0;
     this.scrollKeep = keep;
     this.clear();
@@ -1917,7 +1929,17 @@ export class StudioApp extends Component {
     edit.placeholderLabel.overflow = Label.Overflow.CLAMP;
     edit.maxLength = 24;
     edit.string = value;
-    node.on('text-changed', (box: EditBox) => changed(box.string));
+    node.on(EditBox.EventType.TEXT_CHANGED, (box: EditBox) => changed(box.string));
+    node.on(EditBox.EventType.EDITING_DID_BEGAN, () => { this.editing = true; });
+    // Ending the edit releases the guard and applies any redraw that was deferred while typing.
+    // Both "finished" and "return" are listened to: some platforms only send one of them.
+    const ended = () => {
+      if (!this.editing) return;
+      this.editing = false;
+      if (this.renderPending) this.scheduleOnce(() => this.render(), 0);
+    };
+    node.on(EditBox.EventType.EDITING_DID_ENDED, ended);
+    node.on(EditBox.EventType.EDITING_RETURN, ended);
     node.active = true;
     return edit;
   }
