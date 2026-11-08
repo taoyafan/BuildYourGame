@@ -1318,7 +1318,7 @@ export class StudioApp extends Component {
           const cell = (width - (columns - 1) * 6) / columns;
           block.items.forEach((item: any, index: number) => {
             this.button(parent, item.text, (index % columns) * (cell + 6), next + Math.floor(index / columns) * 44, cell, 38, () => {
-              this.routes[this.routes.length - 1] = { menu: 'team', id: item.value };
+              this.routes[this.routes.length - 1] = { ...this.routes[this.routes.length - 1], id: item.value };
               this.helpKey = '';
               this.render();
             }, item.value === block.value);

@@ -205,7 +205,9 @@ export function planPreview(state: any, draft: any) {
   if (!draft.type || !core.TYPES[draft.type]) return '选一个类型开始。';
   const type = core.TYPES[draft.type];
   const scale = core.SCALES[draft.scale] || core.SCALES[0];
-  const workload = type.work * scale.work;
+  // Keep the quote on the same pace constant the real project uses, or the form would promise the
+  // old (50% longer) schedule and the old price while the game actually runs at two thirds.
+  const workload = type.work * scale.work * core.PACE;
   // The quote must be the whole job, not the single dimension a founder happens to default to. Output
   // per day is the team's combined speed, so the estimate is total work over total hands and stays
   // honest no matter how the work gets split later.
@@ -218,7 +220,7 @@ export function planPreview(state: any, draft: any) {
   const cost = workload / 30 * wage + core.OFFICES[state.office].rent * (days || 30) / 30;
   const share = type.share;
   const split = [...core.DIM_KEYS].sort((left: string, right: string) => share[right] - share[left]).map((key: string) => core.DIMENSIONS.find((item: any) => item.key === key)?.name + ' ' + Math.round(share[key] * 100) + '%').join(' · ');
-  return '工作量 ' + workload.toFixed(0) + '，' + time + '预计成本约 ' + money(cost) + '。\n各项占比：' + split + '\n售价 ' + price(type.price * scale.price) + '；市场容量约 ' + number(core.MARKET_SIZE * scale.reach) + ' 份。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+  return '工作量 ' + workload.toFixed(0) + '，' + time + '预计成本约 ' + money(cost) + '。\n各项占比：' + split + '\n售价 ' + price(type.price * scale.price * core.PACE) + '；市场容量约 ' + number(core.MARKET_SIZE * scale.reach) + ' 份。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
 // Ready-made names: the form shows one, and leaving the field empty keeps it.

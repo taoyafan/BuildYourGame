@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.51';
+export const VERSION = '0.1.52';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -60,7 +60,7 @@ export const SCALES = [
 // Pace trial: both the workload and the money a title brings in are two thirds of the old values.
 // A game takes about a third less calendar time while the risk/reward ratio stays the same. Change
 // this one constant to roll the whole trial back.
-const PACE = 2 / 3;
+export const PACE = 2 / 3;
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
 // how much the audience cares about each dimension. Genres never cap a dimension.
@@ -228,13 +228,6 @@ export const OFFICES = [
   { name: '写字楼整层', seats: 40, rent: 12, cost: 120 },
   { name: '园区大楼', seats: 100, rent: 30, cost: 500 }
 ];
-// Sound can be bought instead of hired: a one-off purchase finishes part of the sound dimension at a
-// modest quality, which is how a small team ships sound at all before it can afford an audio hire.
-export const SOUND_OUTSOURCE = [
-  { name: '廉价素材库', cost: 2, share: 0.6, quality: 40, text: '立刻完成六成声音工作，但这一维做不高；之后可由音频岗返工。' },
-  { name: '委托音频制作', cost: 6, share: 1, quality: 65, text: '一次性做完声音工作，质量中规中矩。' }
-];
-
 // Promotion is one campaign per title, picked once after the trial build. Tiers differ by orders of
 // magnitude and each yuan buys fewer followers as the budget grows, so the right tier depends on what
 // one follower is worth for this title (price, trial reception) and how far its launch can reach.
@@ -242,7 +235,6 @@ export const PROMOTE_TIERS = [0.5, 3, 15, 60, 200];
 const PROMOTE_SCALE = 400;
 // Minimum discount a title may go to. The system decides when to run a sale and how deep within the floor.
 export const DISCOUNTS = [0.75];
-export const RELEASE_LEAD_DAYS = 30;
 
 export const UNIT_MARKS = [1000, 5000, 10000, 50000];
 export const MARKET_SIZE = 5000;
@@ -304,14 +296,14 @@ function blankProject(id: string, plan: any, day: number) {
     followers: 0, promoted: 0, invested: 0, started: day, released: null,
     checkpoints: { prototype: false, demo: false, ready: false },
     test: null, tests: 0, testCount: 0,
-    sequel: plan.sequel || null, expectation: plan.expectation || 0, deadline: null,
+    sequel: plan.sequel || null, expectation: plan.expectation || 0,
     contributions: {}, priority: 0
   };
 }
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 9, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 6, rulesRevision: 10, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -541,7 +533,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     star.condition = random(next) < 0.5 ? 'crew' : 'type:' + Object.keys(TYPES)[Math.floor(random(next) * Object.keys(TYPES).length)];
   });
   next.candidates[key] = { batch, people };
-  studioLog(next, '发布招聘', `${source.name}送来 ${people.length} 份${ROLES[role].name}简历，名单保持到${dateText((batch + 1) * 14)}。`);
+  studioLog(next, '发布招聘', `${source.name}送来 ${people.length} 份${ROLES[role].name}简历，名单保持 ${Math.max(1, (batch + 1) * 14 - next.day)} 天。`);
   return next;
 }
 
@@ -1177,7 +1169,7 @@ export function outingOffer(state: any, days = 3) {
   let reason = '';
   if (!state.staff.length) reason = '还没有员工。';
   else if (outing.charges < 1) reason = `团建次数已用完，${Math.max(0, outing.next - state.day)} 天后恢复 1 次。`;
-  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，还有 ${earliest - state.day} 天可以再去。`;
+  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，还要等 ${earliest - state.day} 天。`;
   else if (state.cash < cost) reason = '资金不足。';
   return { available: !reason, reason, cost, charges: outing.charges, next: outing.next, earliest: Math.max(state.day, earliest) };
 }
@@ -1247,7 +1239,7 @@ export function teamOuting(state: any, days = 3) {
     plans.push({ id: person.id, clear, gain: random(next) < chance.awaken ? outingGain(next, person) : null });
   }
   outing.pending = { day: next.day, days, cost: offer.cost, plans };
-  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，${dateText(next.day + days)}回来公布结果；加班安排回来后恢复。`);
+  studioLog(next, `团建 ${days} 天`, `全队停工 ${days} 天，${days} 天后回来公布结果；加班安排回来后恢复。`);
   return next;
 }
 
@@ -2224,16 +2216,6 @@ export function resolveStudioEvent(state: any, choice: string) {
     if (choice === 'keep') return keepPerson(next, event.person);
     return dismiss(next, event.person);
   }
-  if (event.id === 'deadline') {
-    const project = next.projects.find((item: any) => item.id === event.project);
-    if (project) {
-      if (choice === 'launch') return launchProject(next, project.id);
-      project.followers = Math.round(project.followers * 0.9);
-      if (choice === 'delay') project.deadline = next.day + 14;
-      studioLog(next, '发售承诺未兑现', `《${project.name}》${choice === 'delay' ? '延期' : '取消排期'}，关注减少 10%。`);
-    }
-    return next;
-  }
   if (event.id === 'release' && choice === 'continue') return next;
   return next;
 }
@@ -2450,29 +2432,6 @@ export function makeDLC(state: any, id: string) {
   return next;
 }
 
-// Sound can be bought instead of hired: one payment finishes part of the sound dimension at a modest
-// quality, and an audio hire can rework it upward later.
-export function outsourceSound(state: any, projectId: string, tier: number) {
-  if (![0, 1].includes(tier)) throw new Error('外包方案无效。');
-  const next = studioAction(state);
-  const project = next.projects.find((item: any) => item.id === projectId && !item.released);
-  if (!project) throw new Error('项目不存在。');
-  if (project.soundOut !== null && project.soundOut !== undefined) throw new Error('每部作品只能外包一次声音。');
-  const work = project.work.sound;
-  if (work.done >= work.total - 0.001) throw new Error('声音工作已经完成。');
-  const plan = SOUND_OUTSOURCE[tier];
-  spend(next, plan.cost, `《${project.name}》${plan.name}`);
-  const add = Math.min(work.total - work.done, work.total * plan.share);
-  if (!Array.isArray(work.batches)) work.batches = work.done > 0 ? [{ amount: work.done, quality: work.value / work.done }] : [];
-  work.batches.push({ amount: add, quality: plan.quality });
-  work.done = round(work.done + add);
-  work.value = round(work.value + add * plan.quality);
-  project.soundOut = tier;
-  project.invested = round(project.invested + plan.cost);
-  studioLog(next, `外包声音（${plan.name}）`, `《${project.name}》的声音工作完成 ${Math.round(add / work.total * 100)}%，按 ${plan.quality} 分质量计。`);
-  return next;
-}
-
 export function setSale(state: any, id: string, enabled: boolean, floor?: number) {
   const next = studioAction(state);
   const book = next.catalog.find((item: any) => item.id === id);
@@ -2486,22 +2445,6 @@ export function setSale(state: any, id: string, enabled: boolean, floor?: number
   book.saleFloor = 0;
   book.saleStart = Math.min(book.saleStart ?? next.day, next.day);
   studioLog(next, `《${book.name}》开启促销`, `统一 ${DISCOUNTS[0] * 10} 折，系统按剩余需求决定何时开始促销。`);
-  return next;
-}
-
-export function setDeadline(state: any, projectId: string, days: number) {
-  if (days !== RELEASE_LEAD_DAYS) throw new Error('发售排期无效。');
-  const next = studioAction(state);
-  const project = next.projects.find((item: any) => item.id === projectId && !item.released);
-  if (!project || project.deadline) throw new Error('当前无法公布发售日。');
-  if (project.progress < TRIAL * 100) throw new Error('体验版完成后再公布发售日。');
-  project.deadline = next.day + days;
-  const exposure = Math.round(project.followers * MEDIA_BONUS[next.stars || 0]);
-  project.followers += 150 + exposure;
-  const extra = exposure ? `（含${STAR_NAMES[next.stars || 0]}工作室的媒体曝光 ${exposure} 人）` : '';
-  studioLog(next, '公布发售日', `计划${dateText(project.deadline)}发售《${project.name}》，新增 ${150 + exposure} 人关注${extra}；延期会损失关注。`);
-  const near = scheduleOf(next).filter((item: any) => !item.own && Math.abs(item.day - project.deadline) <= 3);
-  if (near.length) announce(next, { kind: 'notice', title: '档期提醒', text: `同周已有${near.map((item: any) => item.name).join('、')}定档，首发可能被分流。`, amount: 0 });
   return next;
 }
 
@@ -2574,11 +2517,12 @@ export function newsFor(state: any) {
   return (state.news || []).filter((item: any) => item.own || item.tier === state.focus || item.headline);
 }
 
-// Announced rival releases and the player's own promised dates, soonest first.
+// Announced rival releases, soonest first. The player no longer promises a release date in advance.
 export function scheduleOf(state: any) {
-  const rivals = (state.works || []).filter((work: any) => work.announced !== null && work.released > state.day).map((work: any) => ({ day: work.released, name: `《${work.name}》`, studio: work.studioName, studioId: work.studio, tier: work.tier, own: false }));
-  const own = state.projects.filter((project: any) => !project.released && project.deadline).map((project: any) => ({ day: project.deadline, name: `《${project.name}》`, studio: state.company, studioId: null, projectId: project.id, tier: null, own: true }));
-  return [...rivals, ...own].sort((left, right) => left.day - right.day);
+  return (state.works || [])
+    .filter((work: any) => work.announced !== null && work.released > state.day)
+    .map((work: any) => ({ day: work.released, name: `《${work.name}》`, studio: work.studioName, studioId: work.studio, tier: work.tier, own: false }))
+    .sort((left: any, right: any) => left.day - right.day);
 }
 
 // A rival takes a share of demand only once it is out and while it is in its own launch week, so the
@@ -2597,14 +2541,6 @@ function noteClash(book: any, clash: any, lost: number) {
   const total = sum(clash.works.map((work: any) => work.firstWeek));
   book.clashLost = book.clashLost || {};
   for (const work of clash.works) book.clashLost[work.id] = round((book.clashLost[work.id] || 0) + lost * work.firstWeek / total);
-}
-
-function remindClash(state: any, work: any) {
-  if (work.tier !== state.focus && work.tier !== 2) return;
-  for (const project of state.projects) {
-    if (project.released || !project.deadline || Math.abs(project.deadline - work.released) > 6) continue;
-    announce(state, { kind: 'notice', title: '档期提醒', text: `${work.studioName}的《${work.name}》还有 ${Math.max(1, work.released - state.day)} 天发售，和《${project.name}》同周。`, amount: 0 });
-  }
 }
 
 function firstWeekRanks(state: any, value: number, released: number, selfId: string) {
@@ -2683,7 +2619,6 @@ function industryTick(state: any, quiet: boolean) {
     studio.pending = work.id;
     if (big && !quiet) {
       news(state, studio.tier, studio.tier === 2, `${studio.name}公布新作《${work.name}》`, `定档${dateText(work.released)}，${TYPES[work.type].name}·${SCALES[work.scale].name}。`, studio.id);
-      remindClash(state, work);
     }
   }
   TIERS.forEach((_, tier) => { if (random(state) < FILLER_PER_YEAR[tier] / 360) state.works.push(rivalWork(state, tier, null, day)); });
@@ -2856,7 +2791,7 @@ export function calendarOf(state: any, span = 180) {
   for (let day = (Math.floor(state.day / RATING_PERIOD) + 1) * RATING_PERIOD; day <= end; day += RATING_PERIOD) items.push({ day, kind: 'rating', title: `${RATING_MEDIA}季度评级`, detail: '决定公司星级', own: true, route: { menu: 'rating' } });
   for (const item of scheduleOf(state)) {
     if (item.day > end) continue;
-    items.push({ day: item.day, kind: 'release', title: item.name + ' 发售', detail: item.own ? '本社承诺的发售日' : item.studio + ' · ' + TIERS[item.tier].name, own: item.own, route: item.own ? { menu: 'project', id: item.projectId } : item.studioId ? { menu: 'rival', id: item.studioId } : null });
+    items.push({ day: item.day, kind: 'release', title: item.name + ' 发售', detail: item.studio + ' · ' + TIERS[item.tier].name, own: false, route: item.studioId ? { menu: 'rival', id: item.studioId } : null });
   }
   return items.sort((left, right) => left.day - right.day);
 }
@@ -3015,22 +2950,6 @@ function playerReports(state: any) {
 }
 
 function calendarDay(state: any) {
-  // A promised release date comes due: ship now, push it back and lose attention, or drop the promise.
-  for (const project of state.projects) {
-    if (state.event || project.released || project.deadline === null || state.day < project.deadline) continue;
-    project.deadline = null;
-    const unfinished = projectMetrics(project).unfinished.length;
-    state.event = {
-      id: 'deadline', project: project.id, title: `公布的发售日到了`,
-      text: `《${project.name}》的发售日到了。现在发售不会损失关注；选择延期或取消日期会损失 10% 的关注。`,
-      choices: [
-        { id: 'launch', title: '现在发售', detail: unfinished ? `还有 ${unfinished} 维未完成，带着短板上市。` : '内容已经完整，带着当前表现上市。' },
-        { id: 'delay', title: '延期十四天', detail: '本次损失 10% 关注，新的期限到了再决定是否发售。' },
-        { id: 'continue', title: '取消日期，继续完善', detail: '损失 10% 关注，不再承诺时间，准备好后手动发售。' }
-      ]
-    };
-    return;
-  }
   expoDay(state);
   awardsDay(state);
 }
@@ -3468,6 +3387,14 @@ export function restoreStudio(saved: any) {
     next.rating = { score, watch: false, promotedAt: next.day - RATING_PERIOD - 1, history: [{ day: next.day, score, tier: stars }] };
     next.rulesRevision = 9;
   }
+  // Announcing a release date and buying sound work are gone. Clear the leftovers on every load (not
+  // just on a revision bump), so no save can resurrect a removed feature or its pending decision.
+  for (const project of next.projects) {
+    delete project.deadline;
+    delete project.soundOut;
+  }
+  if (next.event?.id === 'deadline') next.event = null;
+  if (next.rulesRevision < 10) next.rulesRevision = 10;
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
 }
