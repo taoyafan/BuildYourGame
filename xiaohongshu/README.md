@@ -9,10 +9,13 @@ xiaohongshu/
   build_minitool.py   一键构建（web-mobile -> 适配 -> 审计 -> zip）
   patch-csp.py        引擎动态代码静态化（升级 Cocos 后要重新核对）
   serve-csp.js        本地复刻容器 CSP 的验证服务器
+  assets/cover.png    小红书专用封面（3:4 竖版），其它平台用不上
   build/              产物（git 忽略）
     minitool/         适配后的目录，可审计
     minitool.zip      上传用的包
 ```
+
+发布用的**图标不在这里**：它在仓库根 `assets/icon.jpg`（512×512，1:1），所有平台共用一份，换图标只改那一处。
 
 ## 一条命令
 
@@ -104,6 +107,34 @@ redapp preview --source thirdAgent --file /tmp/preview.json --confirm <planHash>
 更新已有小工具时 `version` 必须是没用过的号，`edit` 改基础信息则**每次都必须同时传 `appName`、`slogan`、`iconFileId` 三项**。
 
 送审前必须走一遍扫码预览并明确通过；`status` 里 `0 未发布 / 1 审核中 / 2 已发布 / 3 未通过 / 4 已下架`。
+
+## 更新版本（游戏发新版后）
+
+**不麻烦，五步，基本是重复命令**。前提是 Cocos 引擎版本没变。
+
+```bash
+# 1. 打包游戏 + 生成小红书包（两条命令，patch 脚本自动判断有没有版本过）
+npm --prefix creator run build:web
+python xiaohongshu/build_minitool.py        # 结尾会打印「送审 version = x.y.z」
+
+# 2. 上传新代码包（dry-run 拿 planHash，再 confirm）
+redapp upload --file xiaohongshu/build/minitool.zip --type pkg --dry-run --agent
+redapp upload --file xiaohongshu/build/minitool.zip --type pkg --confirm <planHash> --agent
+
+# 3. preview 新包（含同一份 iconFileId）→ 二维码给你扫
+
+# 4. submit.json 里把 version 改成新版本号、pkgFileId/md5 换新，其余不变
+#    然后 dry-run + confirm
+```
+
+**注意点**
+
+- `version` 必须用**没送审过的号**，否则后端拒绝。沿用仓库 `VERSION` 就自然避开。
+- 图标和封面**不用重传**，之前的 `iconFileId` / `coverFileId` 一直有效，新 `submit.json` 原样复用。
+- 送审内容一变（换包或换图），上一轮的预览确认就失效，**必须重新生成二维码让你扫**。
+- `submit.json` 里**不要写 `appId`**，写了就变成"给已有小工具发新版本"；两者都能用，但语义不同，首次新建保持省略。
+
+**唯一会真的变麻烦的情况**：升级 Cocos 版本。`patch-csp.py` 是按 `cc.js` 里的具体文本打补丁的，引擎压缩变量名一变就匹配不上，脚本会直接报 `pattern not found`（不会静默产出一个坏包）。那种情况需要重新定位那 3 处 `Function()`，大约半小时的活。只改游戏逻辑、不升引擎的话，永远不用碰。
 
 ## 排查顺序（踩过的坑）
 
