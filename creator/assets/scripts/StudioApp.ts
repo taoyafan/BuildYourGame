@@ -35,8 +35,8 @@ const toneColors: any = {
 };
 // Grouped buttons always carry an icon; this picks one from the action when the menu gives none.
 const actionIcons: any = {
-  menu: 'ChevronRight', test: 'FlaskConical', exhibition: 'Award', outsource: 'Music', recruit: 'UserPlus', hire: 'UserPlus',
-  dismiss: 'UserMinus', outing: 'Plane', deadline: 'CalendarDays', launch: 'Rocket', review: 'ChartNoAxesCombined',
+  menu: 'ChevronRight', test: 'FlaskConical', exhibition: 'Award', recruit: 'UserPlus', hire: 'UserPlus',
+  dismiss: 'UserMinus', outing: 'Plane', 'overtime-all': 'Moon', launch: 'Rocket', review: 'ChartNoAxesCombined',
   move: 'Building2', 'restart-confirm': 'RotateCcw', promote: 'Megaphone', mentor: 'GraduationCap',
   poach: 'Briefcase', sale: 'Coins', dlc: 'Gift', sequel: 'Sparkles',
   'new-slot': 'Sparkles', 'load-slot': 'Play', 'delete-slot': 'UserMinus'
@@ -93,6 +93,8 @@ export class StudioApp extends Component {
   private groupTops = new Map<string, number>();
   private menuAck: string | null = null;
   private helpKey = '';
+  private overScreenShown = false;
+  private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
   private officeSwiped = false;
@@ -326,6 +328,8 @@ export class StudioApp extends Component {
     this.chartSelection = null;
     this.scrollKey = '';
     this.menuAck = null;
+    this.overScreenShown = false;
+    this.scrollBottom = false;
     this.routes = [];
     this.state = this.drain(next);
     this.save();
@@ -636,6 +640,14 @@ export class StudioApp extends Component {
   private render() {
     if (!this.stage || !this.state) return;
     if (this.activeTouches.size) { this.renderPending = true; return; }
+    // Bankruptcy opens its own screen once per failed run, including when a failed save is loaded
+    // (the day loop is already stopped then, so only render sees it).
+    if (this.state.over && !this.overScreenShown) {
+      this.overScreenShown = true;
+      this.resumeAfterMenu = false;
+      this.routes = [{ menu: 'gameover' }];
+      this.scrollBottom = false;
+    }
     const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>');
     // Keep the focused EditBox alive: defer redraws of the same page until editing ends. A route
     // change still redraws immediately and clears a stale guard (a few platforms do not dispatch
@@ -669,6 +681,12 @@ export class StudioApp extends Component {
     // cards), and a restore after it would silently undo that scroll and misplace the highlight.
     if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
     this.renderGuide();
+    // Applied after the guide so a tip cannot undo the jump to the bottom of the company page.
+    if (this.scrollBottom && this.scrollView && this.scrollBody) {
+      this.scrollBottom = false;
+      const max = Math.max(0, this.scrollBody.getComponent(UITransform).height - this.scrollHeight);
+      this.scrollView.scrollToOffset(new Vec2(0, max), 0);
+    }
     this.scrollKey = key;
     if (this.notice || this.storageIssue) {
       const message = this.notice || this.storageIssue;
@@ -1277,6 +1295,38 @@ export class StudioApp extends Component {
         return y + 48;
       }
       case 'text': return y + this.paragraph(parent, block.text, y, block.muted, 0, width, block.muted ? 13 : 14);
+      case 'help': {
+        // Long explanations hide behind a small "?" row instead of filling the page by default.
+        const open = this.helpKey === block.key;
+        this.button(parent, (open ? '▾ ' : '▸ ') + block.title, 0, y, width, 38, () => {
+          this.helpKey = open ? '' : block.key;
+          this.render();
+        }, false, false, 'CircleHelp');
+        let next = y + 44;
+        if (open) next += this.paragraph(parent, block.text, next, true, 0, width, 13);
+        return next + 8;
+      }
+      case 'dropdown': {
+        // One control replaces a wall of sort tabs: the label shows the current choice and the list
+        // of ways to sort opens in place, exactly where the old tabs used to be.
+        const open = this.helpKey === block.key;
+        const label = (block.label ? block.label + ' · ' : '') + block.text + (open ? '  ▲' : '  ▼');
+        this.button(parent, label, 0, y, width, 42, () => { this.helpKey = open ? '' : block.key; this.render(); }, false, false, 'ArrowDown', block.anchor);
+        let next = y + 48;
+        if (open) {
+          const columns = 3;
+          const cell = (width - (columns - 1) * 6) / columns;
+          block.items.forEach((item: any, index: number) => {
+            this.button(parent, item.text, (index % columns) * (cell + 6), next + Math.floor(index / columns) * 44, cell, 38, () => {
+              this.routes[this.routes.length - 1] = { menu: 'team', id: item.value };
+              this.helpKey = '';
+              this.render();
+            }, item.value === block.value);
+          });
+          next += Math.ceil(block.items.length / columns) * 44 + 6;
+        }
+        return next + 4;
+      }
       case 'foot':
         this.text(parent, block.text, 0, y + 10, width, 18, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
         return y + 34;
@@ -1946,6 +1996,8 @@ export class StudioApp extends Component {
 
   private openMenu(menu: string, id?: string, critical = false, dim?: string) {
     this.helpKey = '';
+    // After a failed run, the save/restart controls are at the bottom of the company page.
+    this.scrollBottom = menu === 'finance' && !!this.state.over;
     if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
@@ -1992,6 +2044,7 @@ export class StudioApp extends Component {
     this.save();
     if (next.event) { this.playing = false; this.resumeAfterMenu = false; this.routes = [{ menu: 'event' }]; }
     if (next.over) { this.playing = false; this.resumeAfterMenu = false; }
+    if (!next.over) this.overScreenShown = false;
     // Put the toast on the page before drawing it. Calling notify() afterwards rebuilt the entire
     // screen a second time for every action that showed a message.
     if (message) this.setNotice(message);
@@ -2049,8 +2102,8 @@ export class StudioApp extends Component {
         case 'dismiss': this.apply(core.dismiss(this.state, data.id)); this.routes = [{ menu: 'team' }]; this.render(); break;
         case 'outing': this.apply(core.teamOuting(this.state, Number(data.days) || 3), '团建已安排，全队停工。'); break;
         case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
+        case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员开始加班。' : '全员恢复正常工作。'); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
-        case 'deadline': this.apply(core.setDeadline(this.state, data.id, Number(data.days)), '发售日期已公布。'); break;
         case 'exhibition': this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。'); break;
         case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), '更新已开始制作。'); break;
         case 'sale': this.apply(core.setSale(this.state, data.id, !!data.enabled, data.floor), data.enabled ? '已开启促销，系统会按余量决定打折时机。' : '已关闭促销，恢复原价销售。'); break;
@@ -2078,7 +2131,6 @@ export class StudioApp extends Component {
         }
         case 'patch-crew': this.apply(core.setPatchCrew(this.state, data.id, data.person, !!data.on)); break;
         case 'patch-release': this.apply(core.releasePatch(this.state, data.id), '补丁已上线。'); this.routes = [{ menu: 'book', id: data.id }]; this.render(); break;
-        case 'outsource': this.apply(core.outsourceSound(this.state, data.id, Number(data.tier)), '声音已外包，相关评分项立即推进。'); break;
         case 'dlc': {
           const next = core.makeDLC(this.state, data.id);
           const project = next.projects[next.projects.length - 1];

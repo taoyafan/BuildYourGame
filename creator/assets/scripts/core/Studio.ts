@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.50';
+export const VERSION = '0.1.51';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -56,6 +56,11 @@ export const SCALES = [
   { name: '大型', work: 20, price: 1.8, reach: 12 },
   { name: '超大型', work: 90, price: 2.4, reach: 45 }
 ];
+
+// Pace trial: both the workload and the money a title brings in are two thirds of the old values.
+// A game takes about a third less calendar time while the risk/reward ratio stays the same. Change
+// this one constant to roll the whole trial back.
+const PACE = 2 / 3;
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
 // how much the audience cares about each dimension. Genres never cap a dimension.
@@ -291,7 +296,7 @@ function blankProject(id: string, plan: any, day: number) {
   const scale = SCALES[plan.scale];
   const work: any = {};
   const contentShare = sum(CONTENT_KEYS.map(key => type.share[key]));
-  for (const key of DIM_KEYS) work[key] = { total: type.work * scale.work * type.share[key] / contentShare, done: 0, value: 0, batches: [] };
+  for (const key of DIM_KEYS) work[key] = { total: type.work * scale.work * type.share[key] / contentShare * PACE, done: 0, value: 0, batches: [] };
   return {
     id, name: plan.name, type: plan.type, scale: plan.scale, parentId: plan.parentId || null,
     work, progress: 0,
@@ -1044,6 +1049,20 @@ export function setOvertime(state: any, id: string, enabled: boolean) {
   return next;
 }
 
+// One press for the whole crew. Someone who promised never to work overtime again is left alone, and
+// turning it off also clears the overtime an outing had paused for that person.
+export function setAllOvertime(state: any, enabled: boolean) {
+  const next = studioAction(state);
+  if (typeof enabled !== 'boolean') throw new Error('加班安排无效。');
+  const crew = next.staff.filter((person: any) => !person.noOvertime);
+  for (const person of crew) {
+    if (enabled) next.overtime[person.id] = true;
+    else { delete next.overtime[person.id]; delete next.outing.paused[person.id]; }
+  }
+  studioLog(next, enabled ? '全员加班' : '全员结束加班', enabled ? '产出 +45%，缺陷更多，并会累积负面标签。' : '恢复正常工作。');
+  return next;
+}
+
 export function setSound(state: any, enabled: boolean) {
   if (typeof enabled !== 'boolean') throw new Error('音效设置无效。');
   return { ...state, sound: enabled };
@@ -1157,8 +1176,8 @@ export function outingOffer(state: any, days = 3) {
   const cost = outingCost(state, days);
   let reason = '';
   if (!state.staff.length) reason = '还没有员工。';
-  else if (outing.charges < 1) reason = `团建次数已用完，${dueText(state, outing.next)}恢复 1 次。`;
-  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，${dueText(state, earliest)}起可以再去。`;
+  else if (outing.charges < 1) reason = `团建次数已用完，${Math.max(0, outing.next - state.day)} 天后恢复 1 次。`;
+  else if (state.day < earliest) reason = `距上次团建不足 ${OUTING_GAP} 天，还有 ${earliest - state.day} 天可以再去。`;
   else if (state.cash < cost) reason = '资金不足。';
   return { available: !reason, reason, cost, charges: outing.charges, next: outing.next, earliest: Math.max(state.day, earliest) };
 }
@@ -1639,7 +1658,7 @@ export function promoteRange(state: any, project: any, cost: number) {
 export function followerValue(state: any, project: any) {
   const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : 0.5;
   const conversion = 0.2 + fit * 0.5;
-  const price = TYPES[project.type].price * SCALES[project.scale].price * (project.parentId ? 0.35 : 1);
+  const price = TYPES[project.type].price * SCALES[project.scale].price * PACE * (project.parentId ? 0.35 : 1);
   const ceiling = MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1) * 0.6;
   const last = state.catalog.find((book: any) => !book.parentId && book.openingFollowers > 0);
   return {
@@ -1713,7 +1732,7 @@ export function testDemo(state: any, projectId: string, count = 30) {
       ? '画面分偏低：任何人都能做画面，评分取决于画面能力与进度；安排更合适的人制作或返工。'
       : metrics.dimensions.picture < 70 ? '画面能看但不够出彩，美术越早加入，越有时间做细节。' : '画面得到认可。',
     sound: metrics.dimensions.sound < 45
-      ? '声音分偏低：可以安排员工制作，也可以外包声音；交付后才改变评分，并非没有音频岗位就只能留空。'
+      ? '声音分偏低：安排声音能力更强的人制作或返工，评分才会提高。'
       : metrics.dimensions.sound < 70 ? '声音够用但不出彩，音频能再提高沉浸感。' : '声音得到认可。',
     stability: (newlyFound
       ? `试玩玩家碰到 ${newlyFound} 项测试漏掉的缺陷，待修 ${metrics.known} 项。`
@@ -1740,7 +1759,7 @@ function openingSales(project: any, multiplier: number, score: number) {
   const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : clamp(score / 100 * 0.85, 0.15, 0.95);
   const ceiling = MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1);
   const units = Math.max(1, Math.round(Math.min(ceiling * 0.6, project.followers * (0.2 + fit * 0.5) * multiplier)));
-  const price = TYPES[project.type].price * SCALES[project.scale].price * (project.parentId ? 0.35 : 1);
+  const price = TYPES[project.type].price * SCALES[project.scale].price * PACE * (project.parentId ? 0.35 : 1);
   return { units, price, receipt: round(units * price) };
 }
 
@@ -2310,6 +2329,9 @@ export function stepDay(state: any) {
     next.ledger = { opening: next.cash, income: 0, expense: 0, payroll: 0 };
     next.accrued = 0;
     next.over = next.cash < 0;
+    // Nothing is left to decide once the company is gone; a same-day random event would otherwise
+    // sit behind the failure screen and trap the player in closeMenu().
+    if (next.over) next.event = null;
     studioLog(next, `${monthText(report.month)}账单`, `收入 ${moneyText(report.income)}，支出 ${moneyText(report.expense)}，净变化 ${moneyText(report.net)}。`);
   }
   next.day += 1;
@@ -2581,7 +2603,7 @@ function remindClash(state: any, work: any) {
   if (work.tier !== state.focus && work.tier !== 2) return;
   for (const project of state.projects) {
     if (project.released || !project.deadline || Math.abs(project.deadline - work.released) > 6) continue;
-    announce(state, { kind: 'notice', title: '档期提醒', text: `${work.studioName}的《${work.name}》定档${dueText(state, work.released)}，和《${project.name}》同周。`, amount: 0 });
+    announce(state, { kind: 'notice', title: '档期提醒', text: `${work.studioName}的《${work.name}》还有 ${Math.max(1, work.released - state.day)} 天发售，和《${project.name}》同周。`, amount: 0 });
   }
 }
 
@@ -2739,7 +2761,7 @@ export function poachOffer(state: any, talentId: string, bid: number) {
   const eligible = freeAgent || talent.status === 'employed';
   const reason = !eligible ? (talent.status === 'hired' ? '已经加入本社' : '此人现在不在对手那里')
     : state.office < 1 ? '搬进正式办公室后才能找猎头'
-    : (talent.cooldown || 0) > state.day ? `被拒后要到${dueText(state, talent.cooldown)}才肯再谈`
+    : (talent.cooldown || 0) > state.day ? `被拒后还有 ${Math.max(0, talent.cooldown - state.day)} 天才能再谈`
     : state.staff.length >= seats(state) ? '工位已满'
     : state.cash < POACH_FEE ? `猎头费需要 ${moneyText(POACH_FEE)}` : '';
   return { talent, studio, wage, chance, fee: POACH_FEE, freeAgent, reason, available: !reason };
@@ -2806,9 +2828,11 @@ export function monthText(month: number) {
   return `第 ${Math.floor((month - 1) / 12) + 1} 年 ${(month - 1) % 12 + 1} 月`;
 }
 
+// Future events are read as days left. Showing both a calendar date and "还有 N 天" said the same
+// thing twice; the date still belongs in the archive, where it describes something that happened.
 export function dueText(state: any, day: number) {
   const left = day - state.day;
-  return dateText(day) + (left > 0 ? `（还有 ${left} 天）` : left === 0 ? '（今天）' : '');
+  return left > 0 ? `还有 ${left} 天` : left === 0 ? '今天' : '已过期';
 }
 
 // Everything dated in the next half year: expos, the awards, the media rating, announced releases.
@@ -2868,7 +2892,8 @@ function industryDay(state: any) {
     book.weekOne = { units: firstWeek, lost, without: firstWeek + sum(lost.map((item: any) => item.units)) };
     const clashText = lost.length ? `被${lost.map((item: any) => `《${item.name}》分流约 ${item.units} 份`).join('、')}；不撞档大约能卖 ${book.weekOne.without} 份。` : '首周没有撞档。';
     news(state, state.focus, false, `《${book.name}》首周售出 ${firstWeek.toLocaleString('zh-CN')} 份`, `城市第 ${local} 名 · 全国第 ${national} 名 · 国际第 ${global} 名。`, null, true);
-    announce(state, { kind: 'record', title: `《${book.name}》首周总结`, text: `${firstWeek} 份 · 全国首周榜第 ${national} 名。${clashText}`, amount: 0 });
+    // The first-week numbers live in the news, the archive and the ledger. A banner on top of all
+    // three was the fourth copy of the same result, so it no longer pops up.
     studioLog(state, `《${book.name}》首周总结`, `首周售出 ${firstWeek} 份，全国首周榜第 ${national} 名。${clashText}`);
     if (national <= 10 && state.goals.topTen === null) {
       state.goals.topTen = state.day;
