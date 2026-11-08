@@ -1138,7 +1138,7 @@ function rivalMenu(state: any, id: string) {
 
 // Tutorial step for the current screen. `ack` explains an area and waits for "知道了"; `tap` introduces a
 // control and counts as seen once the player presses it; neither means "press the highlighted control".
-export type GuideStep = { anchor: string; text: string; ack?: string; tap?: string };
+export type GuideStep = { anchor: string; text: string; ack?: string; tap?: string; tapGroup?: string };
 
 // One founder covers one trade and leaves the other blind. A programmer and a designer both ship
 // games nobody wants to look at, so both pair with an artist; an artist pairs with a programmer.
@@ -1178,8 +1178,8 @@ export function guide(state: any, route: any, playing: boolean): GuideStep | nul
 }
 
 // Once-only notes for features the tutorial does not reach or that open later. Overtime is taught in
-// order: the all-hands switch, then one person's switch and the labels it can cause, then the outing
-// that clears those labels. Each later step waits for the earlier one to have been read.
+// order: the all-hands switch (including its cost), a forced tap into one person's card, that person's
+// own switch, then the outing that clears the labels overtime caused. Later steps wait for earlier ones.
 function unlockStep(state: any, route: any): GuideStep | null {
   const seen = state.tutorial.seen;
   const once = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };
@@ -1202,14 +1202,17 @@ function unlockStep(state: any, route: any): GuideStep | null {
   switch (route.menu) {
     case 'team': {
       if (!state.staff.some((person: any) => !person.founder)) return null;
-      if (!seen.overtimeAllIntro) return once('overtimeAllIntro', 'overtime-all', '全员加班：一键让所有人加班，产出更高，但缺陷更多。');
+      if (!seen.overtimeAllIntro) return once('overtimeAllIntro', 'overtime-all', '全员加班：一键让所有人加班，产出 +45%。代价是缺陷更多，还会累积「疲惫」「想走」负面标签，加班越久越容易。');
+      // Saves that already learned the personal switch skip the new forced tap, so the next thing
+      // they see is still the outing note rather than a lesson they have clearly outgrown.
+      if (!seen.overtimePersonTap && !seen.overtimeIntro) return { anchor: 'staff-0', text: '点一位成员看看：每个人也能单独设置加班。', tap: 'overtimePersonTap', tapGroup: 'staff' };
       if (seen.overtimeIntro) return once('outingIntro', 'outing-group', '负面标签只能靠团建清掉：1 / 3 / 5 天三档，天数越长越可能清掉；全队停工，次数要攒。');
       return null;
     }
     case 'person': {
       const person = state.staff.find((item: any) => item.id === route.id);
       if (!person || !seen.overtimeAllIntro) return null;
-      return once('overtimeIntro', 'overtime', '单人加班：产出 +45%，但缺陷更多，还可能挂上「疲惫」「想走」等负面标签，加班越久越容易。')
+      return once('overtimeIntro', 'overtime', '这里可以只让这个人加班，开关就在下面，随时能关掉。')
         || (state.staff.length > 1 ? once('mentorIntro', 'mentor', '带教：能力强的同事能带他提高某一项，两人在同一项目才生效，产出都会变慢。') : null);
     }
     case 'market': return demo ? once('expoIntro', 'exhibitions', '展会按日历举办，报名需要体验版：级别越高报名费越贵、对手越强，名次靠前能换来关注。') : null;

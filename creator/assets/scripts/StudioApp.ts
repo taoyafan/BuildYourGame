@@ -92,6 +92,9 @@ export class StudioApp extends Component {
   private floatTimes = new Map<string, number>();
   private groupTops = new Map<string, number>();
   private menuAck: string | null = null;
+  // A forced tap inside a menu must be cleared by the highlighted control itself. Other menu buttons
+  // stay usable (no shield in menus), but pressing them cannot silently skip the lesson.
+  private menuTapNodes = new Set<Node>();
   private helpKey = '';
   private overScreenShown = false;
   private scrollBottom = false;
@@ -454,8 +457,10 @@ export class StudioApp extends Component {
         // even though core.toggleAssign()/assign() already changed the project correctly.
         this.activeTouches.clear();
         this.playSound('click');
-        // Acting on a menu while its explanation is open counts as having read it.
-        if (this.menuAck && node.parent?.name !== 'Bubble') { this.state = core.markSeen(this.state, this.menuAck); this.menuAck = null; this.save(); }
+        // Acting on a menu while its explanation is open counts as having read it. For a forced tap,
+        // only the highlighted group counts; every other control still works but leaves the tip up.
+        const tapAllowed = !this.menuTapNodes.size || this.menuTapNodes.has(node);
+        if (this.menuAck && node.parent?.name !== 'Bubble' && tapAllowed) { this.state = core.markSeen(this.state, this.menuAck); this.menuAck = null; this.save(); }
         callback();
       }
       catch (error) { this.notify(error.message || '本次操作未执行。'); }
@@ -1448,12 +1453,14 @@ export class StudioApp extends Component {
       case 'staff':
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
         const order = (block.order || []).map((id: string) => this.state.staff.find((person: any) => person.id === id)).filter(Boolean);
-        for (const person of order.length ? order : this.state.staff) {
+        const people = order.length ? order : this.state.staff;
+        for (let index = 0; index < people.length; index++) {
+          const person = people[index];
           // Tags stay on the card: they are how the player ties a later slowdown to overtime.
           const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);
           const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 外出中' : ''}${person.mentor ? ' · 带教中' : ''}`;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: person.id }) + 10;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: person.id, anchor: 'staff-' + index }) + 10;
         }
         return y;
       case 'avatar': {
@@ -1848,9 +1855,17 @@ export class StudioApp extends Component {
 
   private renderGuide() {
     this.menuAck = null;
+    this.menuTapNodes.clear();
     const route = this.routes.length ? this.routes[this.routes.length - 1] : null;
     const step = content.guide(this.state, route, this.playing);
     if (!step) return;
+    // A forced tip can point at any card in a group. Highlight the first one, but accept every card
+    // in the group as the tap that clears it. No matched anchors means no restriction, so a tip can
+    // never trap the player on a page where its target failed to render.
+    if (route && step.tap && step.tapGroup) {
+      const prefix = step.tapGroup + '-';
+      this.anchors.forEach((node, key) => { if (key.startsWith(prefix)) this.menuTapNodes.add(node); });
+    }
     // A "知道了" tip is optional: the highlighted control stays live, so the player may act on it or
     // simply dismiss the tip. Never shield the highlight itself. Whatever the player presses counts
     // as having read it — on the main screen as well as inside menus, where anchors are often whole
