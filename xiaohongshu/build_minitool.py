@@ -47,6 +47,53 @@ BOOT_JS = """// 容器要求：脚本必须外置，行内事件一律改 addEve
 })();
 """
 
+# 容器顶部浮着返回/分享两个圆钮，实测覆盖 y 28..82（390 宽设计空间）。
+# 它是原生层，不在 DOM 里也没有接口隐藏，只能把整块画布往下推。
+# 引擎按 window.innerHeight 算画布高度，所以 CSS 内边距和 innerHeight 必须成对减。
+CHROME_INSET_JS = """/* 小红书容器的导航外壳（左返回、右分享）浮在画布上方，且无法隐藏。
+   把画布整体下推，内容自动让开；游戏内部布局完全不动。 */
+(function () {
+  var OFF = 52; // 外壳 44 + 与内容的间距 8
+
+  var real = window.innerHeight;
+  var ok = false;
+  try {
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      get: function () { return real - OFF; }
+    });
+    ok = true;
+  } catch (e) {
+    ok = false;
+  }
+
+  if (!ok) {
+    // 拿不到 innerHeight 就撤掉 CSS 内边距，宁可被遮一点也不要留空白
+    if (document.body) document.body.style.paddingTop = '0px';
+    return;
+  }
+
+  window.addEventListener('resize', function () {
+    try { delete window.innerHeight; } catch (e) {}
+    real = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      get: function () { return real - OFF; }
+    });
+  });
+})();
+"""
+
+# 顶部留白用 canvas 清屏色，看起来是同一块背景
+CHROME_INSET_CSS = """
+/* 小红书容器导航外壳占位：容器原生按钮浮在画布上方，这里把画布下推 52px */
+body {
+  box-sizing: border-box;
+  padding-top: 52px;
+  background-color: #f3f6f2;
+}
+"""
+
 
 def step(msg):
     print('\n== ' + msg)
@@ -103,7 +150,15 @@ print('  引用已同步')
 step('引擎补丁（禁 eval / new Function）')
 subprocess.run([sys.executable, PATCH, SRC, DST], check=True)
 
-# ------------------------------------------- 4. 入口页脚本外置
+# ------------------------------------------- 4. 顶部让位 + 入口页脚本外置
+step('容器导航外壳让位')
+open(os.path.join(DST, 'chrome-inset.js'), 'w', encoding='utf-8').write(CHROME_INSET_JS)
+css_path = os.path.join(DST, 'style.css')
+if CHROME_INSET_CSS.strip() not in open(css_path, encoding='utf-8').read():
+    with open(css_path, 'a', encoding='utf-8') as f:
+        f.write(CHROME_INSET_CSS)
+print('  chrome-inset.js + style.css 已写入（下推 52px）')
+
 step('改造 index.html')
 html_path = os.path.join(DST, 'index.html')
 html = open(html_path, encoding='utf-8').read()
@@ -124,10 +179,10 @@ inline = [None] * len(spans)
 html, n_attr = re.subn(r'\son[a-zA-Z]+\s*=\s*"[^"]*"', '', html)
 html = re.sub(r"\son[a-zA-Z]+\s*=\s*'[^']*'", '', html)
 
-# 外置启动脚本挂在 </body> 前
-html = html.replace('</body>', '<script src="boot.js" charset="utf-8"></script>\n</body>')
+# 外置启动脚本挂在 </body> 前；让位脚本要最先执行，其他脚本之前
+html = html.replace('</body>', '<script src="chrome-inset.js" charset="utf-8"></script>\n<script src="boot.js" charset="utf-8"></script>\n</body>')
 open(html_path, 'w', encoding='utf-8').write(html)
-print(f'  移除内联脚本 {len(inline)} 段、行内事件 {n_attr} 处，已挂 boot.js')
+print(f'  移除内联脚本 {len(inline)} 段、行内事件 {n_attr} 处，已挂 chrome-inset.js + boot.js')
 
 open(os.path.join(DST, 'boot.js'), 'w', encoding='utf-8').write(BOOT_JS)
 

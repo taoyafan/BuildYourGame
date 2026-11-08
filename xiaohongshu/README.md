@@ -32,8 +32,22 @@ python xiaohongshu/build_minitool.py
 | 3 | `cocos-js/cc.js` 的 `$P` | `Function(...)` 换成静态闭包 | 模块加载即抛 `EvalError`，白屏 |
 | 4 | `cocos-js/cc.js` 的 CCClass 默认值初始化器 | 同上 | 节点销毁重建时报错 |
 | 5 | `src/polyfills.bundle.js` 两处 | `Function("return this")()` 换成 `globalThis` | 启动阶段抛错 |
+| 6 | 顶部 52px | 画布整体下推（见下节） | 容器返回/分享钮压住标题、加速、叉叉 |
 
 另有一项不是改代码，是绕白名单：**`.wav` / `.bin` 不在平台允许的后缀里**，全部改名成 `.png` 并同步引用，否则审核拒包。代价是音效不响（引擎按图片解码，报 `Error 4930`），游戏可玩。
+
+## 顶部让位（重要）
+
+容器会在画布上方浮一层**原生**导航外壳（左返回、右分享两个圆钮，直径约 54），它不在 DOM 里、也没有接口隐藏。实测它覆盖 y 28～82（390 宽设计空间），正好压住主页标题行和加速按钮，以及各页右上角的关闭叉叉。
+
+处理方式是**把整块画布下推 52px**（外壳 44 + 间距 8），游戏内部布局一行不动：
+
+- `chrome-inset.js`：把 `window.innerHeight` 改小 52（引擎按它算画布尺寸）
+- `style.css`：`body { box-sizing: border-box; padding-top: 52px; background: #f3f6f2 }`（`#f3f6f2` 是 canvas 清屏色，留白看起来是同一块背景）
+
+效果：画布从 52 铺到屏幕底，底部导航仍贴底；游戏自己的安全区（`env(safe-area-inset-top)`，真机约 38）叠加后内容从 y≈90 开始，正好落在圆钮下方。
+
+**禁止改 Cocos 源码**。所有适配只在 `xiaohongshu/build/minitool/` 这份复制出来的 H5 里做，`creator/assets/scripts/` 保持原样。
 
 ## 上传
 
