@@ -52,6 +52,11 @@ export function advice(state: any, projectId?: string) {
   // Known defects are repaired by whoever still works on this title: once a person's own items are
   // finished, their hours go to repairs. Only a completely unstaffed title leaves them open.
   if (project && !project.released && defectsByDimension(project) && !staffed(project)) return { title: '《' + project.name + '》的缺陷没人修', text: '待修：' + defectsByDimension(project) + '。给它留一个人，做完自己的部分就会去修。', menu: 'assign', id: project.id };
+  // A finished, clean build has exactly one thing left to do. Give it priority over optional advice
+  // (playtest, promotion, a bigger office) and land the player on the release button itself.
+  if (project && !project.released && project.progress >= 100 && !defectsByDimension(project)) {
+    return { title: '发售《' + project.name + '》', text: '内容做满、缺陷修完。点这里到项目页最下方正式发售。', menu: 'project', id: project.id, bottom: true, emphasis: true };
+  }
   const bigger = core.OFFICES[state.office + 1];
   if (bigger && state.staff.length >= core.seats(state) && state.cash >= bigger.cost + core.monthlyCost(state) * 2) return { title: '工位坐满了：可以考虑搬到更大的办公室', text: bigger.name + ' ' + bigger.seats + ' 个工位，搬家 ' + money(bigger.cost) + '，月租 ' + money(bigger.rent) + '。点这里去「公司」看看。', menu: 'finance' };
   // A shipped title has no six-dimension pipeline left; only its patch is actionable.
@@ -299,7 +304,7 @@ function projectMenu(state: any, id?: string) {
     // them first and cannot hit it while scrolling through the action cards.
     { type: 'section', title: '发售（不可撤销）' },
     { type: 'actions', items: [
-      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '' }
+      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '', emphasis: project.progress >= 100 && !defectsByDimension(project) }
     ] }
   ];
   return { title: '项目', blocks };

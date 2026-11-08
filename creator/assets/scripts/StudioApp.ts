@@ -95,6 +95,7 @@ export class StudioApp extends Component {
   // A forced tap inside a menu must be cleared by the highlighted control itself. Other menu buttons
   // stay usable (no shield in menus), but pressing them cannot silently skip the lesson.
   private menuTapNodes = new Set<Node>();
+  private guideAnchor = '';
   private helpKey = '';
   private overScreenShown = false;
   private scrollBottom = false;
@@ -527,9 +528,13 @@ export class StudioApp extends Component {
     }
     const height = cursor + 8;
     node.getComponent(UITransform).setContentSize(width, height);
-    pen.rect(ox, oy, width, height, options.highlight ? '#fff8e6' : colors.paper, 10);
-    pen.frame(ox, oy, width, height, options.highlight ? colors.gold : colors.line, options.highlight ? 2 : 1, 10);
+    // An irreversible, ready-to-go action gets a heavier gold frame and a stripe on its left edge,
+    // so it reads as the one thing to notice at the bottom of a long page.
+    const emphasis = !!options.emphasis && !options.disabled;
+    pen.rect(ox, oy, width, height, emphasis ? '#fff1cf' : options.highlight ? '#fff8e6' : colors.paper, 10);
+    pen.frame(ox, oy, width, height, emphasis || options.highlight ? colors.gold : colors.line, emphasis ? 3 : options.highlight ? 2 : 1, 10);
     shapes.forEach(draw => draw());
+    if (emphasis) pen.rect(ox, oy, 5, height, colors.gold, 3);
     this.clickable(node, callback, !options.disabled);
     if (options.anchor) this.anchors.set(options.anchor, node);
     return height;
@@ -687,7 +692,9 @@ export class StudioApp extends Component {
     if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
     this.renderGuide();
     // Applied after the guide so a tip cannot undo the jump to the bottom of the company page.
-    if (this.scrollBottom && this.scrollView && this.scrollBody) {
+    // If a tip points somewhere else, let its own scroll win and keep the request pending: the next
+    // render (after the tip is read) lands on the release button instead of hiding the highlight.
+    if (this.scrollBottom && this.scrollView && this.scrollBody && (!this.guideAnchor || this.guideAnchor === 'launch')) {
       this.scrollBottom = false;
       const max = Math.max(0, this.scrollBody.getComponent(UITransform).height - this.scrollHeight);
       this.scrollView.scrollToOffset(new Vec2(0, max), 0);
@@ -787,7 +794,7 @@ export class StudioApp extends Component {
       y += 36;
     }
     const advice = content.advice(state, project ? project.id : undefined);
-    y += this.choice(body, y, advice.title, advice.text, () => this.openMenu(advice.menu, advice.id), { icon: 'ChevronRight', highlight: true, anchor: 'next', compact: true });
+    y += this.choice(body, y, advice.title, advice.text, () => this.openMenu(advice.menu, advice.id, false, undefined, !!advice.bottom), { icon: 'ChevronRight', highlight: true, emphasis: advice.emphasis, anchor: 'next', compact: true });
     finish(y - 20);
     this.showDeltas(cashLabel);
   }
@@ -1414,7 +1421,7 @@ export class StudioApp extends Component {
         // Menu actions as cards: an icon, what it does and why it might be greyed out, instead of a
         // column of identical green bars.
         const start = y;
-        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data), { icon: item.icon || 'ChevronRight', tag: item.tag, tagColor: colors.green, disabled: item.disabled, anchor: item.anchor, compact: String(item.detail || '').length <= 24 }) + 8;
+        for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data), { icon: item.icon || 'ChevronRight', tag: item.tag, tagColor: colors.green, disabled: item.disabled, anchor: item.anchor, emphasis: item.emphasis, compact: String(item.detail || '').length <= 24 }) + 8;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 8));
         return y + 6;
       }
@@ -1856,9 +1863,11 @@ export class StudioApp extends Component {
   private renderGuide() {
     this.menuAck = null;
     this.menuTapNodes.clear();
+    this.guideAnchor = '';
     const route = this.routes.length ? this.routes[this.routes.length - 1] : null;
     const step = content.guide(this.state, route, this.playing);
     if (!step) return;
+    this.guideAnchor = step.anchor;
     // A forced tip can point at any card in a group. Highlight the first one, but accept every card
     // in the group as the tap that clears it. No matched anchors means no restriction, so a tip can
     // never trap the player on a page where its target failed to render.
@@ -2009,10 +2018,11 @@ export class StudioApp extends Component {
     return edit;
   }
 
-  private openMenu(menu: string, id?: string, critical = false, dim?: string) {
+  private openMenu(menu: string, id?: string, critical = false, dim?: string, bottom = false) {
     this.helpKey = '';
-    // After a failed run, the save/restart controls are at the bottom of the company page.
-    this.scrollBottom = menu === 'finance' && !!this.state.over;
+    // After a failed run the save/restart controls are at the bottom of the company page; a ready
+    // release jumps to the bottom of the project page where the shipping button sits.
+    this.scrollBottom = bottom || (menu === 'finance' && !!this.state.over);
     if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
