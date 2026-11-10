@@ -284,9 +284,14 @@ export class StudioApp extends Component {
     }
     this.slotIndex = index;
     this.slot = index.active;
+    let outdated = false;
     try {
       const raw = platform.read(core.SAVE_SLOT_KEY(this.slot));
-      if (raw) return core.restoreStudio(JSON.parse(raw));
+      if (raw) {
+        const saved = JSON.parse(raw);
+        outdated = typeof saved?.version === 'number' && saved.version < 7;
+        return core.restoreStudio(saved);
+      }
     } catch {
       // Keep the unreadable copy aside, then start fresh. The warning is shown once and can be dismissed;
       // it must not come back on every render, or the player can never get rid of it.
@@ -294,7 +299,7 @@ export class StudioApp extends Component {
         const raw = platform.read(core.SAVE_SLOT_KEY(this.slot));
         if (raw) platform.write(raw, core.SAVE_RECOVERY_KEY);
       } catch { this.storageIssue = '设备存储不可用，进度可能无法保存。'; }
-      this.storageIssue ||= '这份存档无法读取，已另存为恢复副本，新开了一局。';
+      this.storageIssue ||= outdated ? '0.2.0 改为模块化玩法，旧存档无法继续，已另存为恢复副本，新开了一局。' : '这份存档无法读取，已另存为恢复副本，新开了一局。';
     }
     return core.createStudio();
   }
@@ -1260,16 +1265,42 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const state = this.state;
     this.draft.suggested = this.draft.suggested || content.randomTitle(state);
+    if (!this.draft.slots) this.draft.slots = JSON.parse(JSON.stringify(core.TEMPLATES[0].slots));
     this.input(body, this.draft.suggested, this.draft.name, 0, 48, value => { this.draft.name = value; });
     let cursor = 64;
-    if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作类型与部分关注，玩家期待更高。', cursor, true);
-    this.text(body, '类型', 0, cursor, inner, 24, 15, colors.ink, true);
+    if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
+    const formTop = cursor;
+    this.text(body, '示例组合', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
-    for (const [key, type] of Object.entries(core.TYPES) as any) {
-      const detail = type.audience + ' · ' + core.audienceFocus(key) + '\n工作量 ' + (type.work * core.SCALES[this.draft.scale].work).toFixed(0) + ' · ' + content.price(type.price * core.SCALES[this.draft.scale].price);
-      cursor += this.choice(body, cursor, type.name, detail, () => { this.draft.type = key; this.render(); }, { highlight: this.draft.type === key, tag: this.draft.type === key ? '已选' : '', tagColor: colors.green, disabled: !!this.draft.sequel && this.draft.type !== key }) + 8;
+    const half = (inner - 8) / 2;
+    core.TEMPLATES.forEach((template: any, index: number) => {
+      const same = core.SLOTS.every((slot: any) => (template.slots[slot.key] || []).join() === (this.draft.slots?.[slot.key] || []).join());
+      this.button(body, template.name, index * (half + 8), cursor, half, 40, () => { this.draft.slots = JSON.parse(JSON.stringify(template.slots)); this.render(); }, same, !!this.draft.sequel);
+    });
+    cursor += 52;
+    // Each slot lists its modules; a single-choice slot swaps, a multi-choice slot toggles.
+    for (const slot of core.SLOTS) {
+      const chosen: string[] = this.draft.slots?.[slot.key] || [];
+      this.text(body, slot.name + (slot.max > 1 ? '（最多 ' + slot.max + ' 个' + (slot.min ? '' : '，可不选') + '）' : slot.min ? '' : '（可不选）') + (slot.oneOff ? ' · 一次性' : ''), 0, cursor, inner, 22, 13, colors.ink, true);
+      cursor += 26;
+      const options = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key);
+      const cell = (inner - 16) / 3;
+      options.forEach((key: string, index: number) => {
+        const owned = this.state.modules?.[key];
+        const label = core.MODULES[key].name + (owned ? ' ' + owned.level + '级' : '');
+        const on = chosen.includes(key);
+        this.button(body, label, (index % 3) * (cell + 8), cursor + Math.floor(index / 3) * 46, cell, 40, () => {
+          const list = (this.draft.slots[slot.key] || []).slice();
+          if (on) list.splice(list.indexOf(key), 1);
+          else if (slot.max === 1) list.splice(0, list.length, key);
+          else if (list.length < slot.max) list.push(key);
+          this.draft.slots = { ...this.draft.slots, [slot.key]: list };
+          this.render();
+        }, on, !!this.draft.sequel);
+      });
+      cursor += Math.ceil(options.length / 3) * 46 + 6;
     }
-    this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, 0, inner, cursor - 8));
+    this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, formTop, inner, cursor - formTop - 8));
     cursor += 4;
     this.text(body, '体量', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
@@ -1282,7 +1313,7 @@ export class StudioApp extends Component {
     const locked = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => !core.scaleOpen(state, index));
     if (locked.length) cursor += this.paragraph(body, locked.map((index: number) => core.SCALE_LOCKS[index]).join(''), cursor, true);
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
-    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !this.draft.type || !core.scaleOpen(state, this.draft.scale));
+    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!core.planIssue(this.draft) || !core.scaleOpen(state, this.draft.scale));
     return cursor + 66;
   }
 
@@ -1479,6 +1510,43 @@ export class StudioApp extends Component {
         const values = this.abilityValues(block.abilities);
         const labels = core.ABILITIES.map(ability => ability.name);
         return y + this.radar(parent, y, { dimensions: values, labels }, '', undefined, 0, false) + 6;
+      }
+      case 'compose': {
+        // One layer of a recipe: the whole on top, its parts below, each part joined to it by a line.
+        const tint: any = { have: colors.green, partial: colors.amber, missing: colors.muted };
+        const fill: any = { have: '#e5f1ea', partial: '#f7ecd9', missing: colors.pale };
+        const rootW = Math.min(width, 240);
+        const rootH = 56;
+        const columns = Math.min(3, Math.max(1, block.children.length));
+        const cellW = (width - (columns - 1) * 8) / columns;
+        const cellH = 56;
+        const rows = Math.ceil(block.children.length / columns);
+        const childTop = rootH + 40;
+        const height = childTop + rows * (cellH + 10);
+        const { node, pen } = this.canvasNode(parent, 'Compose', 0, y, width, height);
+        const rootX = (width - rootW) / 2;
+        block.children.forEach((child: any, index: number) => {
+          const cx = (index % columns) * (cellW + 8) + cellW / 2;
+          const cy = childTop + Math.floor(index / columns) * (cellH + 10);
+          pen.line(width / 2, rootH, width / 2, rootH + 18, colors.line, 2);
+          pen.line(width / 2, rootH + 18, cx, rootH + 18, colors.line, 2);
+          pen.line(cx, rootH + 18, cx, cy, tint[child.status] || colors.line, 2);
+        });
+        const card = (x: number, top: number, w: number, h: number, item: any, bold: boolean) => {
+          const box = this.box(node, 'Part', x, top, w, h, fill[item.status] || colors.pale, 8);
+          new Pen(this.box(box, 'Frame', 0, 0, w, h).addComponent(Graphics)).frame(0, 0, w, h, tint[item.status] || colors.line, bold ? 2 : 1.5, 8);
+          this.text(box, item.name, 8, 6, w - 16, 22, bold ? 15 : 13, tint[item.status] || colors.ink, true);
+          this.text(box, item.detail || '', 8, 28, w - 16, 22, 10, colors.muted);
+          return box;
+        };
+        card(rootX, 0, rootW, rootH, block.root, true);
+        block.children.forEach((child: any, index: number) => {
+          const x = (index % columns) * (cellW + 8);
+          const top = childTop + Math.floor(index / columns) * (cellH + 10);
+          const box = card(x, top, cellW, cellH, child, false);
+          if (child.route) this.clickable(box, () => this.openMenu(child.route.menu, child.route.id));
+        });
+        return y + height + 8;
       }
       case 'tags': {
         y = this.chips(parent, block.items, 0, y, width) + 2;
@@ -2026,7 +2094,7 @@ export class StudioApp extends Component {
     if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
-    if (menu === 'new-project') this.draft = { name: '', type: '', scale: 0 };
+    if (menu === 'new-project') this.draft = { name: '', scale: 0, slots: JSON.parse(JSON.stringify(core.TEMPLATES[0].slots)) };
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
     this.routes.push({ menu, id, dim });
@@ -2136,7 +2204,7 @@ export class StudioApp extends Component {
           const book = this.state.catalog.find((item: any) => item.id === data.id);
           if (!book) throw new Error('原作不存在。');
           this.openMenu('new-project');
-          this.draft = { name: (book.name + ' 2').slice(0, 24), type: book.type, scale: book.scale, sequel: book.id };
+          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, slots: JSON.parse(JSON.stringify(book.slots)), sequel: book.id };
           this.render();
           break;
         }

@@ -1,10 +1,12 @@
 // Pure business rules without engine imports, so they can also run in Node for balance checks.
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
+import { MODULES, SLOTS, TEMPLATES } from './Modules';
+export { MODULES, SLOTS, TEMPLATES };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.55';
+export const VERSION = '0.2.0';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -283,14 +285,92 @@ export function market(type: string, month: number) {
   ][position];
 }
 
-function blankProject(id: string, plan: any, day: number) {
-  const type = TYPES[plan.type];
-  const scale = SCALES[plan.scale];
+// Testing is the whole game's work, not a module: a share of all the content, reused parts included.
+export const TEST_SHARE = 0.18;
+// A module the company already owns at the needed level still has to be wired into the new title.
+const REUSE_WORK = 0.1;
+
+// Every module the chosen slots pull in, shared ones once: a title is the flat set of its modules.
+export function expandModules(slots: any) {
+  const out: string[] = [];
+  const add = (id: string) => {
+    if (!MODULES[id] || out.includes(id)) return;
+    for (const need of MODULES[id].needs || []) add(need);
+    out.push(id);
+  };
+  for (const slot of SLOTS) for (const id of (slots && slots[slot.key]) || []) add(id);
+  return out;
+}
+
+// What a plan would build: for each module the level it needs, the level the company already owns, the
+// new work still to do and the finished part carried over at its old quality. Work = the missing levels.
+export function planModules(owned: any, plan: any) {
+  const level = (plan.scale || 0) + 1;
+  const factor = (lv: number) => lv > 0 ? SCALES[lv - 1].work : 0;
+  return expandModules(plan.slots).map(id => {
+    const module = MODULES[id];
+    const have = module.oneOff ? null : owned?.[id] || null;
+    const from = have ? Math.min(have.level, level) : 0;
+    const fresh: any = {};
+    const kept: any = {};
+    for (const [key, base] of Object.entries(module.work) as any) {
+      const full = base * factor(level);
+      const carried = base * factor(from);
+      fresh[key] = have && have.level >= level ? full * REUSE_WORK : full - carried;
+      if (carried > 0) kept[key] = { amount: carried, quality: have.quality?.[key] ?? 50 };
+    }
+    return { id, level, from, oneOff: !!module.oneOff, fresh, kept };
+  });
+}
+
+// The main gameplay decides the genre the audience reads it as; a title without one cannot start.
+export function planType(plan: any) {
+  const core = (plan.slots?.core || [])[0];
+  return MODULES[core]?.type || '';
+}
+
+export function planIssue(plan: any) {
+  if (!plan || !plan.slots) return '请选择模块。';
+  for (const slot of SLOTS) {
+    const ids = plan.slots[slot.key] || [];
+    if (ids.some((id: string) => MODULES[id]?.slot !== slot.key)) return `${slot.name}里有无效的模块。`;
+    if (ids.length < slot.min) return `请选择${slot.name}。`;
+    if (ids.length > slot.max) return `${slot.name}最多选 ${slot.max} 个。`;
+  }
+  return planType(plan) ? '' : '请选择主玩法。';
+}
+
+// New person-days per dimension, what reuse saves, and the tags the modules add up to.
+export function planWork(state: any, plan: any) {
+  const fresh: any = {};
+  let saved = 0;
+  const tags: string[] = [];
+  for (const item of planModules(state.modules, plan)) {
+    for (const [key, amount] of Object.entries(item.fresh) as any) fresh[key] = (fresh[key] || 0) + amount;
+    for (const part of Object.values(item.kept) as any) saved += part.amount;
+    for (const tag of MODULES[item.id].tags || []) if (!tags.includes(tag)) tags.push(tag);
+  }
+  return { fresh, total: sum(Object.values(fresh) as number[]), saved, tags };
+}
+
+function blankProject(id: string, plan: any, day: number, owned: any) {
+  const modules = planModules(owned, plan);
   const work: any = {};
-  const contentShare = sum(CONTENT_KEYS.map(key => type.share[key]));
-  for (const key of DIM_KEYS) work[key] = { total: type.work * scale.work * type.share[key] / contentShare * PACE, done: 0, value: 0, batches: [] };
+  for (const key of DIM_KEYS) work[key] = { total: 0, done: 0, value: 0, batches: [] };
+  for (const item of modules) {
+    for (const [key, amount] of Object.entries(item.fresh) as any) work[key].total += amount;
+    for (const [key, part] of Object.entries(item.kept) as any) {
+      const target = work[key];
+      target.total += part.amount;
+      target.done += part.amount;
+      target.value += part.amount * part.quality;
+      target.batches.push({ amount: part.amount, quality: part.quality });
+    }
+  }
+  work.stability.total = sum(CONTENT_KEYS.map(key => work[key].total)) * TEST_SHARE;
   return {
-    id, name: plan.name, type: plan.type, scale: plan.scale, parentId: plan.parentId || null,
+    id, name: plan.name, type: planType(plan), scale: plan.scale, parentId: plan.parentId || null,
+    slots: clone(plan.slots), modules: modules.map(item => ({ id: item.id, level: item.level, from: item.from, oneOff: item.oneOff, dims: Object.keys(MODULES[item.id].work) })),
     work, progress: 0,
     defects: [], found: 0, repairProgress: 0,
     followers: 0, promoted: 0, invested: 0, started: day, released: null,
@@ -303,8 +383,8 @@ function blankProject(id: string, plan: any, day: number) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 6, rulesRevision: 10, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
-    staff: [], projects: [], catalog: [], candidates: {},
+    version: 7, rulesRevision: 10, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    staff: [], projects: [], catalog: [], candidates: {}, modules: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
@@ -1259,14 +1339,16 @@ function keepPerson(state: any, id: string) {
 export function startProject(state: any, plan: any, priority = -1) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
-  if (!plan || !has(TYPES, plan.type) || !scaleIndex(plan.scale)) throw new Error('请选择作品类型与体量。');
+  if (!plan || !scaleIndex(plan.scale)) throw new Error('请选择作品体量。');
   if (!scaleOpen(next, plan.scale)) throw new Error(SCALE_LOCKS[plan.scale] || '这个体量还没开放。');
   const original = plan.sequel ? next.catalog.find((book: any) => book.id === plan.sequel) : null;
   if (plan.sequel && (!original || original.reviewScore < 70)) throw new Error('好评达到 70 分的作品才能开发续作。');
+  const issue = planIssue(plan);
+  if (issue) throw new Error(issue);
   const name = String(plan.name || '').trim().slice(0, 24);
   if (!name) throw new Error('请为作品取个名字。');
   if (next.projects.some((project: any) => !project.released && project.name === name)) throw new Error('已有同名作品在开发。');
-  const project = blankProject(`${next.day}-${next.seed}-${next.projects.length}`, { ...plan, name, expectation: original ? (original.expectation || 0) + 4 : 0 }, next.day);
+  const project = blankProject(`${next.day}-${next.seed}-${next.projects.length}`, { ...plan, name, expectation: original ? (original.expectation || 0) + 4 : 0 }, next.day, next.modules);
   // A title nobody has heard of opens with no audience. Only the company's existing fans carry over,
   // and only once the studio has some: a first game cannot start at a few hundred followers.
   project.followers = Math.round(next.fans * 0.2);
@@ -1278,7 +1360,7 @@ export function startProject(state: any, plan: any, priority = -1) {
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   if (priority >= 0) return setPriority(next, project.id, priority);
-  studioLog(next, '新作立项', `《${name}》面向${TYPES[plan.type].audience}，${SCALES[plan.scale].name}作品。`);
+  studioLog(next, '新作立项', `《${name}》面向${TYPES[project.type].audience}，${SCALES[plan.scale].name}作品。`);
   return next;
 }
 
@@ -2002,7 +2084,7 @@ export function launchProject(state: any, projectId: string) {
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
   const review = reviewOf(next, project, metrics);
   const book = {
-    id: project.id, name: project.name, type: project.type, scale: project.scale,
+    id: project.id, name: project.name, type: project.type, scale: project.scale, slots: project.slots,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
     price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: Math.round(project.followers),
     followers: Math.round(project.followers), dailyUnits: units / 15, reviewScore: score,
@@ -2018,6 +2100,7 @@ export function launchProject(state: any, projectId: string) {
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
+  keepModules(next, project);
   noteClash(book, clash, Math.round(units / clash.factor) - units);
   next.lastRelease = book.id;
   // The project stays on the books after launch: the same people can keep fixing defects and reworking
@@ -2460,9 +2543,8 @@ export function makeDLC(state: any, id: string) {
   if (book.parentId) throw new Error('请从原作立项资料片。');
   const siblings = next.projects.filter((item: any) => item.parentId === id);
   if (siblings.length >= 2) throw new Error('每部原作最多立项两部资料片。');
-  const project = blankProject(`${next.day}-${next.seed}-${next.projects.length}`, { name: `${book.name} · 资料片 ${siblings.length + 1}`, type: book.type, scale: book.scale }, next.day);
+  const project = blankProject(`${next.day}-${next.seed}-${next.projects.length}`, { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, slots: book.slots }, next.day, next.modules);
   project.parentId = id;
-  for (const key of CONTENT_KEYS) project.work[key].total *= 0.25;
   project.followers = Math.round(book.units * 0.3 + book.followers * 0.2);
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   const cost = 4 + book.scale * 2;
@@ -3440,6 +3522,32 @@ export function restoreStudio(saved: any) {
   return next;
 }
 
+// A module counts as built once every dimension it works in is finished. How far along it is reads from
+// those dimensions; a module already owned at the needed level only had to be wired in.
+export function moduleProgress(project: any, item: any) {
+  if (item.from >= item.level) return 1;
+  const shares = (item.dims || []).map((key: string) => { const work = workOf(project, key); return work.total > 0 ? clamp(work.done / work.total, 0, 1) : 1; });
+  return shares.length ? Math.min(...shares) : 1;
+}
+
+// Shipping keeps every finished, reusable module: its level rises to what this title needed, and its
+// quality per dimension is what the title reached there. A module only wired in keeps its own quality
+// unless rework here made the dimension better. One-off content stays with the title.
+function keepModules(state: any, project: any) {
+  state.modules = state.modules || {};
+  for (const item of project.modules || []) {
+    if (item.oneOff || moduleProgress(project, item) < 0.999) continue;
+    const owned = state.modules[item.id] || { level: 0, quality: {}, uses: 0, first: project.name };
+    for (const key of item.dims) {
+      const score = round(dimensionScore(workOf(project, key)));
+      owned.quality[key] = item.level > owned.level ? score : Math.max(owned.quality[key] ?? 0, score);
+    }
+    owned.level = Math.max(owned.level, item.level);
+    owned.uses += 1;
+    state.modules[item.id] = owned;
+  }
+}
+
 function validStudio(state: any) {
   const number = (value: any) => typeof value === 'number' && Number.isFinite(value);
   const nonnegative = (value: any) => number(value) && value >= 0;
@@ -3449,7 +3557,7 @@ function validStudio(state: any) {
   const tags = (value: any) => Array.isArray(value) && value.every((tag: any) => tag && (has(ABILITY_TAGS, tag.key) || has(PERSONALITY_TAGS, tag.key) || has(RARE_TAGS, tag.key)));
   const person = (value: any) => value && text(value.name) && has(ROLES, value.role) && abilities(value.abilities) && number(value.speed) && value.speed > 0 && value.speed <= 200 && number(value.wage) && value.wage >= 0 && Array.isArray(value.stressTags) && tags(value.tags);
   const work = (value: any) => object(value) && DIM_KEYS.every(key => value[key] && nonnegative(value[key].total) && nonnegative(value[key].done) && nonnegative(value[key].value));
-  if (!state || state.version !== 6 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean') return false;
+  if (!state || state.version !== 7 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || !object(state.modules)) return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;

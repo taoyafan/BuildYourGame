@@ -134,6 +134,8 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'dimension': return dimensionMenu(state, route.id, route.dim);
     case 'assign': return assignMenu(state, route.id);
     case 'testing': return testingMenu(state, route.id);
+    case 'library': return libraryMenu(state, route.id);
+    case 'compose': return composeMenu(state, route.id);
     case 'market': return marketMenu(state, route.id);
     case 'book': return bookMenu(state, route.id);
     case 'rankings':
@@ -207,15 +209,13 @@ export function menu(state: any, route: any, slots: any[] = []) {
 // Deliberately no market trend here: the trend is only read from news, the charts and past releases, so
 // picking a genre is never a case of reading today's weather report.
 export function planPreview(state: any, draft: any) {
-  if (!draft.type || !core.TYPES[draft.type]) return '选一个类型开始。';
-  const type = core.TYPES[draft.type];
+  const issue = core.planIssue(draft);
+  if (issue) return issue;
+  const type = core.TYPES[core.planType(draft)];
   const scale = core.SCALES[draft.scale] || core.SCALES[0];
-  // Keep the quote on the same pace constant the real project uses, or the form would promise the
-  // old (50% longer) schedule and the old price while the game actually runs at two thirds.
-  const workload = type.work * scale.work * core.PACE;
-  // The quote must be the whole job, not the single dimension a founder happens to default to. Output
-  // per day is the team's combined speed, so the estimate is total work over total hands and stays
-  // honest no matter how the work gets split later.
+  const plan = core.planWork(state, draft);
+  const workload = plan.total * (1 + core.TEST_SHARE);
+  // Output per day is the team's combined speed, so the estimate is total work over total hands.
   const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
   const days = capacity > 0.0001 ? Math.ceil(workload / capacity) : null;
   const time = days === null ? '还没有能推进的人，招聘后才能开始。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完。';
@@ -223,9 +223,8 @@ export function planPreview(state: any, draft: any) {
   const paid = state.staff.filter((person: any) => !person.founder);
   const wage = paid.length ? paid.reduce((total: number, person: any) => total + person.wage, 0) / paid.length : 3;
   const cost = workload / 30 * wage + core.OFFICES[state.office].rent * (days || 30) / 30;
-  const share = type.share;
-  const split = [...core.DIM_KEYS].sort((left: string, right: string) => share[right] - share[left]).map((key: string) => core.DIMENSIONS.find((item: any) => item.key === key)?.name + ' ' + Math.round(share[key] * 100) + '%').join(' · ');
-  return '工作量 ' + workload.toFixed(0) + '，' + time + '预计成本约 ' + money(cost) + '。\n各项占比：' + split + '\n售价 ' + price(type.price * scale.price * core.PACE) + '；市场容量约 ' + number(core.MARKET_SIZE * scale.reach) + ' 份。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+  const split = Object.keys(plan.fresh).filter(key => plan.fresh[key] > 0.01).sort((left, right) => plan.fresh[right] - plan.fresh[left]).map(key => core.DIMENSIONS.find((item: any) => item.key === key)?.name + ' ' + Math.round(plan.fresh[key] / plan.total * 100) + '%').join(' · ');
+  return core.TYPES[core.planType(draft)].name + (plan.tags.length ? ' · ' + plan.tags.join(' · ') : '') + '\n工作量 ' + workload.toFixed(0) + (plan.saved > 0.5 ? '（复用已有模块省下 ' + plan.saved.toFixed(0) + '）' : '') + '，' + time + '预计成本约 ' + money(cost) + '。\n各项占比：' + split + '\n售价 ' + price(type.price * scale.price * core.PACE) + '；市场容量约 ' + number(core.MARKET_SIZE * scale.reach) + ' 份。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
 // Ready-made names: the form shows one, and leaving the field empty keeps it.
@@ -296,6 +295,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'note', icon: 'Users', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) },
     { type: 'actions', items: [
       { text: '调整分工', detail: '谁做哪几项工作；做满后自动修复已发现的缺陷。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+      { text: '合成图', detail: '这一作由哪些模块组成，哪些已有、哪些还在做。', icon: 'Wrench', action: 'menu', data: { menu: 'compose', id: 'project:' + project.id } },
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '已推广 ' + money(project.promoted) + ' · 报名展会' : '每作推广一次 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
       { text: '再开一个项目', detail: '多项目并行时，排在后面的项目有协调成本。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
@@ -929,6 +929,71 @@ function dismissMenu(state: any, id: string) {
   };
 }
 
+// The module library: gameplay systems and shared tools the company has built, with what is still missing.
+function libraryMenu(state: any, id?: string) {
+  const tab = id === 'tool' ? 'tool' : 'system';
+  const owned = state.modules || {};
+  const quality = (have: any) => {
+    const values = Object.values(have.quality || {}) as number[];
+    return values.length ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : 0;
+  };
+  const list = Object.keys(core.MODULES).filter(key => core.MODULES[key].group === tab).sort((left, right) => (owned[right]?.level || 0) - (owned[left]?.level || 0));
+  return {
+    title: '模块库',
+    blocks: [
+      { type: 'tabs', items: [['system', '系统库'], ['tool', '工具库']].map(([key, text]) => ({ text, route: { menu: 'library', id: key }, active: key === tab })) },
+      { type: 'text', text: tab === 'system' ? '玩法系统：做过的作品留下来，下一作直接复用，做更大的作品时升级。' : '引擎、画风、配乐、音效与平台适配：多种玩法共用的基础。', muted: true },
+      { type: 'choices', items: list.map(key => {
+        const module = core.MODULES[key];
+        const have = owned[key];
+        return { text: module.name, detail: (have ? have.level + ' 级 · 质量 ' + quality(have) + ' · 用过 ' + have.uses + ' 次' : '未拥有') + '\n' + module.desc, tag: have ? '已有' : '', action: 'menu', data: { menu: 'compose', id: 'module:' + key } };
+      }) }
+    ]
+  };
+}
+
+// One layer of a recipe: the title or module on top, what it is made of underneath. Tapping a part opens
+// its own layer. Only the parts that are modules show; a module's own work is part of the module.
+function composeMenu(state: any, id = '') {
+  const [kind, rest] = String(id).split(':');
+  const [moduleId, projectId] = String(rest || '').split('@');
+  const project = state.projects.find((item: any) => item.id === (kind === 'project' ? rest : projectId)) || null;
+  const owned = state.modules || {};
+  const statusOf = (item: any) => {
+    if (!item) return 'missing';
+    const progress = core.moduleProgress(project, item);
+    return progress >= 0.999 ? 'have' : progress > 0.001 ? 'partial' : 'missing';
+  };
+  const legend = { type: 'text', text: '绿色：已有或已完成；橙色：做了一部分；灰色：还没有。点下方的模块看它由什么组成。', muted: true };
+  if (kind === 'project' && project) {
+    const slotOf = (moduleKey: string) => core.SLOTS.find((slot: any) => slot.key === core.MODULES[moduleKey].slot);
+    const picked = core.SLOTS.flatMap((slot: any) => (project.slots?.[slot.key] || []));
+    const children = picked.map((key: string) => {
+      const item = (project.modules || []).find((entry: any) => entry.id === key);
+      const status = statusOf(item);
+      const level = item?.oneOff ? '一次性' : item ? item.level + ' 级' + (item.from > 0 && item.from < item.level ? ' · 从 ' + item.from + ' 级升' : item.from >= item.level ? ' · 已有' : '') : '';
+      return { name: core.MODULES[key].name, detail: (slotOf(key)?.name || '') + ' · ' + level, status, route: { menu: 'compose', id: 'module:' + key + '@' + project.id } };
+    });
+    return { title: '合成图', blocks: [{ type: 'compose', root: { name: '《' + project.name + '》', detail: core.SCALES[project.scale].name + ' · ' + core.TYPES[project.type].name + ' · 完成度 ' + project.progress.toFixed(0) + '%', status: project.released || project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing' }, children }, legend] };
+  }
+  const module = core.MODULES[moduleId];
+  if (!module) return { title: '合成图', blocks: [{ type: 'text', text: '没有找到这个模块。' }] };
+  const have = owned[moduleId];
+  const item = project ? (project.modules || []).find((entry: any) => entry.id === moduleId) : null;
+  const need = item ? item.level : Math.max(1, have?.level || 1);
+  const children = (module.needs || []).map((key: string) => {
+    const part = project ? (project.modules || []).find((entry: any) => entry.id === key) : null;
+    const level = owned[key]?.level || 0;
+    const status = part ? statusOf(part) : level >= need ? 'have' : level > 0 ? 'partial' : 'missing';
+    return { name: core.MODULES[key].name, detail: '需要 ' + need + ' 级 · ' + (level ? '已有 ' + level + ' 级' : '未拥有'), status, route: { menu: 'compose', id: 'module:' + key + (project ? '@' + project.id : '') } };
+  });
+  const rootStatus = item ? statusOf(item) : have ? 'have' : 'missing';
+  const blocks: any[] = [{ type: 'compose', root: { name: module.name, detail: (module.oneOff ? '一次性内容' : have ? '已有 ' + have.level + ' 级' : '未拥有') + (item ? ' · 本作需要 ' + item.level + ' 级' : ''), status: rootStatus }, children }];
+  blocks.push({ type: 'text', text: module.desc + (children.length ? '' : '\n这是最底层的模块，没有下一层。'), muted: !children.length });
+  if (children.length) blocks.push(legend);
+  return { title: '合成图', blocks };
+}
+
 function financeMenu(state: any) {
   const ledger = state.ledger;
   const rating = core.ratingOf(state);
@@ -944,6 +1009,7 @@ function financeMenu(state: any) {
       ...(nextOffice ? [{ type: 'buttons', anchor: 'move', items: [{ text: (state.office === 0 ? '搬进' : '扩建为') + nextOffice.name + ' · ' + money(moveCost), action: 'move', icon: 'Building2', disabled: state.cash < moveCost }] }, { type: 'text', text: '搬家费 ' + money(moveCost) + '，之后月开支约 ' + money(core.monthlyCost(state) - core.OFFICES[state.office].rent + nextOffice.rent) + '。', muted: true }] : [{ type: 'text', text: '已经是最大的办公室了。', muted: true }]),
       { type: 'actions', items: [
         { text: core.STAR_MARKS[rating.tier] + ' ' + core.STAR_NAMES[rating.tier] + '工作室 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · ' + core.dueText(state, rating.next), icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
+        { text: '模块库', detail: Object.keys(state.modules || {}).length + ' 个已有模块 · 系统库与工具库', icon: 'Wrench', action: 'menu', data: { menu: 'library' } },
         { text: '成就', detail: core.achievementsOf(state).count + ' / ' + core.ACHIEVEMENTS.length + ' · 里程碑与荣誉', icon: 'Trophy', action: 'menu', data: { menu: 'achievements' } },
         { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
