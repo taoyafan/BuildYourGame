@@ -4,7 +4,7 @@
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.1.54';
+export const VERSION = '0.1.55';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -779,6 +779,7 @@ export function personActivity(state: any, project: any, person: any) {
   // Idle people are still part of the project — they just produce nothing.
   if (!assignedWorks(project, person).length) return '空闲（不做工作，工资照付）';
   if (project.patch) return patchProgress(project).fixed < project.patch.targets.length ? '补丁：修复已报告缺陷' : '补丁：返工' + (DIMENSIONS.find(item => item.key === project.patch.rework)?.name || '');
+  if (project.fixFirst && fixTargets(project, person).length) return '先修复自己那一项的缺陷';
   const split = assignDay(state, project, person);
   if (split.repair) return '自动修复待修缺陷（消耗工时）';
   const busy = Object.keys(split);
@@ -856,15 +857,24 @@ function dimensionScore(work: any) {
   return work.value / work.total;
 }
 
-// Test coverage: the testing workload scored like any other work, read as a share from 0 to 1.
+// Test coverage: the testing workload scored like any other work, plus what playtests added, read as a
+// share from 0 to 0.95. Nothing is ever fully covered.
+export const COVERAGE_CAP = 0.95;
 function coverage(project: any) {
-  return clamp(dimensionScore(workOf(project, 'stability')), 0, 100) / 100;
+  return clamp(dimensionScore(workOf(project, 'stability')) / 100 + (project.playCover || 0), 0, COVERAGE_CAP);
 }
 
-// Stability is measured against the most defects the finished content could have left.
-function stabilityFrom(project: any, unfixed: number) {
-  const room = CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) * DEFECT_RATE;
-  return room > 0 ? round(clamp(100 * (1 - unfixed / room), 0, 100)) : 0;
+// Stability starts at zero and follows coverage. The covered part is expected to hold coverage × density
+// of the defects (density = defects made over the most the content could hold, counted smoothly), and
+// each fixed defect wins back its share. Finding a defect never lowers it, so with no fixes it only rises
+// with coverage, every fix raises it, and with every found defect fixed it reaches coverage.
+function stabilityFrom(project: any) {
+  const room = CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) * DEFECT_RATE * OVERTIME_DEFECT;
+  const cover = coverage(project) * 100;
+  if (room <= 0) return round(cover);
+  const density = Math.min(1, (project.defectMass ?? project.defects.length) / room);
+  const fixed = project.defects.filter((defect: any) => defect.found && defect.fixed).length;
+  return round(clamp(cover * (1 - density) + fixed / room * 100, 0, cover));
 }
 
 function overallOf(type: string, dimensions: any) {
@@ -872,23 +882,12 @@ function overallOf(type: string, dimensions: any) {
   return round(DIM_KEYS.reduce((total, key) => total + dimensions[key] * weights[key], 0));
 }
 
-// What the player can infer: defects testing caught divided by coverage estimates the total, so the
-// hidden part is a guess that can be off either way. Below 10% coverage there is nothing to go on.
-function estimatedUnfixed(project: any) {
-  const share = coverage(project);
-  if (share < 0.1) return null;
-  const caught = project.defects.filter((defect: any) => (defect.roll ?? 1) < share).length;
-  const found = project.defects.filter((defect: any) => defect.found).length;
-  const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
-  return known + Math.max(0, caught / share - found);
-}
-
 export function projectMetrics(project: any) {
   const dimensions: any = {};
   for (const key of CONTENT_KEYS) dimensions[key] = round(clamp(dimensionScore(workOf(project, key)), 0, 100));
   const open = project.defects.filter((defect: any) => !defect.fixed).length;
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
-  dimensions.stability = stabilityFrom(project, open);
+  dimensions.stability = stabilityFrom(project);
   const progress = clamp(CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) / Math.max(0.001, CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).total, 0)), 0, 1);
   return {
     progress: round(progress * 100),
@@ -898,12 +897,11 @@ export function projectMetrics(project: any) {
   };
 }
 
-// The player's view: stability is estimated from what testing found, never read from the true count.
+// The player's view is the scored view: stability only counts what testing found. Hidden defects still
+// exist and surface after launch, when players report them.
 export function visibleMetrics(project: any) {
   const metrics = projectMetrics(project);
-  const estimate = estimatedUnfixed(project);
-  const dimensions = { ...metrics.dimensions, stability: estimate === null ? 0 : stabilityFrom(project, estimate) };
-  return { ...metrics, dimensions, overall: overallOf(project.type, dimensions), untested: estimate === null, defects: metrics.known };
+  return { ...metrics, untested: coverage(project) <= 0, defects: metrics.known };
 }
 
 // Each defect is caught by testing once coverage passes its own roll, so on average testing finds its
@@ -941,17 +939,9 @@ export function expectedDimensions(state: any, project: any) {
     if (!hands || remaining <= 0.0001) { out[key] = dimensionScore(work); continue; }
     out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
   }
-  // The stability loop above produced the expected coverage; turn it into stability assuming every
-  // found defect gets fixed and the defect density seen so far holds for the rest of the content.
-  const estimate = estimatedUnfixed(project);
-  if (estimate === null) out.stability = 0;
-  else {
-    const share = coverage(project);
-    const caught = project.defects.filter((defect: any) => (defect.roll ?? 1) < share).length;
-    const room = CONTENT_KEYS.reduce((total, key) => total + workOf(project, key).done, 0) * DEFECT_RATE;
-    const density = room > 0 ? caught / share / room : 0;
-    out.stability = round(clamp(100 * (1 - density * (1 - out.stability / 100)), 0, 100));
-  }
+  // The stability loop above produced the expected test score; with every found defect fixed,
+  // stability lands on the coverage that test score and the playtests reach.
+  out.stability = round(clamp(out.stability + (project.playCover || 0) * 100, 0, COVERAGE_CAP * 100));
   return out;
 }
 
@@ -1493,6 +1483,7 @@ function addDefect(project: any, person: any, dimension: string, chance: number,
   const careful = person.tags.some((tag: any) => tag.key === 'careful') ? 0.75 : 1;
   const overtime = state.overtime[person.id] ? OVERTIME_DEFECT : 1;
   const debt = chance * careful * overtime;
+  project.defectMass = (project.defectMass ?? project.defects.length) + debt;
   project.defectDebt = (project.defectDebt || 0) + debt;
   while (project.defectDebt >= 1) {
     project.defectDebt -= 1;
@@ -1547,6 +1538,38 @@ function producePatch(state: any, project: any) {
   if (patchProgress(project).done && crew.length) finishPatch(state, project);
 }
 
+// Found, unfixed defects in the dimensions this person is assigned to.
+function fixTargets(project: any, person: any) {
+  const dims = assignedWorks(project, person).map(key => WORKS.find(item => item.key === key)?.dimension);
+  return project.defects.filter((defect: any) => defect.found && !defect.fixed && dims.includes(defect.dimension)).map((defect: any) => defect.id);
+}
+
+// How long 「先修复缺陷」 would take with today's assignment, and which dimensions have nobody to fix them.
+export function fixForecast(state: any, project: any) {
+  const open = project.defects.filter((defect: any) => defect.found && !defect.fixed);
+  let days = 0;
+  const unstaffed: string[] = [];
+  for (const key of CONTENT_KEYS) {
+    const count = open.filter((defect: any) => defect.dimension === key).length;
+    if (!count) continue;
+    const crew = state.staff.filter((person: any) => belongsTo(state, project, person) && fixTargets(project, person).length && assignedWorks(project, person).some(work => WORKS.find(item => item.key === work)?.dimension === key));
+    const rate = sum(crew.map((person: any) => speedOf(state, person, 'repair') * (0.5 + able(person, key) / 200)));
+    if (rate <= 0) { unstaffed.push(`${DIMENSIONS.find(item => item.key === key)?.name} ${count} 项`); continue; }
+    days = Math.max(days, Math.ceil(count * REPAIR_WORK / rate));
+  }
+  return { known: open.length, days, unstaffed };
+}
+
+export function setFixFirst(state: any, projectId: string, on: boolean) {
+  const next = studioAction(state);
+  const project = next.projects.find((item: any) => item.id === projectId && !item.released);
+  if (!project) throw new Error('项目不存在。');
+  if (on && !project.defects.some((defect: any) => defect.found && !defect.fixed)) throw new Error('现在没有已发现的缺陷。');
+  project.fixFirst = on;
+  studioLog(next, on ? '先修复缺陷' : '继续做内容', `《${project.name}》${on ? '各项负责人暂停做内容，先修自己那一项的缺陷。' : '恢复做内容，做满后再修。'}`);
+  return next;
+}
+
 function produceProject(state: any, project: any) {
   if (project.released) { if (project.patch) producePatch(state, project); return; }
   const crew = state.staff.filter((person: any) => belongsTo(state, project, person));
@@ -1556,6 +1579,17 @@ function produceProject(state: any, project: any) {
   const growth = boostFactor(state, project, 'coach');
   const defects = boostFactor(state, project, 'gate');
   for (const person of crew) {
+    // 「先修复缺陷」: whoever is on a dimension fixes that dimension's found defects before making more of it.
+    if (project.fixFirst) {
+      const targets = fixTargets(project, person);
+      if (targets.length) {
+        const amount = speedOf(state, person, 'repair') * factor * conditionFactor(person, project);
+        repair(state, project, amount, person, targets);
+        project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
+        person.work = round(person.work + amount);
+        continue;
+      }
+    }
     const split = assignDay(state, project, person);
     const keys = Object.keys(split);
     if (!keys.length) continue;
@@ -1594,6 +1628,10 @@ function produceProject(state: any, project: any) {
     }
   }
   syncFound(project);
+  if (project.fixFirst && !project.defects.some((defect: any) => defect.found && !defect.fixed)) {
+    project.fixFirst = false;
+    announce(state, { kind: 'notice', title: `《${project.name}》缺陷修完了`, text: '已发现的缺陷都修好了，大家回到各自的内容。', amount: 0 });
+  }
   project.progress = projectMetrics(project).progress;
   if (!project.released) {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
@@ -1678,28 +1716,31 @@ export function promote(state: any, projectId: string, cost: number) {
   return next;
 }
 
+// One playtest round per press, sized and priced by scale. The less is still uncovered, the smaller each
+// round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
+export const PLAYTESTS = [{ players: 30, cost: 0.8 }, { players: 100, cost: 2.5 }, { players: 300, cost: 7 }, { players: 1000, cost: 20 }];
+export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
+
 export function playtestOffer(state: any, project: any) {
-  const reason = !project ? '先立项开发' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : '';
-  return { available: !reason && !state.over && !state.event, reason };
+  const reason = !project ? '先立项开发' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : state.cash < playtestOf(project).cost ? '资金不足' : '';
+  return { available: !reason && !state.over && !state.event, reason, ...playtestOf(project) };
 }
 
-export function testDemo(state: any, projectId: string, count = 30) {
-  if (![30, 100].includes(count)) throw new Error('测试批次无效。');
+export function testDemo(state: any, projectId: string) {
   const project = state.projects.find((item: any) => item.id === projectId && !item.released);
   const offer = playtestOffer(state, project);
   if (!offer.available) throw new Error(offer.reason || '先处理当前决策。');
   const next = studioAction(state);
-  const cost = count === 30 ? 0.8 : 2;
+  const { players: count, cost } = offer;
   spend(next, cost, '招募试玩玩家');
   const target = next.projects.find((item: any) => item.id === projectId);
-  const open = target.defects.filter((defect: any) => !defect.found);
-  let newlyFound = 0;
-  for (const defect of open) {
-    if (random(next) >= (count === 30 ? 0.6 : 0.9)) continue;
-    defect.found = true;
-    target.found += 1;
-    newlyFound += 1;
-  }
+  const before = target.found;
+  // Each still-hidden defect is met with a chance that shrinks as coverage grows; coverage rises by the same share.
+  const left = 1 - coverage(target);
+  const chance = left * (0.1 + random(next) * 0.1);
+  target.playCover = Math.round(((target.playCover || 0) + left * chance) * 10000) / 10000;
+  syncFound(target);
+  const newlyFound = target.found - before;
   const score = round(clamp(projectScore(target) + (random(next) - 0.5) * 6 * Math.sqrt(30 / count), 0, 100));
   target.invested = round(target.invested + cost);
   target.tests += 1;
@@ -1729,7 +1770,7 @@ export function testDemo(state: any, projectId: string, count = 30) {
     stability: (newlyFound
       ? `试玩玩家碰到 ${newlyFound} 项测试漏掉的缺陷，待修 ${metrics.known} 项。`
       : metrics.known ? `没有碰到新缺陷，还有 ${metrics.known} 项待修。` : '本轮没有碰到新问题。')
-      + (metrics.untested ? '还没测试，稳定无从估计：安排人测试，找出的缺陷修好才加分。' : metrics.dimensions.stability < 60 ? '估计还有不少缺陷没修：继续测试找出更多，并给修复留出工时；没测到的会在发售后被玩家碰到。' : '')
+      + (metrics.untested ? '还没有测试覆盖，稳定是 0：安排人做测试工作。' : metrics.dimensions.stability < 60 ? '覆盖率还低或待修缺陷多：继续测试，并修掉已发现的缺陷；没测到的会在发售后被玩家碰到。' : '')
   };
   const findings = DIM_KEYS.map(key => {
     const dimension = DIMENSIONS.find(item => item.key === key);
@@ -1929,7 +1970,7 @@ export function launchChecklist(state: any, project: any) {
   return [
     { label: '计划内容完成', ok: metrics.unfinished.length === 0, required: false, text: metrics.unfinished.length ? `还差 ${metrics.unfinished.length} 维，提前发售评分会偏低` : `完成度 ${metrics.progress.toFixed(0)}%` },
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
-    { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；估计稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
+    { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
     { label: '六维估计', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
     { label: '关注人数', ok: project.followers >= 1500, text: `${Math.round(project.followers)} 人${project.followers >= 1500 ? '' : '，推广能扩大首发'}` }
   ];
@@ -3073,7 +3114,7 @@ const RANDOM_EVENTS: any[] = [
     const project = state.projects.find((item: any) => item.id === ctx.project);
     const metrics = visibleMetrics(project);
     const bad = metrics.untested ? 0.5 : round(clamp(0.1 + (100 - metrics.dimensions.stability) / 100 * 0.8, 0.1, 0.8));
-    return { title: '知名主播想直播体验版', text: `一位主播想在直播里玩《${project.name}》的体验版。${metrics.untested ? '还没测试，稳定无从估计：被吐槽 50%。' : `估计稳定 ${metrics.dimensions.stability.toFixed(0)} 分：被吐槽 ${Math.round(bad * 100)}%。`}`, choices: [
+    return { title: '知名主播想直播体验版', text: `一位主播想在直播里玩《${project.name}》的体验版。${metrics.untested ? '还没测试，稳定是 0：被吐槽 50%。' : `稳定 ${metrics.dimensions.stability.toFixed(0)} 分：被吐槽 ${Math.round(bad * 100)}%。`}`, choices: [
       { id: 'live', title: '同意直播', outcomes: [{ p: round(1 - bad), text: '玩得很开心，关注 +800', effects: { followers: 800 } }, { p: bad, text: '直播中频频出错被吐槽，关注 -150', effects: { followers: -150 } }] },
       safe('只给剪辑版', '关注 +150', { followers: 150 }),
       { id: 'decline', title: '婉拒', outcomes: [{ p: 1, text: '没有变化', effects: {} }] }

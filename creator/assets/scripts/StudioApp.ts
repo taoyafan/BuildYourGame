@@ -2166,7 +2166,8 @@ export class StudioApp extends Component {
         }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
         case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
-        case 'test': this.apply(core.testDemo(this.state, data.id, Number(data.count))); break;
+        case 'test': this.apply(core.testDemo(this.state, data.id)); break;
+        case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;
         case 'promote': {
           const next = core.promote(this.state, data.id, Number(data.cost));
           this.apply(next, '推广带来 ' + content.number(core.activeProject(next, data.id)?.promoFollowers || 0) + ' 位关注。');

@@ -277,6 +277,7 @@ function projectMenu(state: any, id?: string) {
   const order = core.projectOrder(state);
   const rank = order.findIndex((item: any) => item.id === project.id);
   const demo = project.checkpoints.demo;
+  const fix = core.fixForecast(state, project);
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
@@ -304,6 +305,7 @@ function projectMenu(state: any, id?: string) {
     // them first and cannot hit it while scrolling through the action cards.
     { type: 'section', title: '发售（不可撤销）' },
     { type: 'actions', items: [
+      ...(fix.known || project.fixFirst ? [{ text: project.fixFirst ? '正在先修复缺陷 · 点击恢复做内容' : '先修复缺陷', detail: '待修 ' + fix.known + ' 项' + (fix.days ? '，约 ' + fix.days + ' 天修完' : '') + (fix.unstaffed.length ? '；' + fix.unstaffed.join('、') + '没人修' : '') + '。各项负责人暂停做内容，修完自动恢复。', icon: 'Hammer', action: 'fix-first', data: { id: project.id, on: !project.fixFirst } }] : []),
       { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '', emphasis: project.progress >= 100 && !defectsByDimension(project) }
     ] }
   ];
@@ -578,11 +580,10 @@ function testingMenu(state: any, id?: string) {
   const offer = core.playtestOffer(state, project);
   const blocks: any[] = testReport(state, project);
   blocks.push({ type: 'section', title: '招募试玩' });
-  blocks.push({ type: 'buttons', anchor: 'tests', columns: 2, items: [
-    { text: '30 人 · 0.80 万', action: 'test', data: { id: project.id, count: 30 }, disabled: !offer.available || state.cash < 0.8, anchor: 'test-30' },
-    { text: '100 人 · 2.00 万', action: 'test', data: { id: project.id, count: 100 }, disabled: !offer.available || state.cash < 2 }
+  blocks.push({ type: 'buttons', anchor: 'tests', items: [
+    { text: '试玩一轮 · ' + offer.players + ' 人 · ' + money(offer.cost), action: 'test', data: { id: project.id }, disabled: !offer.available, anchor: 'test-30' }
   ] });
-  blocks.push({ type: 'text', text: offer.available ? '30 人约碰到六成漏测缺陷，100 人约九成；人数越多，评分波动越小。' : offer.reason || '先处理当前决策。', muted: true });
+  blocks.push({ type: 'text', text: offer.available ? '每轮补上一部分测试没覆盖到的地方，覆盖率越高，这一轮能碰到的新缺陷越少。可以多试几轮。' : offer.reason || '先处理当前决策。', muted: true });
   return { title: '试玩', blocks };
 }
 
@@ -1301,7 +1302,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       }
       return null;
     }
-    case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：能发现大部分缺陷，也会指出这类玩家最在意的评分项。预算紧可以晚点再试。', ack: 'testing' };
+    case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：会碰到一些测试漏掉的缺陷，也会指出这类玩家最在意的评分项。可以试多轮，覆盖越高碰到的越少。', ack: 'testing' };
     case 'market':
       if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '每部作品只推广一次，档位差几个数量级。先看上面每位关注约值多少钱、这部作品首发能吃下多少关注，再决定投哪一档；首作预算有限，可以投最小一档，也可以不投。', ack: 'promotions' };
       return null;
