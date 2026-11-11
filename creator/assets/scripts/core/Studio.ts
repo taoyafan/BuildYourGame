@@ -1,12 +1,12 @@
 // Pure business rules without engine imports, so they can also run in Node for balance checks.
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
-import { MODULES, SLOTS, TEMPLATES } from './Modules';
-export { MODULES, SLOTS, TEMPLATES };
+import { MODULES, SLOTS, FAMILIES, ORIGINS } from './Modules';
+export { MODULES, SLOTS, FAMILIES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -291,15 +291,44 @@ export const TEST_SHARE = 0.18;
 const REUSE_WORK = 0.1;
 
 // Every module the chosen slots pull in, shared ones once: a title is the flat set of its modules.
-export function expandModules(slots: any) {
+export function expandModules(slots: any, only?: string[]) {
   const out: string[] = [];
   const add = (id: string) => {
     if (!MODULES[id] || out.includes(id)) return;
     for (const need of MODULES[id].needs || []) add(need);
     out.push(id);
   };
-  for (const slot of SLOTS) for (const id of (slots && slots[slot.key]) || []) add(id);
+  if (only) for (const id of only) add(id);
+  else for (const slot of SLOTS) for (const id of (slots && slots[slot.key]) || []) add(id);
   return out;
+}
+
+// Slots and modules open up with released titles, so the first game only shows a couple of choices.
+export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
+export const slotOpen = (state: any, slot: any) => !!slot && releases(state) >= (slot.unlock || 0);
+export const moduleOpen = (state: any, id: string) => !!MODULES[id] && releases(state) >= (MODULES[id].unlock || 0) && (!MODULES[id].slot || slotOpen(state, SLOTS.find(slot => slot.key === MODULES[id].slot)));
+
+// The plan the form starts from: what the company already has wherever it can, the first open module
+// elsewhere. The very first title follows the founder's starter module so the job pays off at once.
+export function recommendPlan(state: any) {
+  const owned = state.modules || {};
+  const slots: any = {};
+  for (const slot of SLOTS) {
+    if (!slotOpen(state, slot) || slot.min < 1) continue;
+    const options = Object.keys(MODULES).filter(id => MODULES[id].slot === slot.key && moduleOpen(state, id));
+    let picks: string[];
+    if (slot.key === 'core' && !releases(state) && ORIGINS[state.founder]) picks = [ORIGINS[state.founder].firstCore];
+    else if (slot.oneOff) picks = options.slice(0, slot.min);
+    else picks = [...options].sort((left, right) => (owned[right]?.level || 0) - (owned[left]?.level || 0)).slice(0, slot.min);
+    slots[slot.key] = picks;
+  }
+  return { name: '', scale: 0, slots };
+}
+
+// The slots that open with the next release, for the one-line teaser under the form.
+export function nextUnlocks(state: any) {
+  const next = releases(state) + 1;
+  return SLOTS.filter(slot => (slot.unlock || 0) === next).map(slot => slot.name);
 }
 
 // What a plan would build: for each module the level it needs, the level the company already owns, the
@@ -307,7 +336,7 @@ export function expandModules(slots: any) {
 export function planModules(owned: any, plan: any) {
   const level = (plan.scale || 0) + 1;
   const factor = (lv: number) => lv > 0 ? SCALES[lv - 1].work : 0;
-  return expandModules(plan.slots).map(id => {
+  return expandModules(plan.slots, plan.only).map(id => {
     const module = MODULES[id];
     const have = module.oneOff ? null : owned?.[id] || null;
     const from = have ? Math.min(have.level, level) : 0;
@@ -329,11 +358,12 @@ export function planType(plan: any) {
   return MODULES[core]?.type || '';
 }
 
-export function planIssue(plan: any) {
+export function planIssue(state: any, plan: any) {
   if (!plan || !plan.slots) return '请选择模块。';
   for (const slot of SLOTS) {
     const ids = plan.slots[slot.key] || [];
-    if (ids.some((id: string) => MODULES[id]?.slot !== slot.key)) return `${slot.name}里有无效的模块。`;
+    if (!slotOpen(state, slot)) { if (ids.length) return `${slot.name}还没有开放。`; continue; }
+    if (ids.some((id: string) => MODULES[id]?.slot !== slot.key || !moduleOpen(state, id))) return `${slot.name}里有还不能用的模块。`;
     if (ids.length < slot.min) return `请选择${slot.name}。`;
     if (ids.length > slot.max) return `${slot.name}最多选 ${slot.max} 个。`;
   }
@@ -367,10 +397,10 @@ function blankProject(id: string, plan: any, day: number, owned: any) {
       target.batches.push({ amount: part.amount, quality: part.quality });
     }
   }
-  work.stability.total = sum(CONTENT_KEYS.map(key => work[key].total)) * TEST_SHARE;
+  work.stability.total = plan.only ? 0 : sum(CONTENT_KEYS.map(key => work[key].total)) * TEST_SHARE;
   return {
-    id, name: plan.name, type: planType(plan), scale: plan.scale, parentId: plan.parentId || null,
-    slots: clone(plan.slots), modules: modules.map(item => ({ id: item.id, level: item.level, from: item.from, oneOff: item.oneOff, dims: Object.keys(MODULES[item.id].work) })),
+    id, name: plan.name, type: plan.type || planType(plan), scale: plan.scale, parentId: plan.parentId || null,
+    slots: clone(plan.slots || {}), modules: modules.map(item => ({ id: item.id, level: item.level, from: item.from, oneOff: item.oneOff, dims: Object.keys(MODULES[item.id].work) })),
     work, progress: 0,
     defects: [], found: 0, repairProgress: 0,
     followers: 0, promoted: 0, invested: 0, started: day, released: null,
@@ -440,30 +470,56 @@ export function homeWork(person: any) {
   return best;
 }
 
-export function nameCompany(state: any, name: string, founder?: string) {
+export function nameCompany(state: any, name: string, founder?: string, look?: any) {
   const next = studioAction(state);
   const value = String(name || '').trim().slice(0, 24);
   if (!value) throw new Error('请输入公司名称。');
-  if (founder && !has(ROLES, founder)) throw new Error('创始人出身无效。');
+  if (founder && !has(ORIGINS, founder)) throw new Error('创始人出身无效。');
   next.company = value;
   if (founder) next.founder = founder;
   if (!next.staff.length) {
-    // The founder is the first worker: one person can carry the first title alone, short boards and
-    // all. No wage — the company's money is the founder's money.
+    // The founder masters one thing and is plain at the rest; depth is low for everyone and comes later.
+    const focus = FOUNDER_FOCUS[next.founder];
     const abilities: any = {};
     for (const key of ABILITY_KEYS) {
-      const [low, high] = ROLES[next.founder].prior[key];
+      const [low, high] = key === focus ? [68, 76] : key === 'depth' ? [15, 22] : key === 'discover' ? [30, 40] : [25, 38];
       abilities[key] = Math.round(low + random(next) * (high - low));
     }
     next.staff.push(freshPerson(next, {
       id: `founder-${next.seed}`, name: '创始人', role: next.founder, abilities, speed: 95, wage: 0,
       hired: true, joined: next.day, home: homeWork({ role: next.founder, abilities, home: '' }), founder: true, snap: { ...abilities },
-      potential: Math.round(Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 8 + random(next) * 10))
+      potential: Math.round(Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 8 + random(next) * 10)),
+      look: look && typeof look === 'object' ? { ...look } : null
     }));
     personNote(next, next.staff[0], `创办${value}`);
+    startJob(next);
   }
-  studioLog(next, '工作室成立', `${value}在一间小屋里起步，先做出第一款游戏。`);
+  studioLog(next, '工作室成立', `${value}在一间小屋里起步，先接一份委托。`);
   return next;
+}
+
+const FOUNDER_FOCUS: any = { code: 'fluidity', design: 'creativity', art: 'picture' };
+
+// The opening job: build the starter module for a client. It pays once and the module stays.
+function startJob(state: any) {
+  const origin = ORIGINS[state.founder];
+  if (!origin) return;
+  const module = MODULES[origin.starter];
+  const project = blankProject(`job-${state.seed}`, { name: `委托：${module.name}`, scale: 0, only: [origin.starter], type: MODULES[origin.firstCore].type }, state.day, state.modules);
+  project.job = { pay: origin.pay, client: origin.job, module: origin.starter };
+  state.projects.push(project);
+}
+
+// Delivering the job: the client pays, the module joins the library, and the studio is ready for a game.
+function finishJob(state: any, project: any) {
+  const gained = keepModules(state, project);
+  const pay = project.job.pay;
+  state.cash = round(state.cash + pay);
+  state.ledger.income = round(state.ledger.income + pay);
+  state.projects = state.projects.filter((item: any) => item.id !== project.id);
+  const name = MODULES[project.job.module].name;
+  studioLog(state, '委托完成', `交付${name}，收入 ${moneyText(pay)}；${name}留在了模块库里。`);
+  state.event = { id: 'job', title: '委托完成', text: `客户收下了${name}，付了 ${moneyText(pay)}。这块模块也留在了你手里：做自己的第一款游戏时可以直接用上。`, gained, choices: [{ id: 'continue', title: '开始做自己的游戏', detail: '立项时会自动用上已有的模块。' }] };
 }
 
 export function channelOpen(state: any, channel: string) {
@@ -1343,7 +1399,7 @@ export function startProject(state: any, plan: any, priority = -1) {
   if (!scaleOpen(next, plan.scale)) throw new Error(SCALE_LOCKS[plan.scale] || '这个体量还没开放。');
   const original = plan.sequel ? next.catalog.find((book: any) => book.id === plan.sequel) : null;
   if (plan.sequel && (!original || original.reviewScore < 70)) throw new Error('好评达到 70 分的作品才能开发续作。');
-  const issue = planIssue(plan);
+  const issue = planIssue(next, plan);
   if (issue) throw new Error(issue);
   const name = String(plan.name || '').trim().slice(0, 24);
   if (!name) throw new Error('请为作品取个名字。');
@@ -1715,7 +1771,7 @@ function produceProject(state: any, project: any) {
     announce(state, { kind: 'notice', title: `《${project.name}》缺陷修完了`, text: '已发现的缺陷都修好了，大家回到各自的内容。', amount: 0 });
   }
   project.progress = projectMetrics(project).progress;
-  if (!project.released) {
+  if (!project.released && !project.job) {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
     // Followers arrive when something is actually shown, not on every idle day: a milestone pays once.
     const mult = market(project.type, Math.ceil(state.day / 30)).multiplier;
@@ -1804,7 +1860,7 @@ export const PLAYTESTS = [{ players: 30, cost: 0.8 }, { players: 100, cost: 2.5 
 export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
 
 export function playtestOffer(state: any, project: any) {
-  const reason = !project ? '先立项开发' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : state.cash < playtestOf(project).cost ? '资金不足' : '';
+  const reason = !project ? '先立项开发' : project.job ? '委托不需要试玩' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : state.cash < playtestOf(project).cost ? '资金不足' : '';
   return { available: !reason && !state.over && !state.event, reason, ...playtestOf(project) };
 }
 
@@ -2062,6 +2118,7 @@ export function launchProject(state: any, projectId: string) {
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
+  if (project.job) throw new Error('委托做完会自动交付，不用发售。');
   const metrics = projectMetrics(project);
   // Releasing early means shipping with unfinished dimensions — but it still requires the trial build.
   if (metrics.progress < TRIAL * 100) throw new Error('体验版完成后才能发售；提前发售指带着未完成的维度上市。');
@@ -2100,7 +2157,7 @@ export function launchProject(state: any, projectId: string) {
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
-  keepModules(next, project);
+  const gained = keepModules(next, project);
   noteClash(book, clash, Math.round(units / clash.factor) - units);
   next.lastRelease = book.id;
   // The project stays on the books after launch: the same people can keep fixing defects and reworking
@@ -2130,7 +2187,7 @@ export function launchProject(state: any, projectId: string) {
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广 ${moneyText(promo.cost)}带来 ${promo.followers} 位关注，按本作转化约折合首发 ${moneyText(promo.receipt)}。` : '';
-  next.event = { id: 'release', title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${moneyText(receipt)}。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${moneyText(receipt)}。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -2414,6 +2471,8 @@ export function stepDay(state: any) {
     produceProject(next, project);
     if (project.released) syncReleased(next, project);
   }
+  const job = next.projects.find((project: any) => project.job && project.progress >= 100);
+  if (job && !next.event) finishJob(next, job);
   salesDay(next);
   playerReports(next);
   stressDay(next);
@@ -3535,9 +3594,11 @@ export function moduleProgress(project: any, item: any) {
 // unless rework here made the dimension better. One-off content stays with the title.
 function keepModules(state: any, project: any) {
   state.modules = state.modules || {};
+  const gained: any[] = [];
   for (const item of project.modules || []) {
     if (item.oneOff || moduleProgress(project, item) < 0.999) continue;
     const owned = state.modules[item.id] || { level: 0, quality: {}, uses: 0, first: project.name };
+    const before = owned.level;
     for (const key of item.dims) {
       const score = round(dimensionScore(workOf(project, key)));
       owned.quality[key] = item.level > owned.level ? score : Math.max(owned.quality[key] ?? 0, score);
@@ -3545,7 +3606,9 @@ function keepModules(state: any, project: any) {
     owned.level = Math.max(owned.level, item.level);
     owned.uses += 1;
     state.modules[item.id] = owned;
+    if (owned.level > before) gained.push({ id: item.id, level: owned.level, from: before });
   }
+  return gained;
 }
 
 function validStudio(state: any) {

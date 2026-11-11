@@ -6,7 +6,7 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawDesk, drawAvatar, drawWork, seatLayout, roomProps } from './ui/Art';
+import { Pen, drawRoom, drawDesk, drawAvatar, drawBrick, drawWork, seatLayout, roomProps, SKINS, HAIRS, HAIR_STYLES } from './ui/Art';
 import { platform } from './Platform';
 
 const { ccclass } = _decorator;
@@ -102,6 +102,7 @@ export class StudioApp extends Component {
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
   private officeSwiped = false;
+  private brickTip: any = null;
   private activeTouches = new Set<number>();
   private renderPending = false;
   // A text field has the focus. Every render() destroys and rebuilds the whole screen, which also
@@ -507,10 +508,11 @@ export class StudioApp extends Component {
     let cursor = 12;
     if (options.icon) this.image(node, 'icons/' + options.icon, 14, 14, 20, 20, options.disabled ? colors.muted : colors.green);
     if (options.avatar) {
-      if (batched) shapes.push(() => drawAvatar(pen, ox + 25, oy + 25, 12, options.avatar));
-      else drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar);
+      if (batched) shapes.push(() => drawAvatar(pen, ox + 25, oy + 25, 12, options.avatar, options.avatarLook));
+      else drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar, options.avatarLook);
     }
-    const left = options.icon || options.avatar ? 44 : 14;
+    if (options.brick) drawBrick(this.canvasNode(node, 'Brick', 8, 10, 30, 30).pen, 0, 0, 30, core.FAMILIES[options.brick.family].color, options.brick.glyph, 1, 'have');
+    const left = options.icon || options.avatar || options.brick ? 44 : 14;
     // A person card carries a small ability radar on the right; the text column makes room for it.
     const side = options.radar ? 70 : 0;
     this.text(node, title, left, cursor, width - left - side - (options.tag ? 70 : 14), 22, 15, options.disabled ? colors.muted : colors.ink, true);
@@ -588,6 +590,32 @@ export class StudioApp extends Component {
     pen.poly(([] as number[]).concat(...ring), colors.pale);
     const shape = core.DIM_KEYS.map((key: string, index: number) => point(index, values[key]));
     pen.poly(([] as number[]).concat(...shape), colors.green, 170);
+  }
+
+  // A tap target over a drawn brick; tapping toggles its card. The card belongs to the board it was tapped on.
+  private brickSpot(node: Node, x: number, y: number, size: number, item: any) {
+    const key = node.name + '|' + (item.module || item.name) + '|' + Math.round(x) + ',' + Math.round(y);
+    const spot = this.box(node, 'Spot', x, y, size, size);
+    this.clickable(spot, () => {
+      this.brickTip = this.brickTip?.key === key ? null : { key, board: node.name, x, y, size, item };
+      this.render();
+    });
+  }
+
+  // The card for the tapped brick: name, state and a note, plus a way into the next layer.
+  private brickTipCard(node: Node, width: number, height: number) {
+    const tip = this.brickTip;
+    if (!tip || tip.board !== node.name || !tip.key.startsWith(node.name + '|')) return;
+    const cardW = Math.min(230, width - 8);
+    const cardH = tip.item.route ? 104 : 72;
+    const x = Math.max(4, Math.min(width - cardW - 4, tip.x + tip.size / 2 - cardW / 2));
+    const below = tip.y + tip.size + 4;
+    const y = below + cardH <= height ? below : Math.max(0, tip.y - cardH - 4);
+    const card = this.box(node, 'Tip', x, y, cardW, cardH, colors.night, 10, 235);
+    this.text(card, tip.item.name, 10, 6, cardW - 20, 20, 13, '#ffffff', true);
+    this.text(card, tip.item.detail || '', 10, 26, cardW - 20, 18, 11, '#cfe3d8');
+    this.text(card, tip.item.note || '', 10, 44, cardW - 20, 28, 10, '#cfe3d8');
+    if (tip.item.route) this.button(card, '看组成', 10, cardH - 34, cardW - 20, 28, () => { this.brickTip = null; this.openMenu(tip.item.route.menu, tip.item.route.id); }, true, false, 'ChevronRight');
   }
 
   // Monthly ability record as six lines, with ticks on the days something happened to the person.
@@ -861,7 +889,7 @@ export class StudioApp extends Component {
       const face = active ? bobbingPen : stillPen;
       if (active) anyBobbing = true;
       const cy = seat.y - 42 * seat.scale;
-      drawAvatar(face, seat.x, cy, 11 * seat.scale, person.id);
+      drawAvatar(face, seat.x, cy, 11 * seat.scale, person.id, person.look);
       if (person.stressTags.length) face.circle(seat.x + 8 * seat.scale, cy - 12 * seat.scale, 3, colors.danger);
     });
     if (anyBobbing) tween(bobbing).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
@@ -1231,30 +1259,48 @@ export class StudioApp extends Component {
     const { pen } = this.canvasNode(body, 'Room', 0, 0, inner, 150);
     drawRoom(pen, inner, 150, 0);
     const desks = new Pen(this.box(body, 'Desk', 0, 0, inner, 150).addComponent(Graphics));
-    seatLayout(4, inner, 150).forEach(seat => drawDesk(desks, seat.x, seat.y, seat.scale, false, 'code', false));
+    seatLayout(1, inner, 150).forEach(seat => drawDesk(desks, seat.x, seat.y, seat.scale, false, 'code', false));
     let cursor = 166;
-    cursor += this.paragraph(body, '一间小屋、四张空桌子和 ' + content.money(this.state.cash) + ' 积蓄。你是创始人，负责方向、预算与用人。', cursor);
-    cursor += this.paragraph(body, '先给工作室起个名字。', cursor, true);
+    cursor += this.paragraph(body, '一间小屋、一张桌子和 ' + content.money(this.state.cash) + ' 积蓄。先接一份委托，再做自己的游戏。', cursor);
     this.draft.suggested = this.draft.suggested || content.randomStudioName();
     this.input(body, this.draft.suggested, this.draft.name, cursor, 48, value => { this.draft.name = value; });
     cursor += 62;
-    this.text(body, '你的出身（决定首作哪几项最拿手）', 0, cursor, inner, 24, 15, colors.ink, true);
-    cursor += 28;
-    cursor += this.paragraph(body, content.ABILITY_INTRO, cursor, true, 0, inner, 12);
-    const founder = this.draft.founder || 'code';
-    const founderRoles = Object.keys(core.ROLES);
-    for (const role of [...founderRoles, 'random']) {
-      const intro = content.FOUNDER_INTRO[role];
-      const typical: any = {};
-      if (intro) for (const key of core.ABILITY_KEYS) typical[key] = (core.ROLES[role].prior[key][0] + core.ROLES[role].prior[key][1]) / 2;
-      const detail = intro ? '擅长' + intro.good + '\n适合' + intro.fit + '\n首作建议搭' + intro.partner : '从五种出身里随机抽一个，成立后揭晓。';
-      cursor += this.choice(body, cursor, role === 'random' ? '随机' : core.ROLES[role].name, detail, () => { this.draft.founder = role; this.render(); }, { radar: intro ? typical : null, highlight: founder === role, tag: founder === role ? '已选' : '', tagColor: colors.green, icon: role === 'random' ? 'Sparkles' : '' }) + 8;
+    this.text(body, '你的出身', 0, cursor, inner, 24, 15, colors.ink, true);
+    cursor += 30;
+    const founder = core.ORIGINS[this.draft.founder] ? this.draft.founder : 'code';
+    for (const role of Object.keys(core.ORIGINS)) {
+      const origin = core.ORIGINS[role];
+      cursor += this.choice(body, cursor, origin.name, origin.focus + '\n第一份委托：' + core.MODULES[origin.starter].name, () => { this.draft.founder = role; this.render(); }, { highlight: founder === role, tag: founder === role ? '已选' : '', tagColor: colors.green, brick: core.MODULES[origin.starter] }) + 8;
     }
-    cursor += 4;
-    cursor += this.paragraph(body, '你一个人也能独立做完第一款游戏；后面招到同事，再补齐其余各项。', cursor, true, 0, inner, 13);
+    // The founder's look: four small rows, with the face updating as the player taps.
+    const look = this.draft.look || (this.draft.look = { skin: 1, hair: 0, hairColor: 0, glasses: false });
+    cursor += 6;
+    this.text(body, '你的样子', 0, cursor, inner, 24, 15, colors.ink, true);
+    cursor += 30;
+    drawAvatar(this.canvasNode(body, 'Face', 0, cursor, 72, 72).pen, 36, 36, 28, 'founder', look);
+    const rows: Array<[string, number, (index: number) => void, (index: number) => boolean]> = [
+      ['肤色', SKINS.length, index => { look.skin = index; }, index => look.skin === index],
+      ['发型', HAIR_STYLES, index => { look.hair = index; }, index => look.hair === index],
+      ['发色', HAIRS.length, index => { look.hairColor = index; }, index => look.hairColor === index],
+      ['眼镜', 2, index => { look.glasses = index === 1; }, index => (index === 1) === !!look.glasses]
+    ];
+    const left = 84;
+    rows.forEach(([label, count, set, on], row) => {
+      const y = cursor + row * 34;
+      this.text(body, label, left, y, 36, 28, 12, colors.muted);
+      const cell = Math.min(30, (inner - left - 40 - (count - 1) * 4) / count);
+      for (let index = 0; index < count; index++) {
+        const swatch = label === '肤色' ? SKINS[index] : label === '发色' ? HAIRS[index] : '';
+        const x = left + 40 + index * (cell + 4);
+        const node = this.box(body, 'Swatch', x, y, cell, 28, swatch || (on(index) ? colors.green : colors.pale), 6);
+        if (!swatch) this.text(node, label === '眼镜' ? (index ? '戴' : '不戴') : String(index + 1), 0, 0, cell, 28, 11, on(index) ? '#ffffff' : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
+        if (on(index)) new Pen(this.box(node, 'Pick', 0, 0, cell, 28).addComponent(Graphics)).frame(0, 0, cell, 28, colors.ink, 2, 6);
+        this.clickable(node, () => { set(index); this.render(); });
+      }
+    });
+    cursor += rows.length * 34 + 10;
     this.button(body, '成立工作室', 0, cursor, inner, 48, () => {
-      const role = founder === 'random' ? founderRoles[Math.floor(Math.random() * founderRoles.length)] : founder;
-      this.apply(core.nameCompany(this.state, this.draft.name.trim() || this.draft.suggested, role));
+      this.apply(core.nameCompany(this.state, this.draft.name.trim() || this.draft.suggested, founder, look));
       this.resumeAfterMenu = false;
       this.closeMenu();
     }, true);
@@ -1265,55 +1311,66 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const state = this.state;
     this.draft.suggested = this.draft.suggested || content.randomTitle(state);
-    if (!this.draft.slots) this.draft.slots = JSON.parse(JSON.stringify(core.TEMPLATES[0].slots));
+    if (!this.draft.slots) this.draft = { ...core.recommendPlan(state), ...this.draft, slots: core.recommendPlan(state).slots };
     this.input(body, this.draft.suggested, this.draft.name, 0, 48, value => { this.draft.name = value; });
     let cursor = 64;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
-    this.text(body, '示例组合', 0, cursor, inner, 24, 15, colors.ink, true);
-    cursor += 30;
-    const half = (inner - 8) / 2;
-    core.TEMPLATES.forEach((template: any, index: number) => {
-      const same = core.SLOTS.every((slot: any) => (template.slots[slot.key] || []).join() === (this.draft.slots?.[slot.key] || []).join());
-      this.button(body, template.name, index * (half + 8), cursor, half, 40, () => { this.draft.slots = JSON.parse(JSON.stringify(template.slots)); this.render(); }, same, !!this.draft.sequel);
-    });
-    cursor += 52;
-    // Each slot lists its modules; a single-choice slot swaps, a multi-choice slot toggles.
+    const owned = state.modules || {};
+    // The recommended recipe comes first; each open slot shows its bricks, and only open slots appear.
     for (const slot of core.SLOTS) {
+      if (!core.slotOpen(state, slot)) continue;
       const chosen: string[] = this.draft.slots?.[slot.key] || [];
-      this.text(body, slot.name + (slot.max > 1 ? '（最多 ' + slot.max + ' 个' + (slot.min ? '' : '，可不选') + '）' : slot.min ? '' : '（可不选）') + (slot.oneOff ? ' · 一次性' : ''), 0, cursor, inner, 22, 13, colors.ink, true);
+      this.text(body, slot.name + (slot.max > 1 ? '（最多 ' + slot.max + ' 个）' : ''), 0, cursor, inner, 22, 13, colors.ink, true);
       cursor += 26;
-      const options = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key);
+      const options = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key && core.moduleOpen(state, key));
+      const shown = this.draft.custom ? options : chosen;
       const cell = (inner - 16) / 3;
-      options.forEach((key: string, index: number) => {
-        const owned = this.state.modules?.[key];
-        const label = core.MODULES[key].name + (owned ? ' ' + owned.level + '级' : '');
+      shown.forEach((key: string, index: number) => {
         const on = chosen.includes(key);
-        this.button(body, label, (index % 3) * (cell + 8), cursor + Math.floor(index / 3) * 46, cell, 40, () => {
+        const have = owned[key];
+        const x = (index % 3) * (cell + 8);
+        const y = cursor + Math.floor(index / 3) * 92;
+        const node = this.box(body, 'Pick', x, y, cell, 84, on ? colors.soft : colors.paper, 10);
+        new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
+        const module = core.MODULES[key];
+        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, core.FAMILIES[module.family].color, module.glyph, have?.level || 1, have || on ? 'have' : 'missing', !!module.oneOff);
+        this.text(node, module.name, 4, 46, cell - 8, 18, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+        this.text(node, module.oneOff ? '一次性' : have ? '已有 ' + have.level + ' 级' : '需新做', 4, 64, cell - 8, 16, 10, have ? colors.green : colors.amber).horizontalAlign = HorizontalTextAlignment.CENTER;
+        if (this.draft.custom && !this.draft.sequel) this.clickable(node, () => {
           const list = (this.draft.slots[slot.key] || []).slice();
-          if (on) list.splice(list.indexOf(key), 1);
+          if (on) { if (list.length > slot.min) list.splice(list.indexOf(key), 1); }
           else if (slot.max === 1) list.splice(0, list.length, key);
           else if (list.length < slot.max) list.push(key);
           this.draft.slots = { ...this.draft.slots, [slot.key]: list };
           this.render();
-        }, on, !!this.draft.sequel);
+        });
       });
-      cursor += Math.ceil(options.length / 3) * 46 + 6;
+      cursor += Math.max(1, Math.ceil(shown.length / 3)) * 92 + 4;
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, formTop, inner, cursor - formTop - 8));
-    cursor += 4;
-    this.text(body, '体量', 0, cursor, inner, 24, 15, colors.ink, true);
-    cursor += 30;
-    core.SCALES.forEach((scale, index) => {
-      const cell = (inner - 24) / 4;
-      const open = core.scaleOpen(state, index);
-      this.button(body, scale.name, index * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index, !open);
-    });
-    cursor += 54;
-    const locked = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => !core.scaleOpen(state, index));
-    if (locked.length) cursor += this.paragraph(body, locked.map((index: number) => core.SCALE_LOCKS[index]).join(''), cursor, true);
+    if (!this.draft.sequel) {
+      this.button(body, this.draft.custom ? '用推荐组合' : '自定义组合', 0, cursor, inner, 40, () => {
+        this.draft.custom = !this.draft.custom;
+        if (!this.draft.custom) this.draft.slots = core.recommendPlan(state).slots;
+        this.render();
+      }, false, false, 'Wrench');
+      cursor += 52;
+    }
+    const openScales = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => core.scaleOpen(state, index));
+    if (openScales.length > 1) {
+      this.text(body, '体量', 0, cursor, inner, 24, 15, colors.ink, true);
+      cursor += 30;
+      openScales.forEach((index: number, position: number) => {
+        const cell = (inner - 8 * (openScales.length - 1)) / openScales.length;
+        this.button(body, core.SCALES[index].name, position * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index);
+      });
+      cursor += 54;
+    }
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
-    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!core.planIssue(this.draft) || !core.scaleOpen(state, this.draft.scale));
+    const coming = core.nextUnlocks(state);
+    if (coming.length) cursor += this.paragraph(body, '下一作发售后开放：' + coming.join('、'), cursor, true, 0, inner, 12);
+    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!core.planIssue(state, this.draft) || !core.scaleOpen(state, this.draft.scale));
     return cursor + 66;
   }
 
@@ -1483,7 +1540,7 @@ export class StudioApp extends Component {
           const bestAbility = core.primaryAbility(person);
           const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + Math.round(person.abilities[bestAbility]);
           const detail = `月薪 ${content.money(person.wage)} · 速度 ${person.speed}\n最强：${bestText} · 潜力${core.potentialBand(person)}`;
-          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person), avatar: person.id }) + 10;
+          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person), avatar: person.id, avatarLook: person.look }) + 10;
         });
         this.anchors.set('candidates', this.box(parent, 'CandidatesAnchor', 0, start, width, y - start - 10));
         return y;
@@ -1498,11 +1555,11 @@ export class StudioApp extends Component {
           const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);
           const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 外出中' : ''}${person.mentor ? ' · 带教中' : ''}`;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: person.id, anchor: 'staff-' + index }) + 10;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: person.id, avatarLook: person.look, anchor: 'staff-' + index }) + 10;
         }
         return y;
       case 'avatar': {
-        drawAvatar(this.canvasNode(parent, 'Avatar', 0, y, 56, 56).pen, 28, 28, 22, block.id);
+        drawAvatar(this.canvasNode(parent, 'Avatar', 0, y, 56, 56).pen, 28, 28, 22, block.id, block.look);
         this.text(parent, block.text, 68, y + 8, width - 68, 40, 14, colors.ink, true);
         return y + 64;
       }
@@ -1512,41 +1569,47 @@ export class StudioApp extends Component {
         return y + this.radar(parent, y, { dimensions: values, labels }, '', undefined, 0, false) + 6;
       }
       case 'compose': {
-        // One layer of a recipe: the whole on top, its parts below, each part joined to it by a line.
-        const tint: any = { have: colors.green, partial: colors.amber, missing: colors.muted };
-        const fill: any = { have: '#e5f1ea', partial: '#f7ecd9', missing: colors.pale };
-        const rootW = Math.min(width, 240);
-        const rootH = 56;
-        const columns = Math.min(3, Math.max(1, block.children.length));
-        const cellW = (width - (columns - 1) * 8) / columns;
-        const cellH = 56;
-        const rows = Math.ceil(block.children.length / columns);
-        const childTop = rootH + 40;
-        const height = childTop + rows * (cellH + 10);
+        // One layer of a recipe as a workbench: the whole stands on top, its parts sit on the table below.
+        const top = 72;
+        const size = 50;
+        const columns = Math.max(1, Math.min(4, Math.floor((width + 12) / (size + 26))));
+        const rows = Math.max(1, Math.ceil(block.children.length / columns));
+        const height = top + 34 + rows * (size + 22);
         const { node, pen } = this.canvasNode(parent, 'Compose', 0, y, width, height);
-        const rootX = (width - rootW) / 2;
+        pen.rect(0, 0, width, height, '#f1e7d6', 10);
+        pen.rect(0, top + 18, width, height - top - 18, '#dcc6a3', 10);
+        pen.rect(0, top + 14, width, 8, '#b48a5a', 3);
+        const rootSize = 60;
+        const pitch = width / columns;
+        const spots = block.children.map((_child: any, index: number) => ({ x: pitch * (index % columns) + (pitch - size) / 2, y: top + 34 + Math.floor(index / columns) * (size + 22) }));
+        for (const spot of spots) pen.line(width / 2, 8 + rootSize, spot.x + size / 2, spot.y + 2, '#b48a5a', 1.5);
+        const color = (item: any) => core.FAMILIES[item.family]?.color || colors.green;
+        drawBrick(pen, (width - rootSize) / 2, 6, rootSize, color(block.root), block.root.glyph || 'star', block.root.level || 1, block.root.status, block.root.oneOff);
+        this.brickSpot(node, (width - rootSize) / 2, 6, rootSize, block.root);
         block.children.forEach((child: any, index: number) => {
-          const cx = (index % columns) * (cellW + 8) + cellW / 2;
-          const cy = childTop + Math.floor(index / columns) * (cellH + 10);
-          pen.line(width / 2, rootH, width / 2, rootH + 18, colors.line, 2);
-          pen.line(width / 2, rootH + 18, cx, rootH + 18, colors.line, 2);
-          pen.line(cx, rootH + 18, cx, cy, tint[child.status] || colors.line, 2);
+          drawBrick(pen, spots[index].x, spots[index].y, size, color(child), child.glyph, child.level || 1, child.status, child.oneOff);
+          this.brickSpot(node, spots[index].x, spots[index].y, size, child);
         });
-        const card = (x: number, top: number, w: number, h: number, item: any, bold: boolean) => {
-          const box = this.box(node, 'Part', x, top, w, h, fill[item.status] || colors.pale, 8);
-          new Pen(this.box(box, 'Frame', 0, 0, w, h).addComponent(Graphics)).frame(0, 0, w, h, tint[item.status] || colors.line, bold ? 2 : 1.5, 8);
-          this.text(box, item.name, 8, 6, w - 16, 22, bold ? 15 : 13, tint[item.status] || colors.ink, true);
-          this.text(box, item.detail || '', 8, 28, w - 16, 22, 10, colors.muted);
-          return box;
-        };
-        card(rootX, 0, rootW, rootH, block.root, true);
-        block.children.forEach((child: any, index: number) => {
-          const x = (index % columns) * (cellW + 8);
-          const top = childTop + Math.floor(index / columns) * (cellH + 10);
-          const box = card(x, top, cellW, cellH, child, false);
-          if (child.route) this.clickable(box, () => this.openMenu(child.route.menu, child.route.id));
-        });
+        this.brickTipCard(node, width, height);
         return y + height + 8;
+      }
+      case 'bricks': {
+        // A shelf of bricks with short names; tapping one opens its card.
+        const size = 52;
+        const columns = Math.max(1, Math.floor((width + 8) / (size + 30)));
+        const pitch = width / columns;
+        const rows = Math.max(1, Math.ceil(block.items.length / columns));
+        const height = Math.max(rows * (size + 40), this.brickTip?.board === 'Bricks' ? 120 : 0);
+        const { node, pen } = this.canvasNode(parent, 'Bricks', 0, y, width, height);
+        block.items.forEach((item: any, index: number) => {
+          const x = pitch * (index % columns) + (pitch - size) / 2;
+          const top = Math.floor(index / columns) * (size + 40);
+          drawBrick(pen, x, top, size, core.FAMILIES[item.family]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff);
+          this.text(node, item.name, pitch * (index % columns) + 2, top + size + 2, pitch - 4, 30, 10, item.status === 'missing' ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
+          this.brickSpot(node, x, top, size, item);
+        });
+        this.brickTipCard(node, width, height);
+        return y + height + 6;
       }
       case 'tags': {
         y = this.chips(parent, block.items, 0, y, width) + 2;
@@ -2094,7 +2157,8 @@ export class StudioApp extends Component {
     if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
-    if (menu === 'new-project') this.draft = { name: '', scale: 0, slots: JSON.parse(JSON.stringify(core.TEMPLATES[0].slots)) };
+    if (menu === 'new-project') this.draft = { ...core.recommendPlan(this.state) };
+    this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
     this.routes.push({ menu, id, dim });

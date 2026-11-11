@@ -164,22 +164,30 @@ function seeded(seed: number) {
   return () => { value = (Math.imul(value, 1664525) + 1013904223) >>> 0; return value / 4294967296; };
 }
 
-const SKINS = ['#f7dcc4', '#f1cfb0', '#e5b892', '#c9956f', '#9c6a4b'];
-const HAIRS = ['#2b2523', '#4a3328', '#7a4b2a', '#b5833f', '#e2d2a8', '#8a8f94', '#a2443a', '#3b4f7a'];
+export const SKINS = ['#f7dcc4', '#f1cfb0', '#e5b892', '#c9956f', '#9c6a4b'];
+export const HAIRS = ['#2b2523', '#4a3328', '#7a4b2a', '#b5833f', '#e2d2a8', '#8a8f94', '#a2443a', '#3b4f7a'];
+export const HAIR_STYLES = 5;
 const EXTRAS = ['#2f7d63', '#c8574f', '#497899', '#e0a526', '#9b6fb0'];
 
-// A simple face built from the person's id, so the same person always looks the same everywhere.
-export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: string) {
+// A simple face built from the person's id, so the same person always looks the same everywhere. A chosen
+// look (the founder's) overrides skin, hair style, hair colour and glasses.
+export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: string, look: any = null) {
   let hash = 2166136261;
   for (let index = 0; index < id.length; index++) hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
   const rand = seeded(hash);
   const pick = <T>(list: T[]) => list[Math.floor(rand() * list.length)];
-  const skin = pick(SKINS);
-  const hair = pick(HAIRS);
+  let skin = pick(SKINS);
+  let hair = pick(HAIRS);
   const extra = pick(EXTRAS);
   const face = Math.floor(rand() * 3);
-  const style = Math.floor(rand() * 5);
-  const accessory = Math.floor(rand() * 6);
+  let style = Math.floor(rand() * 5);
+  let accessory = Math.floor(rand() * 6);
+  if (look) {
+    skin = SKINS[look.skin] || skin;
+    hair = HAIRS[look.hairColor] || hair;
+    style = Number.isInteger(look.hair) ? look.hair : style;
+    accessory = look.glasses ? 1 : 0;
+  }
   const w = r * (face === 1 ? 1.5 : face === 2 ? 1.4 : 1.6);
   const h = r * (face === 2 ? 1.85 : 1.6);
   const top = cy - h / 2;
@@ -207,6 +215,79 @@ export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: stri
   } else if (accessory === 4) {
     pen.circle(cx - w / 2, eyeY + h * 0.14, Math.max(0.8, r * 0.1), '#e0a526');
     pen.circle(cx + w / 2, eyeY + h * 0.14, Math.max(0.8, r * 0.1), '#e0a526');
+  }
+}
+
+// A module brick: family colour, the module's glyph on the face, one stud per level on top and a metal
+// rim from the third level up. Built means solid, in progress half filled, missing only an outline.
+export function drawBrick(pen: Pen, x: number, y: number, size: number, color: string, glyph: string, level: number, status: string, oneOff = false) {
+  const studs = Math.max(1, Math.min(5, level || 1));
+  const studW = size * 0.14;
+  const top = y + size * 0.14;
+  const body = size - size * 0.14;
+  const solid = status === 'have';
+  const faint = status === 'missing';
+  const alpha = faint ? 70 : 255;
+  const gap = (size - studs * studW) / (studs + 1);
+  for (let index = 0; index < studs; index++) pen.rect(x + gap + index * (studW + gap), y + size * 0.03, studW, size * 0.13, faint ? '#c9d3cd' : color, size * 0.03, alpha);
+  if (faint) pen.rect(x, top, size, body, '#eef2ef', size * 0.12);
+  else {
+    pen.rect(x, top, size, body, color, size * 0.12, solid ? 255 : 110);
+    if (!solid) pen.rect(x, top + body / 2, size, body / 2, color, size * 0.12);
+    pen.rect(x + size * 0.06, top + size * 0.05, size * 0.88, body * 0.18, '#ffffff', size * 0.06, 50);
+  }
+  const rim = level >= 5 ? '#e0a526' : level >= 4 ? '#c3ccd2' : level >= 3 ? '#b07b4f' : faint ? '#b8c4bd' : '#5c6a66';
+  pen.frame(x, top, size, body, rim, level >= 3 ? 2.5 : 1.2, size * 0.12);
+  if (oneOff) pen.frame(x + 3, top + 3, size - 6, body - 6, '#ffffff', 1, size * 0.1);
+  drawGlyph(pen, x + size / 2, top + body / 2, size * 0.32, glyph, faint ? '#a9b5ae' : '#ffffff');
+}
+
+// Line-art pictograms for module faces, drawn from simple shapes so they stay crisp at any size.
+function drawGlyph(pen: Pen, cx: number, cy: number, r: number, glyph: string, ink: string) {
+  const w = Math.max(1.2, r * 0.16);
+  switch (glyph) {
+    case 'gear':
+      for (let index = 0; index < 8; index++) { const a = index * Math.PI / 4; pen.line(cx + Math.cos(a) * r * 0.55, cy + Math.sin(a) * r * 0.55, cx + Math.cos(a) * r, cy + Math.sin(a) * r, ink, w * 1.6); }
+      pen.circle(cx, cy, r * 0.62, ink); pen.circle(cx, cy, r * 0.28, '#000000', 60); break;
+    case 'disk':
+      pen.rect(cx - r, cy - r, r * 2, r * 2, ink, r * 0.2); pen.rect(cx - r * 0.55, cy - r, r * 1.1, r * 0.7, '#000000', 0, 60); pen.rect(cx - r * 0.6, cy + r * 0.15, r * 1.2, r * 0.7, '#000000', r * 0.1, 45); break;
+    case 'blueprint':
+      pen.frame(cx - r, cy - r * 0.8, r * 2, r * 1.6, ink, w); pen.line(cx - r * 0.6, cy + r * 0.4, cx, cy - r * 0.4, ink, w); pen.line(cx, cy - r * 0.4, cx + r * 0.6, cy + r * 0.4, ink, w); pen.line(cx - r * 0.6, cy + r * 0.4, cx + r * 0.6, cy + r * 0.4, ink, w); break;
+    case 'sword':
+      pen.line(cx - r * 0.8, cy + r * 0.8, cx + r * 0.8, cy - r * 0.8, ink, w * 1.8); pen.line(cx - r * 0.75, cy + r * 0.15, cx - r * 0.15, cy + r * 0.75, ink, w * 1.6); pen.circle(cx - r * 0.85, cy + r * 0.85, r * 0.16, ink); break;
+    case 'book':
+      pen.rect(cx - r, cy - r * 0.75, r * 0.95, r * 1.5, ink, r * 0.1); pen.rect(cx + r * 0.05, cy - r * 0.75, r * 0.95, r * 1.5, ink, r * 0.1); pen.line(cx, cy - r * 0.75, cx, cy + r * 0.75, '#3a4744', w); break;
+    case 'grid':
+      for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) pen.rect(cx - r + col * r * 0.7, cy - r + row * r * 0.7, r * 0.55, r * 0.55, ink, r * 0.08, (row + col) % 2 ? 255 : 150); break;
+    case 'dice':
+      pen.rect(cx - r * 0.85, cy - r * 0.85, r * 1.7, r * 1.7, ink, r * 0.3); for (const [dx, dy] of [[-0.4, -0.4], [0, 0], [0.4, 0.4]]) pen.circle(cx + dx * r, cy + dy * r, r * 0.16, '#000000', 90); break;
+    case 'tree':
+      pen.line(cx, cy + r, cx, cy - r * 0.2, ink, w * 1.6); pen.line(cx, cy + r * 0.1, cx - r * 0.7, cy - r * 0.5, ink, w); pen.line(cx, cy + r * 0.1, cx + r * 0.7, cy - r * 0.5, ink, w); for (const [dx, dy] of [[0, -0.6], [-0.7, -0.6], [0.7, -0.6]]) pen.circle(cx + dx * r, cy + dy * r, r * 0.25, ink); break;
+    case 'person':
+      pen.circle(cx, cy - r * 0.45, r * 0.4, ink); pen.rect(cx - r * 0.7, cy + r * 0.05, r * 1.4, r * 0.9, ink, r * 0.4); break;
+    case 'mountain':
+      pen.poly([cx - r, cy + r * 0.7, cx - r * 0.25, cy - r * 0.5, cx + r * 0.3, cy + r * 0.7], ink); pen.poly([cx - r * 0.1, cy + r * 0.7, cx + r * 0.45, cy - r * 0.1, cx + r, cy + r * 0.7], ink, 180); pen.circle(cx + r * 0.6, cy - r * 0.6, r * 0.2, ink); break;
+    case 'note':
+      pen.line(cx + r * 0.3, cy + r * 0.5, cx + r * 0.3, cy - r * 0.9, ink, w * 1.4); pen.line(cx + r * 0.3, cy - r * 0.9, cx + r * 0.9, cy - r * 0.6, ink, w * 1.4); pen.circle(cx, cy + r * 0.55, r * 0.38, ink); break;
+    case 'speaker':
+      pen.rect(cx - r * 0.9, cy - r * 0.35, r * 0.5, r * 0.7, ink); pen.poly([cx - r * 0.4, cy - r * 0.35, cx + r * 0.2, cy - r * 0.85, cx + r * 0.2, cy + r * 0.85, cx - r * 0.4, cy + r * 0.35], ink); pen.line(cx + r * 0.5, cy - r * 0.4, cx + r * 0.5, cy + r * 0.4, ink, w); pen.line(cx + r * 0.8, cy - r * 0.7, cx + r * 0.8, cy + r * 0.7, ink, w); break;
+    case 'screen':
+      pen.frame(cx - r, cy - r * 0.75, r * 2, r * 1.3, ink, w * 1.3, r * 0.1); pen.line(cx, cy + r * 0.55, cx, cy + r * 0.85, ink, w); pen.line(cx - r * 0.5, cy + r * 0.9, cx + r * 0.5, cy + r * 0.9, ink, w); break;
+    case 'phone':
+      pen.frame(cx - r * 0.55, cy - r, r * 1.1, r * 2, ink, w * 1.3, r * 0.2); pen.circle(cx, cy + r * 0.7, r * 0.1, ink); break;
+    case 'flag':
+      pen.line(cx - r * 0.6, cy + r, cx - r * 0.6, cy - r, ink, w * 1.4); pen.poly([cx - r * 0.6, cy - r, cx + r * 0.9, cy - r * 0.55, cx - r * 0.6, cy - r * 0.1], ink); break;
+    case 'mask':
+      pen.rect(cx - r, cy - r * 0.5, r * 2, r, ink, r * 0.5); pen.circle(cx - r * 0.45, cy, r * 0.22, '#000000', 90); pen.circle(cx + r * 0.45, cy, r * 0.22, '#000000', 90); break;
+    case 'scroll':
+      pen.rect(cx - r * 0.7, cy - r * 0.8, r * 1.4, r * 1.6, ink, r * 0.1); for (const dy of [-0.4, 0, 0.4]) pen.line(cx - r * 0.4, cy + dy * r, cx + r * 0.4, cy + dy * r, '#3a4744', w); break;
+    case 'frame':
+      pen.frame(cx - r * 0.8, cy - r, r * 1.6, r * 2, ink, w * 1.5); pen.circle(cx, cy - r * 0.2, r * 0.3, ink); pen.rect(cx - r * 0.45, cy + r * 0.2, r * 0.9, r * 0.5, ink, r * 0.25); break;
+    default: {
+      const points: number[] = [];
+      for (let index = 0; index < 10; index++) { const a = -Math.PI / 2 + index * Math.PI / 5; const rr = index % 2 ? r * 0.45 : r; points.push(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+      pen.poly(points, ink);
+    }
   }
 }
 
