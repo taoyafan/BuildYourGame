@@ -511,7 +511,7 @@ export class StudioApp extends Component {
       if (batched) shapes.push(() => drawAvatar(pen, ox + 25, oy + 25, 12, options.avatar, options.avatarLook));
       else drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar, options.avatarLook);
     }
-    if (options.brick) drawBrick(this.canvasNode(node, 'Brick', 8, 10, 30, 30).pen, 0, 0, 30, core.FAMILIES[options.brick.family].color, options.brick.glyph, 1, 'have');
+    if (options.brick) drawBrick(this.canvasNode(node, 'Brick', 8, 10, 30, 30).pen, 0, 0, 30, core.AXES[options.brick.axis].color, options.brick.glyph, 1, 'have');
     const left = options.icon || options.avatar || options.brick ? 44 : 14;
     // A person card carries a small ability radar on the right; the text column makes room for it.
     const side = options.radar ? 70 : 0;
@@ -602,12 +602,15 @@ export class StudioApp extends Component {
     });
   }
 
-  // The card for the tapped brick: name, state and a note, plus a way into the next layer.
+  // The card for the tapped brick: name, state and a note, plus a way into the next layer and whatever
+  // can be done with the module (build the next tier, rebuild, license).
   private brickTipCard(node: Node, width: number, height: number) {
     const tip = this.brickTip;
     if (!tip || tip.board !== node.name || !tip.key.startsWith(node.name + '|')) return;
-    const cardW = Math.min(230, width - 8);
-    const cardH = tip.item.route ? 104 : 72;
+    const buttons = [...(tip.item.route ? [{ text: '看组成', route: tip.item.route }] : []), ...(tip.item.actions || [])];
+    const rows = Math.ceil(buttons.length / 2);
+    const cardW = Math.min(250, width - 8);
+    const cardH = 72 + rows * 32;
     const x = Math.max(4, Math.min(width - cardW - 4, tip.x + tip.size / 2 - cardW / 2));
     const below = tip.y + tip.size + 4;
     const y = below + cardH <= height ? below : Math.max(0, tip.y - cardH - 4);
@@ -615,7 +618,16 @@ export class StudioApp extends Component {
     this.text(card, tip.item.name, 10, 6, cardW - 20, 20, 13, '#ffffff', true);
     this.text(card, tip.item.detail || '', 10, 26, cardW - 20, 18, 11, '#cfe3d8');
     this.text(card, tip.item.note || '', 10, 44, cardW - 20, 28, 10, '#cfe3d8');
-    if (tip.item.route) this.button(card, '看组成', 10, cardH - 34, cardW - 20, 28, () => { this.brickTip = null; this.openMenu(tip.item.route.menu, tip.item.route.id); }, true, false, 'ChevronRight');
+    const cell = (cardW - 26) / 2;
+    buttons.forEach((item: any, index: number) => {
+      const bx = 10 + (index % 2) * (cell + 6);
+      const by = 72 + Math.floor(index / 2) * 32;
+      this.button(card, item.text, bx, by, cell, 28, () => {
+        this.brickTip = null;
+        if (item.route) this.openMenu(item.route.menu, item.route.id);
+        else this.dispatch(item.action, item.data);
+      }, index === 0);
+    });
   }
 
   // Monthly ability record as six lines, with ticks on the days something happened to the person.
@@ -1124,7 +1136,8 @@ export class StudioApp extends Component {
     // Launch unlocks at the trial build, not at 100%. The old track ended in "发售" at full progress,
     // which taught the opposite and made players grind to 100% before daring to release.
     // A job has no prototype or trial build: just start and handover.
-    const phases = project.job ? [['接单', 0], ['交付', 100]] : [['立项', 0], ['原型', 25], ['体验版', 55], ['做满', 100]];
+    const module = project.kind === 'module';
+    const phases = module ? (project.job ? [['接单', 0], ['交付', 100]] : [['开工', 0], ['收进模块库', 100]]) : [['立项', 0], ['原型', 25], ['体验版', 55], ['做满', 100]];
     const railLeft = 12;
     const railWidth = inner - 24;
     const railY = 22;
@@ -1135,8 +1148,8 @@ export class StudioApp extends Component {
     this.box(track, 'Rail', railLeft, railY + 5, railWidth, 3, colors.line);
     this.box(track, 'Fill', railLeft, railY + 5, railWidth * fill, 3, colors.green);
     const days = forecast.days;
-    const phase = project.job ? (metrics.progress < 100 ? 0 : 3) : metrics.progress < 25 ? 0 : metrics.progress < 55 ? 1 : metrics.progress < 100 ? 2 : 3;
-    const note = project.job ? (days == null ? '缺人手' : '距交付约 ' + days + ' 天') : phase === 3 ? '已可发售' : phase === 2 && days != null ? '可发售 · 做满约 ' + days + ' 天' : days == null ? '缺人手' : '距做完约 ' + days + ' 天';
+    const phase = module ? (metrics.progress < 100 ? 0 : 3) : metrics.progress < 25 ? 0 : metrics.progress < 55 ? 1 : metrics.progress < 100 ? 2 : 3;
+    const note = module ? (days == null ? '缺人手' : (project.job ? '距交付约 ' : '距做完约 ') + days + ' 天') : phase === 3 ? '已可发售' : phase === 2 && days != null ? '可发售 · 做满约 ' + days + ' 天' : days == null ? '缺人手' : '距做完约 ' + days + ' 天';
     const warn = phase < 3 && (days == null || !!forecast.bottleneck);
     const noteWidth = phase >= 2 ? 190 : 130;
     const noteCenter = at(metrics.progress);
@@ -1316,40 +1329,79 @@ export class StudioApp extends Component {
     let cursor = 64;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
-    const owned = state.modules || {};
-    // The recommended recipe is preselected at the smallest scale; every open option can be tapped.
-    const need = (this.draft.scale || 0) + 1;
+    // Every slot comes filled in (what the company has, or a recommendation) and folded into one line;
+    // the player opens only the slot they want to change. The first title's gameplay is the origin's.
+    const first = core.firstGameCore(state);
+    const open = this.draft.open || (this.draft.open = {});
+    const rent: string[] = this.draft.rent || (this.draft.rent = []);
+    const statusOf = (key: string) => {
+      const need = core.tierFor(key, this.draft.scale || 0);
+      const info = core.lineInfo(state, key);
+      if (info.level >= need) return { need, text: '已有', tone: colors.green, brick: 'have' };
+      if (rent.includes(key)) return { need, text: '租用', tone: colors.blue, brick: 'have' };
+      if (info.level > 0 || info.next > 0) return { need, text: '补到 ' + need + ' 档', tone: colors.amber, brick: 'partial' };
+      return { need, text: '新做', tone: colors.amber, brick: 'missing' };
+    };
     for (const slot of core.SLOTS) {
       if (!core.slotOpen(state, slot)) continue;
       const chosen: string[] = this.draft.slots?.[slot.key] || [];
-      this.text(body, slot.name + (slot.max > 1 ? '（最多 ' + slot.max + ' 个）' : ''), 0, cursor, inner, 22, 13, colors.ink, true);
-      cursor += 26;
+      const fixed = !!this.draft.sequel || (slot.key === 'core' && !!first);
+      const expanded = !fixed && !!open[slot.key];
+      const color = core.AXES[slot.axis].color;
+      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）').join('、') || '未选';
+      const row = this.box(body, 'Slot', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
+      new Pen(this.box(row, 'Rim', 0, 0, inner, 52).addComponent(Graphics)).frame(0, 0, inner, 52, expanded ? colors.green : colors.line, expanded ? 2 : 1, 10);
+      chosen.slice(0, 2).forEach((key: string, index: number) => {
+        const module = core.MODULES[key];
+        const status = statusOf(key);
+        drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, module.glyph, status.need, status.brick);
+      });
+      const textLeft = 8 + Math.max(1, Math.min(2, chosen.length)) * 34 + 4;
+      this.text(row, slot.name + (fixed ? (this.draft.sequel ? ' · 沿用原作' : ' · 首作由出身决定') : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
+      this.text(row, summary, textLeft, 26, inner - textLeft - 40, 20, 11, colors.muted);
+      if (!fixed) {
+        this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+        this.clickable(row, () => { open[slot.key] = !expanded; this.render(); });
+      }
+      cursor += 60;
+      if (!expanded) continue;
       const options = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key && core.moduleOpen(state, key));
-      const shown = this.draft.sequel ? chosen : options;
       const cell = (inner - 16) / 3;
-      shown.forEach((key: string, index: number) => {
+      options.forEach((key: string, index: number) => {
         const on = chosen.includes(key);
         const module = core.MODULES[key];
-        const have = module.oneOff ? null : owned[key];
-        const enough = !!have && have.level >= need;
+        const status = statusOf(key);
+        const blocked = core.lineBlocked(this.draft, key);
         const x = (index % 3) * (cell + 8);
         const y = cursor + Math.floor(index / 3) * 92;
-        const node = this.box(body, 'Pick', x, y, cell, 84, on ? colors.soft : colors.paper, 10);
+        const node = this.box(body, 'Pick', x, y, cell, 84, blocked ? colors.pale : on ? colors.soft : colors.paper, 10);
         new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
-        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, core.FAMILIES[module.family].color, module.glyph, need, enough ? 'have' : have ? 'partial' : 'missing', !!module.oneOff);
-        this.text(node, module.name, 4, 46, cell - 8, 18, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-        const status = module.oneOff ? '一次性 · 需 ' + need + ' 级' : enough ? '需 ' + need + ' 级 · 已有' : have ? '需 ' + need + ' 级 · 有 ' + have.level + ' 级' : '需 ' + need + ' 级 · 新做';
-        this.text(node, status, 2, 64, cell - 4, 16, 10, enough ? colors.green : colors.amber).horizontalAlign = HorizontalTextAlignment.CENTER;
-        if (!this.draft.sequel) this.clickable(node, () => {
+        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, blocked ? colors.line : color, module.glyph, status.need, blocked ? 'missing' : status.brick);
+        this.text(node, module.name, 4, 46, cell - 8, 18, 11, blocked ? colors.muted : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+        this.text(node, blocked || '需 ' + status.need + ' 档 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
+        this.clickable(node, () => {
+          // A line that needs something on another axis cannot go in; say why instead of doing nothing.
+          if (blocked && !on) { this.notify(module.name + blocked + '。'); return; }
           const list = (this.draft.slots[slot.key] || []).slice();
           if (on) { if (list.length > slot.min) list.splice(list.indexOf(key), 1); }
           else if (slot.max === 1) list.splice(0, list.length, key);
           else if (list.length < slot.max) list.push(key);
           this.draft.slots = { ...this.draft.slots, [slot.key]: list };
+          this.draft.rent = rent.filter(line => core.planLines(this.draft).includes(line));
           this.render();
         });
       });
-      cursor += Math.max(1, Math.ceil(shown.length / 3)) * 92 + 4;
+      cursor += Math.max(1, Math.ceil(options.length / 3)) * 92 + 4;
+      // A line the company does not have can be rented instead of built: no work, capped quality, and a
+      // share of every receipt for good. It never joins the library.
+      for (const key of chosen.filter(line => core.lineInfo(state, line).level < core.tierFor(line, this.draft.scale || 0))) {
+        const renting = rent.includes(key);
+        this.button(body, (renting ? '改为自己做：' : '租用：') + core.MODULES[key].name + (renting ? '' : '（质量 ' + core.RENT_QUALITY + '，分走收入 ' + Math.round(core.RENT_SHARE * 100) + '%）'), 0, cursor, inner, 38, () => {
+          this.draft.rent = renting ? rent.filter(line => line !== key) : [...rent, key];
+          this.render();
+        }, renting);
+        cursor += 44;
+      }
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, formTop, inner, cursor - formTop - 8));
     const openScales = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => core.scaleOpen(state, index));
@@ -1569,7 +1621,7 @@ export class StudioApp extends Component {
         const size = 50;
         const columns = Math.max(1, Math.min(4, Math.floor((width + 12) / (size + 26))));
         const rows = Math.max(1, Math.ceil(block.children.length / columns));
-        const height = top + 34 + rows * (size + 22);
+        const height = Math.max(top + 34 + rows * (size + 22), this.brickTip?.board === 'Compose' ? 230 : 0);
         const { node, pen } = this.canvasNode(parent, 'Compose', 0, y, width, height);
         pen.rect(0, 0, width, height, '#f1e7d6', 10);
         pen.rect(0, top + 18, width, height - top - 18, '#dcc6a3', 10);
@@ -1578,7 +1630,7 @@ export class StudioApp extends Component {
         const pitch = width / columns;
         const spots = block.children.map((_child: any, index: number) => ({ x: pitch * (index % columns) + (pitch - size) / 2, y: top + 34 + Math.floor(index / columns) * (size + 22) }));
         for (const spot of spots) pen.line(width / 2, 8 + rootSize, spot.x + size / 2, spot.y + 2, '#b48a5a', 1.5);
-        const color = (item: any) => core.FAMILIES[item.family]?.color || colors.green;
+        const color = (item: any) => core.AXES[item.axis]?.color || colors.green;
         drawBrick(pen, (width - rootSize) / 2, 6, rootSize, color(block.root), block.root.glyph || 'star', block.root.level || 1, block.root.status, block.root.oneOff);
         this.brickSpot(node, (width - rootSize) / 2, 6, rootSize, block.root);
         block.children.forEach((child: any, index: number) => {
@@ -1595,12 +1647,12 @@ export class StudioApp extends Component {
         const pitch = width / columns;
         const rows = Math.max(1, Math.ceil(block.items.length / columns));
         const tips = block.items.some((item: any) => !item.open);
-        const height = Math.max(rows * (size + 40), tips && this.brickTip?.board === 'Bricks' ? 120 : 0);
+        const height = Math.max(rows * (size + 40), tips && this.brickTip?.board === 'Bricks' ? 190 : 0);
         const { node, pen } = this.canvasNode(parent, 'Bricks', 0, y, width, height);
         block.items.forEach((item: any, index: number) => {
           const x = pitch * (index % columns) + (pitch - size) / 2;
           const top = Math.floor(index / columns) * (size + 40);
-          drawBrick(pen, x, top, size, core.FAMILIES[item.family]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff);
+          drawBrick(pen, x, top, size, core.AXES[item.axis]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff);
           this.text(node, item.name, pitch * (index % columns) + 2, top + size + 2, pitch - 4, 30, 10, item.status === 'missing' ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
           // A shelf opens in place instead of showing a card.
           if (item.open) {
@@ -2273,7 +2325,7 @@ export class StudioApp extends Component {
           const book = this.state.catalog.find((item: any) => item.id === data.id);
           if (!book) throw new Error('原作不存在。');
           this.openMenu('new-project');
-          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, slots: JSON.parse(JSON.stringify(book.slots)), sequel: book.id };
+          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, slots: JSON.parse(JSON.stringify(book.slots)), rent: [...(book.rent || [])], sequel: book.id };
           this.render();
           break;
         }
@@ -2301,7 +2353,25 @@ export class StudioApp extends Component {
           this.apply(next, '资料片已作为新项目立项，请安排人手。');
           break;
         }
+        case 'port': {
+          const next = core.makePort(this.state, data.id, data.platform);
+          const project = next.projects[next.projects.length - 1];
+          this.watching = project.id;
+          this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];
+          this.apply(next, '移植已立项，请安排人手。');
+          break;
+        }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
+        case 'module-build':
+        case 'module-rebuild': {
+          const next = core.startModuleProject(this.state, data.line, Number(data.level), action === 'module-rebuild');
+          const project = next.projects[next.projects.length - 1];
+          this.watching = project.id;
+          this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];
+          this.apply(next, '模块项目已开工，请安排人手。');
+          break;
+        }
+        case 'license': this.apply(core.setLicense(this.state, data.line, !!data.on), data.on ? '已授权，每月底收授权费。' : '已收回授权。'); break;
         case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
         case 'test': this.apply(core.testDemo(this.state, data.id)); break;
         case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;
