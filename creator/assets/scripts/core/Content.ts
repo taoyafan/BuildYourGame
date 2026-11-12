@@ -15,6 +15,7 @@ export const monthSpent = (state: any) => state.ledger.expense + state.accrued;
 
 export function stage(project: any) {
   const progress = project.progress || 0;
+  if (project.job) return progress >= 100 ? '交付' : '委托制作';
   return progress >= 100 ? '准备发售' : progress >= 55 ? '体验版与完善' : progress >= 25 ? '内容制作' : '原型开发';
 }
 
@@ -77,9 +78,8 @@ export function advice(state: any, projectId?: string) {
     return { title: '还没有人做《' + project.name + '》', text: '在「项目」里给同事分配要做的工作。', menu: 'project', id: project.id };
   }
   const pipeline = core.dimensionPipeline(state, project);
-  // Testing can be left undone on purpose (the game is still shippable), so it is not an unstaffed
-  // scoring item here. Its row in the project page already says "未安排测试 · 漏掉的缺陷留给玩家".
-  const idle = pipeline.rows.filter((row: any) => row.key !== 'stability' && row.days === null && row.remaining > 0);
+  // Testing can be skipped on purpose, but an unstaffed test is still called out like any other row.
+  const idle = pipeline.rows.filter((row: any) => row.days === null && row.remaining > 0);
   if (idle.length) return { title: '《' + project.name + '》有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
   if (project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
@@ -291,7 +291,7 @@ function projectMenu(state: any, id?: string) {
   const contentDone = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
   const testing = forecast.rows.some((row: any) => row.key === 'stability' && row.remaining > 0.0001 && row.days !== null);
   const finished = contentDone && !testing;
-  const idleRows = forecast.rows.filter((row: any) => row.key !== 'stability' && row.remaining > 0.0001 && row.days === null);
+  const idleRows = forecast.rows.filter((row: any) => row.remaining > 0.0001 && row.days === null);
   const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
   const order = core.projectOrder(state);
   const rank = order.findIndex((item: any) => item.id === project.id);
@@ -969,10 +969,6 @@ function libraryMenu(state: any, id?: string) {
   const tabs = { type: 'tabs', items: [['system', '玩法'], ['asset', '素材'], ['tool', '底座与平台']].map(([key, text]) => ({ text, route: { menu: 'library', id: key }, active: key === tab })) };
   const inTab = (key: string) => core.FAMILIES[core.MODULES[key].family].tab === tab;
   const byLevel = (left: string, right: string) => (owned[right]?.level || 0) - (owned[left]?.level || 0);
-  if (tab === 'asset' && shelf) {
-    const styles = Object.keys(core.MODULES).filter(key => core.MODULES[key].shelf === shelf).sort(byLevel);
-    return { title: shelf, blocks: [tabs, { type: 'text', text: '每种风格是一块独立的素材库，换风格就要从头做。', muted: true }, { type: 'bricks', items: styles.map(key => brickOf(state, key)) }] };
-  }
   if (tab === 'asset') {
     const shelves: string[] = [];
     for (const key of Object.keys(core.MODULES)) if (inTab(key) && !shelves.includes(core.MODULES[key].shelf)) shelves.push(core.MODULES[key].shelf);
@@ -980,9 +976,15 @@ function libraryMenu(state: any, id?: string) {
       const styles = Object.keys(core.MODULES).filter(key => core.MODULES[key].shelf === name);
       const best = styles.sort(byLevel)[0];
       const have = styles.filter(key => owned[key]);
-      return { ...brickOf(state, best), name, detail: have.length ? have.map(key => core.MODULES[key].style + ' ' + owned[key].level + ' 级').join(' · ') : '还没有', note: '包含风格：' + styles.map(key => core.MODULES[key].style).join('、'), route: { menu: 'library', id: 'asset:' + name } };
+      return { ...brickOf(state, best), name: (name === shelf ? '▾ ' : '') + name, detail: have.length ? have.map(key => core.MODULES[key].style + ' ' + owned[key].level + ' 级').join(' · ') : '还没有', open: name === shelf ? 'asset' : 'asset:' + name };
     });
-    return { title: '模块库', blocks: [tabs, { type: 'bricks', items }] };
+    const blocks: any[] = [tabs, { type: 'bricks', items }];
+    // The tapped shelf opens right under the shelves, so the page never seems to stay the same.
+    if (shelf) {
+      const styles = Object.keys(core.MODULES).filter(key => core.MODULES[key].shelf === shelf).sort(byLevel);
+      blocks.push({ type: 'section', title: shelf + '的风格' }, { type: 'text', text: '每种风格是一块独立的素材库，换风格就要从头做。', muted: true }, { type: 'bricks', items: styles.map(key => brickOf(state, key)) });
+    } else blocks.push({ type: 'text', text: '点一个货架，在下方展开它的各种风格。', muted: true });
+    return { title: '模块库', blocks };
   }
   const list = Object.keys(core.MODULES).filter(inTab).sort(byLevel);
   return { title: '模块库', blocks: [tabs, { type: 'bricks', items: list.map(key => brickOf(state, key)) }] };

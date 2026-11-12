@@ -167,6 +167,8 @@ function seeded(seed: number) {
 export const SKINS = ['#f7dcc4', '#f1cfb0', '#e5b892', '#c9956f', '#9c6a4b'];
 export const HAIRS = ['#2b2523', '#4a3328', '#7a4b2a', '#b5833f', '#e2d2a8', '#8a8f94', '#a2443a', '#3b4f7a'];
 export const HAIR_STYLES = 5;
+export const FACES = 3;
+export const GLASSES = ['不戴', '方框', '圆框', '墨镜'];
 const EXTRAS = ['#2f7d63', '#c8574f', '#497899', '#e0a526', '#9b6fb0'];
 
 // A simple face built from the person's id, so the same person always looks the same everywhere. A chosen
@@ -179,14 +181,17 @@ export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: stri
   let skin = pick(SKINS);
   let hair = pick(HAIRS);
   const extra = pick(EXTRAS);
-  const face = Math.floor(rand() * 3);
+  let face = Math.floor(rand() * 3);
   let style = Math.floor(rand() * 5);
   let accessory = Math.floor(rand() * 6);
   if (look) {
     skin = SKINS[look.skin] || skin;
     hair = HAIRS[look.hairColor] || hair;
     style = Number.isInteger(look.hair) ? look.hair : style;
-    accessory = look.glasses ? 1 : 0;
+    face = Number.isInteger(look.face) ? look.face : face;
+    // Older looks stored glasses as a boolean.
+    const glasses = look.glasses === true ? 1 : Number(look.glasses) || 0;
+    accessory = [0, 1, 5, 6][glasses] || 0;
   }
   const w = r * (face === 1 ? 1.5 : face === 2 ? 1.4 : 1.6);
   const h = r * (face === 2 ? 1.85 : 1.6);
@@ -205,6 +210,15 @@ export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: stri
     pen.line(cx - w * 0.38, eyeY, cx + w * 0.38, eyeY, '#2b3532', Math.max(0.8, r * 0.08));
     pen.frame(cx - w * 0.36, eyeY - r * 0.18, w * 0.3, r * 0.36, '#2b3532', Math.max(0.8, r * 0.08), r * 0.1);
     pen.frame(cx + w * 0.06, eyeY - r * 0.18, w * 0.3, r * 0.36, '#2b3532', Math.max(0.8, r * 0.08), r * 0.1);
+  } else if (accessory === 5) {
+    const lens = r * 0.2;
+    pen.line(cx - w * 0.2 + lens, eyeY, cx + w * 0.2 - lens, eyeY, '#2b3532', Math.max(0.8, r * 0.07));
+    pen.frame(cx - w * 0.2 - lens, eyeY - lens, lens * 2, lens * 2, '#2b3532', Math.max(0.8, r * 0.07), lens);
+    pen.frame(cx + w * 0.2 - lens, eyeY - lens, lens * 2, lens * 2, '#2b3532', Math.max(0.8, r * 0.07), lens);
+  } else if (accessory === 6) {
+    pen.line(cx - w * 0.4, eyeY, cx + w * 0.4, eyeY, '#1d2422', Math.max(0.8, r * 0.08));
+    pen.rect(cx - w * 0.38, eyeY - r * 0.16, w * 0.32, r * 0.32, '#1d2422', r * 0.12);
+    pen.rect(cx + w * 0.06, eyeY - r * 0.16, w * 0.32, r * 0.32, '#1d2422', r * 0.12);
   } else if (accessory === 2) {
     pen.rect(cx - w / 2 - r * 0.12, top - r * 0.2, w + r * 0.24, r * 0.2, '#3f4a47', r * 0.1);
     pen.rect(cx - w / 2 - r * 0.25, eyeY - r * 0.3, r * 0.3, r * 0.55, extra, r * 0.12);

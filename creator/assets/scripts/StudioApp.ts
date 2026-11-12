@@ -6,7 +6,7 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawDesk, drawAvatar, drawBrick, drawWork, seatLayout, roomProps, SKINS, HAIRS, HAIR_STYLES } from './ui/Art';
+import { Pen, drawRoom, drawDesk, drawAvatar, drawBrick, drawWork, seatLayout, roomProps, SKINS, HAIRS, HAIR_STYLES, FACES, GLASSES } from './ui/Art';
 import { platform } from './Platform';
 
 const { ccclass } = _decorator;
@@ -1123,7 +1123,8 @@ export class StudioApp extends Component {
     this.clickable(track, () => this.openMenu('project', project.id));
     // Launch unlocks at the trial build, not at 100%. The old track ended in "发售" at full progress,
     // which taught the opposite and made players grind to 100% before daring to release.
-    const phases = [['立项', 0], ['原型', 25], ['体验版', 55], ['做满', 100]];
+    // A job has no prototype or trial build: just start and handover.
+    const phases = project.job ? [['接单', 0], ['交付', 100]] : [['立项', 0], ['原型', 25], ['体验版', 55], ['做满', 100]];
     const railLeft = 12;
     const railWidth = inner - 24;
     const railY = 22;
@@ -1134,8 +1135,8 @@ export class StudioApp extends Component {
     this.box(track, 'Rail', railLeft, railY + 5, railWidth, 3, colors.line);
     this.box(track, 'Fill', railLeft, railY + 5, railWidth * fill, 3, colors.green);
     const days = forecast.days;
-    const phase = metrics.progress < 25 ? 0 : metrics.progress < 55 ? 1 : metrics.progress < 100 ? 2 : 3;
-    const note = phase === 3 ? '已可发售' : phase === 2 && days != null ? '可发售 · 做满约 ' + days + ' 天' : days == null ? '缺人手' : '距做完约 ' + days + ' 天';
+    const phase = project.job ? (metrics.progress < 100 ? 0 : 3) : metrics.progress < 25 ? 0 : metrics.progress < 55 ? 1 : metrics.progress < 100 ? 2 : 3;
+    const note = project.job ? (days == null ? '缺人手' : '距交付约 ' + days + ' 天') : phase === 3 ? '已可发售' : phase === 2 && days != null ? '可发售 · 做满约 ' + days + ' 天' : days == null ? '缺人手' : '距做完约 ' + days + ' 天';
     const warn = phase < 3 && (days == null || !!forecast.bottleneck);
     const noteWidth = phase >= 2 ? 190 : 130;
     const noteCenter = at(metrics.progress);
@@ -1227,8 +1228,7 @@ export class StudioApp extends Component {
     const singleChoiceEvent = route.menu === 'event' && (this.state.event?.choices?.length || 0) === 1;
     if (this.state.company && (route.menu !== 'event' || singleChoiceEvent)) this.button(this.stage, '', this.width - 60, y, 40, 40, () => this.closeMenu(), false, false, 'X');
     this.box(this.stage, 'Divider', 20, y + 54, this.width - 40, 1, colors.line);
-    const footer = this.resumeAfterMenu && this.state.company && !this.state.event ? 64 : 0;
-    const scroll = this.scroller(y + 68, this.height - y - 68 - this.bottom - footer);
+    const scroll = this.scroller(y + 68, this.height - y - 68 - this.bottom);
     // One Graphics for every static rectangle on this page. It is the first child of the scroll body,
     // so all labels and buttons drawn afterwards stay on top of it. Body-relative coordinates start
     // at zero here, which is what box() records on every descendant as ax/ay.
@@ -1251,7 +1251,6 @@ export class StudioApp extends Component {
       this.shapeRoot = null;
     }
     scroll.finish(cursor);
-    if (footer) this.button(this.stage, '返回工作室，继续经营', 20, this.height - this.bottom - 54, this.width - 40, 46, () => this.closeMenu(), true, false, 'Play');
   }
 
   private renderSetup(body: Node) {
@@ -1273,16 +1272,17 @@ export class StudioApp extends Component {
       cursor += this.choice(body, cursor, origin.name, origin.focus + '\n第一份委托：' + core.MODULES[origin.starter].name, () => { this.draft.founder = role; this.render(); }, { highlight: founder === role, tag: founder === role ? '已选' : '', tagColor: colors.green, brick: core.MODULES[origin.starter] }) + 8;
     }
     // The founder's look: four small rows, with the face updating as the player taps.
-    const look = this.draft.look || (this.draft.look = { skin: 1, hair: 0, hairColor: 0, glasses: false });
+    const look = this.draft.look || (this.draft.look = { skin: 1, face: 0, hair: 0, hairColor: 0, glasses: 0 });
     cursor += 6;
     this.text(body, '你的样子', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
     drawAvatar(this.canvasNode(body, 'Face', 0, cursor, 72, 72).pen, 36, 36, 28, 'founder', look);
     const rows: Array<[string, number, (index: number) => void, (index: number) => boolean]> = [
       ['肤色', SKINS.length, index => { look.skin = index; }, index => look.skin === index],
+      ['脸型', FACES, index => { look.face = index; }, index => look.face === index],
       ['发型', HAIR_STYLES, index => { look.hair = index; }, index => look.hair === index],
       ['发色', HAIRS.length, index => { look.hairColor = index; }, index => look.hairColor === index],
-      ['眼镜', 2, index => { look.glasses = index === 1; }, index => (index === 1) === !!look.glasses]
+      ['眼镜', GLASSES.length, index => { look.glasses = index; }, index => look.glasses === index]
     ];
     const left = 84;
     rows.forEach(([label, count, set, on], row) => {
@@ -1293,7 +1293,7 @@ export class StudioApp extends Component {
         const swatch = label === '肤色' ? SKINS[index] : label === '发色' ? HAIRS[index] : '';
         const x = left + 40 + index * (cell + 4);
         const node = this.box(body, 'Swatch', x, y, cell, 28, swatch || (on(index) ? colors.green : colors.pale), 6);
-        if (!swatch) this.text(node, label === '眼镜' ? (index ? '戴' : '不戴') : String(index + 1), 0, 0, cell, 28, 11, on(index) ? '#ffffff' : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
+        if (!swatch) this.text(node, label === '眼镜' ? GLASSES[index] : String(index + 1), 0, 0, cell, 28, 11, on(index) ? '#ffffff' : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
         if (on(index)) new Pen(this.box(node, 'Pick', 0, 0, cell, 28).addComponent(Graphics)).frame(0, 0, cell, 28, colors.ink, 2, 6);
         this.clickable(node, () => { set(index); this.render(); });
       }
@@ -1317,27 +1317,30 @@ export class StudioApp extends Component {
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
     const owned = state.modules || {};
-    // The recommended recipe comes first; each open slot shows its bricks, and only open slots appear.
+    // The recommended recipe is preselected at the smallest scale; every open option can be tapped.
+    const need = (this.draft.scale || 0) + 1;
     for (const slot of core.SLOTS) {
       if (!core.slotOpen(state, slot)) continue;
       const chosen: string[] = this.draft.slots?.[slot.key] || [];
       this.text(body, slot.name + (slot.max > 1 ? '（最多 ' + slot.max + ' 个）' : ''), 0, cursor, inner, 22, 13, colors.ink, true);
       cursor += 26;
       const options = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key && core.moduleOpen(state, key));
-      const shown = this.draft.custom ? options : chosen;
+      const shown = this.draft.sequel ? chosen : options;
       const cell = (inner - 16) / 3;
       shown.forEach((key: string, index: number) => {
         const on = chosen.includes(key);
-        const have = owned[key];
+        const module = core.MODULES[key];
+        const have = module.oneOff ? null : owned[key];
+        const enough = !!have && have.level >= need;
         const x = (index % 3) * (cell + 8);
         const y = cursor + Math.floor(index / 3) * 92;
         const node = this.box(body, 'Pick', x, y, cell, 84, on ? colors.soft : colors.paper, 10);
         new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
-        const module = core.MODULES[key];
-        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, core.FAMILIES[module.family].color, module.glyph, have?.level || 1, have || on ? 'have' : 'missing', !!module.oneOff);
+        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, core.FAMILIES[module.family].color, module.glyph, need, enough ? 'have' : have ? 'partial' : 'missing', !!module.oneOff);
         this.text(node, module.name, 4, 46, cell - 8, 18, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-        this.text(node, module.oneOff ? '一次性' : have ? '已有 ' + have.level + ' 级' : '需新做', 4, 64, cell - 8, 16, 10, have ? colors.green : colors.amber).horizontalAlign = HorizontalTextAlignment.CENTER;
-        if (this.draft.custom && !this.draft.sequel) this.clickable(node, () => {
+        const status = module.oneOff ? '一次性 · 需 ' + need + ' 级' : enough ? '需 ' + need + ' 级 · 已有' : have ? '需 ' + need + ' 级 · 有 ' + have.level + ' 级' : '需 ' + need + ' 级 · 新做';
+        this.text(node, status, 2, 64, cell - 4, 16, 10, enough ? colors.green : colors.amber).horizontalAlign = HorizontalTextAlignment.CENTER;
+        if (!this.draft.sequel) this.clickable(node, () => {
           const list = (this.draft.slots[slot.key] || []).slice();
           if (on) { if (list.length > slot.min) list.splice(list.indexOf(key), 1); }
           else if (slot.max === 1) list.splice(0, list.length, key);
@@ -1349,14 +1352,6 @@ export class StudioApp extends Component {
       cursor += Math.max(1, Math.ceil(shown.length / 3)) * 92 + 4;
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, formTop, inner, cursor - formTop - 8));
-    if (!this.draft.sequel) {
-      this.button(body, this.draft.custom ? '用推荐组合' : '自定义组合', 0, cursor, inner, 40, () => {
-        this.draft.custom = !this.draft.custom;
-        if (!this.draft.custom) this.draft.slots = core.recommendPlan(state).slots;
-        this.render();
-      }, false, false, 'Wrench');
-      cursor += 52;
-    }
     const openScales = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => core.scaleOpen(state, index));
     if (openScales.length > 1) {
       this.text(body, '体量', 0, cursor, inner, 24, 15, colors.ink, true);
@@ -1599,16 +1594,26 @@ export class StudioApp extends Component {
         const columns = Math.max(1, Math.floor((width + 8) / (size + 30)));
         const pitch = width / columns;
         const rows = Math.max(1, Math.ceil(block.items.length / columns));
-        const height = Math.max(rows * (size + 40), this.brickTip?.board === 'Bricks' ? 120 : 0);
+        const tips = block.items.some((item: any) => !item.open);
+        const height = Math.max(rows * (size + 40), tips && this.brickTip?.board === 'Bricks' ? 120 : 0);
         const { node, pen } = this.canvasNode(parent, 'Bricks', 0, y, width, height);
         block.items.forEach((item: any, index: number) => {
           const x = pitch * (index % columns) + (pitch - size) / 2;
           const top = Math.floor(index / columns) * (size + 40);
           drawBrick(pen, x, top, size, core.FAMILIES[item.family]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff);
           this.text(node, item.name, pitch * (index % columns) + 2, top + size + 2, pitch - 4, 30, 10, item.status === 'missing' ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
-          this.brickSpot(node, x, top, size, item);
+          // A shelf opens in place instead of showing a card.
+          if (item.open) {
+            const spot = this.box(node, 'Spot', x, top, size, size + 32);
+            this.clickable(spot, () => {
+              const route = this.routes[this.routes.length - 1];
+              this.brickTip = null;
+              this.routes[this.routes.length - 1] = { ...route, id: item.open };
+              this.render();
+            });
+          } else this.brickSpot(node, x, top, size, item);
         });
-        this.brickTipCard(node, width, height);
+        if (tips) this.brickTipCard(node, width, height);
         return y + height + 6;
       }
       case 'tags': {
@@ -1707,12 +1712,12 @@ export class StudioApp extends Component {
         const start = y;
         for (const item of block.items) {
           const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
-          const idle = item.key !== 'stability' && item.remaining > 0.0001 && item.days === null;
+          const idle = item.remaining > 0.0001 && item.days === null;
           const slow = item.key === block.bottleneck;
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
           this.text(row, dimension?.name || item.key, 12, 4, width - 150, 18, 13, colors.ink, true);
           this.text(row, item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          const note = item.days === null ? (item.remaining > 0.0001 ? (item.key === 'stability' ? '未安排测试 · 漏掉的缺陷留给玩家' : '无人负责 · 点开分工') : '') : '预计 ' + item.days + ' 天' + (slow && item.key === 'stability' ? ' · 测试最慢' : '');
+          const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : '预计 ' + item.days + ' 天' + (slow && item.key === 'stability' ? ' · 测试最慢' : '');
           this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
           if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
