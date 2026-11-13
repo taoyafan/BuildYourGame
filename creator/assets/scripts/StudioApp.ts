@@ -593,28 +593,40 @@ export class StudioApp extends Component {
   }
 
   // A tap target over a drawn brick; tapping toggles its card. The card belongs to the board it was tapped on.
-  private brickSpot(node: Node, x: number, y: number, size: number, item: any) {
+  // `gap` is the label height under the brick, so the card opens below the label instead of over the icon.
+  private brickSpot(node: Node, x: number, y: number, size: number, item: any, gap = 34) {
     const key = node.name + '|' + (item.module || item.name) + '|' + Math.round(x) + ',' + Math.round(y);
     const spot = this.box(node, 'Spot', x, y, size, size);
     this.clickable(spot, () => {
-      this.brickTip = this.brickTip?.key === key ? null : { key, board: node.name, x, y, size, item };
+      this.brickTip = this.brickTip?.key === key ? null : { key, board: node.name, x, y, size, gap, item };
       this.render();
     });
   }
 
+  // Where the open card sits on a board and how much room it needs below the tapped brick.
+  private tipLayout(boardName: string) {
+    const tip = this.brickTip;
+    if (!tip || tip.board !== boardName) return null;
+    const buttons = [...(tip.item.route ? [{ text: '看组成', route: tip.item.route }] : []), ...(tip.item.actions || [])];
+    const cardH = 72 + Math.ceil(buttons.length / 2) * 32;
+    return { tip, buttons, cardH, bottom: tip.y + tip.size + tip.gap + cardH + 6 };
+  }
+
   // The card for the tapped brick: name, state and a note, plus a way into the next layer and whatever
   // can be done with the module (build the next tier, rebuild, license).
-  private brickTipCard(node: Node, width: number, height: number) {
-    const tip = this.brickTip;
-    if (!tip || tip.board !== node.name || !tip.key.startsWith(node.name + '|')) return;
-    const buttons = [...(tip.item.route ? [{ text: '看组成', route: tip.item.route }] : []), ...(tip.item.actions || [])];
-    const rows = Math.ceil(buttons.length / 2);
+  private brickTipCard(node: Node, width: number, _height: number) {
+    const layout = this.tipLayout(node.name);
+    if (!layout || !layout.tip.key.startsWith(node.name + '|')) return;
+    const { tip, buttons, cardH } = layout;
     const cardW = Math.min(250, width - 8);
-    const cardH = 72 + rows * 32;
     const x = Math.max(4, Math.min(width - cardW - 4, tip.x + tip.size / 2 - cardW / 2));
-    const below = tip.y + tip.size + 4;
-    const y = below + cardH <= height ? below : Math.max(0, tip.y - cardH - 4);
-    const card = this.box(node, 'Tip', x, y, cardW, cardH, colors.night, 10, 235);
+    const y = tip.y + tip.size + tip.gap;
+    const card = this.box(node, 'Tip', x, y, cardW, cardH);
+    // Not part of the page's shared bottom layer: the bricks and the workbench drawn above that layer
+    // would otherwise cover the card's background and leave white text on a light page.
+    (card as any).inBatch = false;
+    new Pen(card.addComponent(Graphics)).rect(0, 0, cardW, cardH, colors.night, 10, 245);
+    card.on(Node.EventType.TOUCH_START, () => undefined);
     this.text(card, tip.item.name, 10, 6, cardW - 20, 20, 13, '#ffffff', true);
     this.text(card, tip.item.detail || '', 10, 26, cardW - 20, 18, 11, '#cfe3d8');
     this.text(card, tip.item.note || '', 10, 44, cardW - 20, 28, 10, '#cfe3d8');
@@ -1621,7 +1633,7 @@ export class StudioApp extends Component {
         const size = 50;
         const columns = Math.max(1, Math.min(4, Math.floor((width + 12) / (size + 26))));
         const rows = Math.max(1, Math.ceil(block.children.length / columns));
-        const height = Math.max(top + 34 + rows * (size + 22), this.brickTip?.board === 'Compose' ? 230 : 0);
+        const height = Math.max(top + 34 + rows * (size + 22), this.tipLayout('Compose')?.bottom || 0);
         const { node, pen } = this.canvasNode(parent, 'Compose', 0, y, width, height);
         pen.rect(0, 0, width, height, '#f1e7d6', 10);
         pen.rect(0, top + 18, width, height - top - 18, '#dcc6a3', 10);
@@ -1632,11 +1644,18 @@ export class StudioApp extends Component {
         for (const spot of spots) pen.line(width / 2, 8 + rootSize, spot.x + size / 2, spot.y + 2, '#b48a5a', 1.5);
         const color = (item: any) => core.AXES[item.axis]?.color || colors.green;
         drawBrick(pen, (width - rootSize) / 2, 6, rootSize, color(block.root), block.root.glyph || 'star', block.root.level || 1, block.root.status, block.root.oneOff);
-        this.brickSpot(node, (width - rootSize) / 2, 6, rootSize, block.root);
+        this.brickSpot(node, (width - rootSize) / 2, 6, rootSize, block.root, 6);
         block.children.forEach((child: any, index: number) => {
           drawBrick(pen, spots[index].x, spots[index].y, size, color(child), child.glyph, child.level || 1, child.status, child.oneOff);
-          this.brickSpot(node, spots[index].x, spots[index].y, size, child);
+          this.brickSpot(node, spots[index].x, spots[index].y, size, child, 24);
+          // A light plate under each name keeps it readable on the wooden table.
+          pen.rect(spots[index].x - (pitch - size) / 2 + 4, spots[index].y + size + 2, pitch - 8, 18, '#fffaf0', 6, 235);
+          this.text(node, child.name, spots[index].x - (pitch - size) / 2 + 4, spots[index].y + size + 2, pitch - 8, 18, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
         });
+        const rootLeft = (width + rootSize) / 2 + 8;
+        const rootWidth = Math.max(40, width - rootLeft - 4);
+        pen.rect(rootLeft, 6 + rootSize / 2 - 11, rootWidth, 22, '#fffaf0', 6, 235);
+        this.text(node, block.root.name, rootLeft + 4, 6 + rootSize / 2 - 10, rootWidth - 8, 20, 12, colors.ink, true);
         this.brickTipCard(node, width, height);
         return y + height + 8;
       }
@@ -1647,7 +1666,7 @@ export class StudioApp extends Component {
         const pitch = width / columns;
         const rows = Math.max(1, Math.ceil(block.items.length / columns));
         const tips = block.items.some((item: any) => !item.open);
-        const height = Math.max(rows * (size + 40), tips && this.brickTip?.board === 'Bricks' ? 190 : 0);
+        const height = Math.max(rows * (size + 40), tips ? this.tipLayout('Bricks')?.bottom || 0 : 0);
         const { node, pen } = this.canvasNode(parent, 'Bricks', 0, y, width, height);
         block.items.forEach((item: any, index: number) => {
           const x = pitch * (index % columns) + (pitch - size) / 2;
