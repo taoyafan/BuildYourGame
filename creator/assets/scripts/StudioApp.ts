@@ -775,7 +775,7 @@ export class StudioApp extends Component {
     // outrun the interface and left no time to read what was happening.
     const SPEEDS = [1, 4];
     const controlsLeft = controlsRight - (SPEEDS.length + 1) * 40;
-    const companyName = state.company || '日光工作室';
+    const companyName = state.company || '造游工坊';
     this.text(this.stage, companyName, 20, top, controlsLeft - 32, 24, 17, colors.ink, true);
     this.text(this.stage, core.dateText(state.day), 20, top + 24, controlsLeft - 32, 18, 11, this.playing ? colors.green : colors.muted);
     this.button(this.stage, '', controlsLeft, top + 2, 40, 40, () => this.dispatch('clock'), true, false, this.playing ? 'Pause' : 'Play', 'clock');

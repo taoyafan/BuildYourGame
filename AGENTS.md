@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-「日光工作室」——持续经营类工作室模拟游戏。唯一的正式版本是 [creator/](creator/README.md) 下的 **Cocos Creator 3.8.8** 手机竖屏工程，同一套逻辑分别构建 H5、微信小游戏、抖音小游戏。
+「造游工坊」——持续经营类工作室模拟游戏。唯一的正式版本是 [creator/](creator/README.md) 下的 **Cocos Creator 3.8.8** 手机竖屏工程，同一套逻辑分别构建 H5、微信小游戏、抖音小游戏。
 
 - 经营规则：[creator/assets/scripts/core/Studio.ts](creator/assets/scripts/core/Studio.ts)（不依赖引擎，可在 Node 中模拟）
 - 内容数据：[creator/assets/scripts/core/Content.ts](creator/assets/scripts/core/Content.ts)

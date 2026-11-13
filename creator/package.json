@@ -6,6 +6,7 @@
     "prepare:assets": "node tools/prepare.cjs",
     "build:web": "node tools/build.cjs web-mobile",
     "build:wechat": "node tools/build.cjs wechatgame",
+    "build:tap": "node tools/build.cjs taptap",
     "build:douyin": "node tools/build.cjs bytedance-mini-game"
   },
   "devDependencies": {
