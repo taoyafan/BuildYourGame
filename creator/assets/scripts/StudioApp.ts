@@ -2,7 +2,7 @@ import {
   _decorator, Component, Node, Canvas, Camera, Color, Layers, UITransform, Label,
   view, screen, ResolutionPolicy, Graphics, Sprite, SpriteFrame, resources, ScrollView,
   Mask, EditBox, Button, HorizontalTextAlignment, VerticalTextAlignment, Texture2D,
-  game as engineGame, Game, tween, UIOpacity, Vec2, Vec3, BlockInputEvents, AudioClip, AudioSource, EventTouch
+  game as engineGame, Game, tween, Tween, UIOpacity, Vec2, Vec3, BlockInputEvents, AudioClip, AudioSource, EventTouch
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
@@ -100,6 +100,7 @@ export class StudioApp extends Component {
   private overScreenShown = false;
   private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
+  private scatterPick = '';
   private officePage = 0;
   private officeSwiped = false;
   private brickTip: any = null;
@@ -1404,14 +1405,17 @@ export class StudioApp extends Component {
         });
       });
       cursor += Math.max(1, Math.ceil(options.length / 3)) * 92 + 4;
-      // A line the company does not have can be rented instead of built: no work, capped quality, and a
-      // share of every receipt for good. It never joins the library.
-      for (const key of chosen.filter(line => core.lineInfo(state, line).level < core.tierFor(line, this.draft.scale || 0))) {
-        const renting = rent.includes(key);
-        this.button(body, (renting ? '改为自己做：' : '租用：') + core.MODULES[key].name + (renting ? '' : '（质量 ' + core.RENT_QUALITY + '，分走收入 ' + Math.round(core.RENT_SHARE * 100) + '%）'), 0, cursor, inner, 38, () => {
-          this.draft.rent = renting ? rent.filter(line => line !== key) : [...rent, key];
+      // A line the company does not have can be rented instead of built: no work, capped quality, paid
+      // once now. Gameplay never; the first title one line, later titles two. It never joins the library.
+      const renting = new Set(core.planModules(state, this.draft).filter((item: any) => item.rented).map((item: any) => item.line));
+      for (const key of chosen.filter(line => core.rentable(line) && core.lineInfo(state, line).level < core.tierFor(line, this.draft.scale || 0))) {
+        const on = rent.includes(key);
+        const full = !on && renting.size >= core.rentLimit(state);
+        const price = core.rentPrice(key, this.draft.scale || 0);
+        this.button(body, (on ? '改为自己做：' : '租用：') + core.MODULES[key].name + (on ? '' : full ? '（' + (core.releases(state) ? '每作' : '首作') + '最多租 ' + core.rentLimit(state) + ' 个）' : '（质量 ' + core.RENT_QUALITY + '，' + content.money(price.price) + '）'), 0, cursor, inner, 38, () => {
+          this.draft.rent = on ? rent.filter(line => line !== key) : [...rent, key];
           this.render();
-        }, renting);
+        }, on, full);
         cursor += 44;
       }
     }
@@ -1749,6 +1753,7 @@ export class StudioApp extends Component {
         return y;
       case 'cover': return y + this.cover(parent, y, block.book) + 14;
       case 'chart': return y + this.chart(parent, y, block.book) + 14;
+      case 'scatter': return y + this.scatter(parent, y, block) + 10;
       case 'quotes':
         for (const quote of block.items) {
           const node = this.box(parent, 'Quote', 0, y, width, 40);
@@ -1897,6 +1902,75 @@ export class StudioApp extends Component {
     return 150;
   }
 
+  // The market page: reception across, first-week sales up, one point per title; tapping one names it.
+  private scatter(parent: Node, y: number, block: any) {
+    const width = this.width - 40;
+    const origin = y;
+    let x = 0;
+    for (const item of block.legend) {
+      const cell = Math.max(64, item.text.length * 14 + 34);
+      if (x + cell > width) { x = 0; y += 36; }
+      const { node, pen } = this.canvasNode(parent, 'Legend', x, y, cell, 30);
+      pen.rect(0, 0, cell, 30, item.active ? colors.soft : colors.paper, 15);
+      pen.frame(0, 0, cell, 30, item.active ? colors.green : colors.line, item.active ? 2 : 1, 15);
+      pen.circle(15, 15, 6, item.color);
+      this.text(node, item.text, 26, 0, cell - 30, 30, 12, colors.ink, item.active);
+      this.clickable(node, () => { this.routes[this.routes.length - 1] = item.route; this.scatterPick = ''; this.render(); });
+      x += cell + 6;
+    }
+    y += block.legend.length ? 40 : 0;
+    const height = 230;
+    const left = 46;
+    const right = width - 10;
+    const top = 10;
+    const bottom = height - 26;
+    const points = block.points || [];
+    const xs = points.map((point: any) => point.x);
+    const low = Math.max(0, Math.floor(Math.min(40, ...xs) / 10) * 10);
+    const high = Math.min(100, Math.ceil(Math.max(70, ...xs) / 10) * 10);
+    const peak = Math.max(10, ...points.map((point: any) => point.y)) * 1.1;
+    const px = (value: number) => left + (right - left) * (value - low) / Math.max(1, high - low);
+    const py = (value: number) => bottom - (bottom - top) * value / peak;
+    const { node, pen } = this.canvasNode(parent, 'Scatter', 0, y, width, height);
+    pen.rect(left, top, right - left, bottom - top, '#fbf8f1', 4);
+    for (const fraction of [0, 0.5, 1]) {
+      const lineY = py(peak / 1.1 * fraction);
+      pen.line(left, lineY, right, lineY, colors.line, 1);
+      this.text(node, content.number(peak / 1.1 * fraction), 0, lineY - 8, left - 6, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    }
+    this.text(node, '口碑 ' + low, left, height - 20, 80, 16, 10, colors.muted);
+    this.text(node, String(high), right - 40, height - 20, 40, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    const ordered = [...points].sort((a: any, b: any) => Number(a.own) - Number(b.own));
+    for (const point of ordered) {
+      const cx = px(point.x);
+      const cy = py(point.y);
+      if (point.own) pen.circle(cx, cy, 9, colors.night);
+      pen.circle(cx, cy, point.own ? 7 : 5, point.color, point.own ? 255 : 220);
+      if (point.id === this.scatterPick) pen.frame(cx - 10, cy - 10, 20, 20, colors.ink, 2, 10);
+    }
+    let touchStart: Vec2 | null = null;
+    node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { touchStart = event.getUILocation().clone(); });
+    node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+      const location = event.getUILocation();
+      if (!touchStart || Math.hypot(location.x - touchStart.x, location.y - touchStart.y) > 12) return;
+      const local = node.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(location.x, location.y, 0));
+      let best: any = null;
+      let distance = 18;
+      for (const point of points) {
+        const gap = Math.hypot(px(point.x) - local.x, py(point.y) + local.y);
+        if (gap < distance) { distance = gap; best = point; }
+      }
+      this.scatterPick = best ? best.id : '';
+      this.render();
+    });
+    node.on(Node.EventType.TOUCH_CANCEL, () => { touchStart = null; });
+    y += height + 6;
+    if (block.few) y += this.paragraph(parent, '样本太少，看不出什么。', y, true, 0, width, 12);
+    const picked = points.find((point: any) => point.id === this.scatterPick);
+    if (picked) y += this.paragraph(parent, picked.name + ' · ' + picked.studio + '\n口碑 ' + Math.round(picked.x) + ' · 首周 ' + content.number(picked.y) + ' 份' + (picked.tags.length ? ' · ' + picked.tags.join('、') : ''), y, false, 0, width, 13);
+    return y - origin;
+  }
+
   private chart(parent: Node, y: number, book: any) {
     const width = this.width - 40;
     const origin = y;
@@ -2032,12 +2106,39 @@ export class StudioApp extends Component {
     }
   }
 
-  // Non-blocking banner for milestones; does not pause the game.
+  // Non-blocking banner for milestones; does not pause the game. Something learned arrives as a short
+  // chat bubble instead: who said it, a brick, two sentences; a tap skips it.
   private celebrate() {
     if (this.celebrating || !this.celebrations.length || this.routes.length) return;
     const item = this.celebrations.shift();
     this.celebrating = true;
     const width = this.width - 40;
+    if (item.kind === 'unlock') {
+      const module = item.line ? core.MODULES[item.line] : null;
+      const color = core.AXES[module ? module.axis : item.axis]?.color || colors.green;
+      const bubble = this.box(this.effects, 'Bubble', 20, this.top + 98, width, 40, colors.paper, 14, 250);
+      const textHeight = this.paragraph(bubble, item.text, 34, false, 64, width - 78, 13);
+      const height = Math.max(70, textHeight + 44);
+      bubble.getComponent(UITransform).setContentSize(width, height);
+      const { pen } = this.canvasNode(bubble, 'Face', 10, 10, 44, 44);
+      drawBrick(pen, 0, 0, 44, color, module ? module.glyph : 'star', 1, 'have');
+      new Pen(this.box(bubble, 'Rim', 0, 0, width, height).addComponent(Graphics)).frame(0, 0, width, height, color, 2, 14);
+      this.text(bubble, item.title, 64, 8, width - 78, 22, 14, colors.ink, true);
+      const opacity = bubble.addComponent(UIOpacity);
+      opacity.opacity = 0;
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        Tween.stopAllByTarget(opacity);
+        bubble.destroy();
+        this.celebrating = false;
+        this.celebrate();
+      };
+      this.clickable(bubble, close);
+      tween(opacity).to(0.2, { opacity: 255 }).delay(4).to(0.3, { opacity: 0 }).call(close).start();
+      return;
+    }
     const big = ['breakeven', 'office', 'record', 'warning'].includes(item.kind);
     const banner = this.box(this.effects, 'Banner', 20, this.top + 98, width, 70, item.kind === 'warning' ? colors.danger : big ? colors.amber : colors.night, 14, 240);
     this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins', warning: 'Award' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
@@ -2349,7 +2450,7 @@ export class StudioApp extends Component {
           break;
         }
         case 'patch-start': {
-          const next = core.startPatch(this.state, data.id, data.rework || null);
+          const next = core.startPatch(this.state, data.id, data.rework || null, !!data.sync);
           this.watching = data.id;
           this.routes = [{ menu: 'project', id: data.id }, { menu: 'assign', id: data.id }];
           this.apply(next, '补丁已开工，请安排人手。');
@@ -2391,6 +2492,15 @@ export class StudioApp extends Component {
           break;
         }
         case 'license': this.apply(core.setLicense(this.state, data.line, !!data.on), data.on ? '已授权，每月底收授权费。' : '已收回授权。'); break;
+        case 'raise': this.apply(core.raiseWage(this.state, data.id)); this.closeMenu(); this.celebrate(); break;
+        case 'take-job': {
+          const next = core.takeJob(this.state, data.id);
+          const project = next.projects[next.projects.length - 1];
+          this.watching = project.id;
+          this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];
+          this.apply(next, '委托已接下，请安排人手。');
+          break;
+        }
         case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
         case 'test': this.apply(core.testDemo(this.state, data.id)); break;
         case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;

@@ -98,7 +98,7 @@ function star(pen: Pen, cx: number, cy: number, r: number, hex: string) {
 }
 
 export function drawRoom(pen: Pen, w: number, h: number, office: number, record: { cups: number; books: number; stars: number; starColor: string } = { cups: 0, books: 0, stars: 1, starColor: '#2f7d63' }) {
-  const formal = office >= 1;
+  const formal = office >= 2;
   const props = roomProps(w, h, office);
   pen.rect(0, 0, w, h, formal ? '#e6eee9' : '#f1e7d6', 8);
   const floor = props.floor;

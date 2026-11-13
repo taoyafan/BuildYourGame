@@ -7,7 +7,8 @@
 // how high the line goes. `needs` are lines on the same axis it is built on; `requires` are lines on
 // another axis a title must also use (a hard technical requirement, shown greyed out when missing).
 // `content` (gameplay only) is the title's own work that is never kept: its levels, script, portraits.
-// `unlock` is how many released titles the line waits for.
+// `unlock` marks a line that starts locked and is learned during play (an unlock moment while making a
+// game); lower numbers come first. Lines without it are the defaults every studio starts with.
 
 // The four axes match the trades and the scores: design is creativity and depth, tech is fluidity, art is
 // the picture and audio the sound. They decide the colour of a brick and the library page.
@@ -30,7 +31,7 @@ export const MODULES: any = {
   // Tech is what code builds: the engine every title runs on, and the platform it ships to.
   engine2d: { name: '2D 引擎', axis: 'tech', shelf: '引擎', glyph: 'gear', slot: 'engine', work: { fluidity: 10 }, tags: [], desc: '画面、输入与关卡的底层，每一作都跑在它上面。' },
   pc: { name: 'PC 适配', axis: 'tech', shelf: '平台适配', glyph: 'screen', slot: 'platform', tiers: 1, work: { fluidity: 4 }, tags: ['PC'], desc: '键鼠操作、分辨率与性能适配。' },
-  mobile: { name: '手机适配', axis: 'tech', shelf: '平台适配', glyph: 'phone', slot: 'platform', tiers: 1, work: { fluidity: 4 }, tags: ['手机'], desc: '触屏操作、竖横屏与耗电适配。' },
+  mobile: { name: '手机适配', axis: 'tech', shelf: '平台适配', glyph: 'phone', slot: 'platform', tiers: 1, unlock: 1, work: { fluidity: 4 }, tags: ['手机'], desc: '触屏操作、竖横屏与耗电适配。' },
 
   pixelCharacters: { name: '像素人物素材库', axis: 'art', shelf: '人物素材库', style: '像素', glyph: 'person', slot: 'art', work: { picture: 10 }, tags: ['像素'], desc: '像素角色、动作帧与表情。' },
   handCharacters: { name: '手绘人物素材库', axis: 'art', shelf: '人物素材库', style: '手绘', glyph: 'person', slot: 'art', unlock: 1, work: { picture: 12 }, tags: ['手绘'], desc: '手绘角色立绘与动作。' },
@@ -38,8 +39,8 @@ export const MODULES: any = {
   handScenes: { name: '手绘场景素材库', axis: 'art', shelf: '场景素材库', style: '手绘', glyph: 'mountain', slot: 'art', unlock: 1, work: { picture: 10 }, tags: ['手绘'], desc: '手绘背景与场景插画。' },
 
   retroMusic: { name: '复古配乐库', axis: 'audio', shelf: '配乐库', style: '复古', glyph: 'note', slot: 'audio', work: { sound: 6 }, tags: ['复古'], desc: '芯片音色与短循环曲。' },
-  lyricalMusic: { name: '抒情配乐库', axis: 'audio', shelf: '配乐库', style: '抒情', glyph: 'note', slot: 'audio', work: { sound: 8 }, tags: ['抒情'], desc: '钢琴与弦乐的情绪曲。' },
-  sfxLibrary: { name: '通用音效库', axis: 'audio', shelf: '音效库', style: '通用', glyph: 'speaker', slot: 'audio', work: { sound: 4 }, tags: [], desc: '按键、脚步、打击等常用音效。' }
+  lyricalMusic: { name: '抒情配乐库', axis: 'audio', shelf: '配乐库', style: '抒情', glyph: 'note', slot: 'audio', unlock: 1, work: { sound: 8 }, tags: ['抒情'], desc: '钢琴与弦乐的情绪曲。' },
+  sfxLibrary: { name: '通用音效库', axis: 'audio', shelf: '音效库', style: '通用', glyph: 'speaker', slot: 'audio', unlock: 2, work: { sound: 4 }, tags: [], desc: '按键、脚步、打击等常用音效。' }
 };
 
 // The slots of a title, in the order the form shows them. `min`/`max` bound how many lines a slot takes;
@@ -55,9 +56,9 @@ export const SLOTS: any[] = [
 // Origins: what the founder is good at, and the one-off job that opens the game. The job builds a real
 // module of the founder's trade, which the first title then uses.
 export const ORIGINS: any = {
-  code: { name: '程序', focus: '让游戏跑得顺、手感好。', starter: 'engine2d', firstCore: 'actionCombat', job: '一家小公司需要一个能用的 2D 引擎', pay: 6 },
-  design: { name: '策划', focus: '想出好玩的点子和规则。', starter: 'branchingStory', firstCore: 'branchingStory', job: '一个团队需要一套分支叙事的结构设计', pay: 6 },
-  art: { name: '美术', focus: '让游戏好看、有自己的风格。', starter: 'pixelCharacters', firstCore: 'branchingStory', job: '一个独立游戏需要一套像素人物素材', pay: 6 }
+  code: { name: '程序', focus: '让游戏跑得顺、手感好。', starter: 'engine2d', firstCore: 'actionCombat', job: '一家小公司需要一个能用的 2D 引擎', pay: 4 },
+  design: { name: '策划', focus: '想出好玩的点子和规则。', starter: 'branchingStory', firstCore: 'branchingStory', job: '一个团队需要一套分支叙事的结构设计', pay: 4 },
+  art: { name: '美术', focus: '让游戏好看、有自己的风格。', starter: 'pixelCharacters', firstCore: 'branchingStory', job: '一个独立游戏需要一套像素人物素材', pay: 4 }
 };
 
 // Checked once at load: a broken catalog must fail loudly, not as a strange score in the middle of a run.
