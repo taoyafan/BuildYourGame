@@ -283,7 +283,11 @@ function newProjectMenu(state: any) {  return {
 
 function projectMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
-  if (!project) return { title: '项目', blocks: [{ type: 'actions', items: [{ text: '新作立项', detail: '选类型与体量，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' } }, ...jobAction(state)] }] };
+  // With no running title the page is a choice, not a form: take a commission or start a title.
+  if (!project) return { title: '项目', blocks: [{ type: 'actions', items: [
+    ...jobAction(state),
+    { text: '新项目', detail: '选类型与体量，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+  ] }] };
   if (project.released) return patchProjectMenu(state, project);
   if (project.kind === 'module') {
     const lines = project.rebuild ? [core.partOf(project.rebuild).line] : project.only || [];
@@ -574,7 +578,7 @@ function testReport(state: any, project: any) {
     { type: 'stats', tone: 'plain', items: [['已知待修', known + ' 项'], ['累计试玩', (project.testCount || 0) + ' 人次'], ['试玩轮数', (project.tests || 0) + ' 轮']] }
   ];
   if (!project.test) {
-    blocks.push({ type: 'text', text: '试玩玩家给出体验评价，并会碰到一部分测试漏掉的缺陷；这些缺陷修好后稳定就会提高。' });
+    blocks.push({ type: 'text', text: '试玩能碰到测试漏掉的缺陷。' });
     return blocks;
   }
   blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · ' + core.dateText(project.test.day) + ' · 新发现 ' + project.test.found + ' 项缺陷' });
@@ -588,10 +592,8 @@ function testReport(state: any, project: any) {
     const base = '（' + core.dateText(previous.day) + ' ' + previous.score.toFixed(1) + ' 分）';
     blocks.push({ type: 'text', text: Math.abs(delta) < 0.05 ? '与上次' + base + '持平。' : '比上次' + base + (delta > 0 ? '高 ' : '低 ') + Math.abs(delta).toFixed(1) + ' 分。' });
   }
-  blocks.push({ type: 'note', icon: 'Target', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) });
   blocks.push({ type: 'section', title: '逐项评价' });
   blocks.push({ type: 'feedback', items: project.test.findings });
-  blocks.push({ type: 'text', text: '评分对应试玩时的版本。改进后再试玩，才能看到玩家是否认可。', muted: true });
   if (history.length > 1) {
     blocks.push({ type: 'section', title: '试玩历史' });
     blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => [core.dateText(entry.day) + ' · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
@@ -654,7 +656,7 @@ function testingMenu(state: any, id?: string) {
   blocks.push({ type: 'buttons', anchor: 'tests', items: [
     { text: '试玩一轮 · ' + offer.players + ' 人 · ' + money(offer.cost), action: 'test', data: { id: project.id }, disabled: !offer.available, anchor: 'test-30' }
   ] });
-  blocks.push({ type: 'text', text: offer.available ? '每轮补上一部分测试没覆盖到的地方，覆盖率越高，这一轮能碰到的新缺陷越少。可以多试几轮。' : offer.reason || '先处理当前决策。', muted: true });
+  blocks.push({ type: 'text', text: offer.available ? '可以多试几轮。' : offer.reason || '先处理当前决策。', muted: true });
   return { title: '试玩', blocks };
 }
 
@@ -1019,14 +1021,16 @@ function brickOf(state: any, line: string, extra: any = {}) {
     : info.next > 0 ? '做了 ' + Math.round(info.next * 100) + '%' : '还没有';
   return {
     module: line, name: module.name, axis: module.axis, glyph: module.glyph,
-    level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : info.next > 0 ? 'partial' : 'missing',
-    detail, note: module.desc, route: { menu: 'compose', id: 'module:' + line }, actions: locked ? [] : lineActions(state, line, info), ...extra
+    level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : 'missing',
+    detail, note: module.desc, route: { menu: 'compose', id: 'module:' + line }, actions: [], ...extra
   };
 }
 
 // What the player can do with a line from its card: build the next tier ahead of any title, rebuild the
-// top tier to replace weak work, or license it to other studios.
+// top tier to replace weak work, or license it to other studios. A line never built yet only offers its
+// first tier — there is nothing to rebuild or to license.
 function lineActions(state: any, line: string, info: any) {
+  if (!core.moduleOpen(state, line)) return [];
   const out: any[] = [];
   const next = info.level + 1;
   if (next <= info.top && core.scaleOpen(state, next - 1)) out.push({ text: '研发' + (info.top > 1 ? ' ' + next + ' 档' : ''), action: 'module-build', data: { line, level: next } });
@@ -1035,34 +1039,41 @@ function lineActions(state: any, line: string, info: any) {
   return out;
 }
 
+// Only the library and the compose view let a module be changed; every other brick is read-only.
+const editableBrick = (state: any, line: string, extra: any = {}) => brickOf(state, line, { actions: lineActions(state, line, core.lineInfo(state, line)), ...extra });
+
 // The module library, one page per axis. Lines on a shelf (character libraries, engines) share one card;
 // tapping it opens the shelf right underneath.
 function libraryMenu(state: any, id?: string) {
   const [tab, shelf] = String(id || 'design').split(':');
   const axis = core.AXES[tab] ? tab : 'design';
   const tabs = { type: 'tabs', items: Object.keys(core.AXES).map(key => ({ text: core.AXES[key].name, route: { menu: 'library', id: key }, active: key === axis })) };
-  const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].axis === axis);
+  // Only learned lines appear here: a locked line is not a choice yet, so showing it as a grey brick
+  // would be indistinguishable from a learned line that simply has not been built.
+  const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].axis === axis && core.moduleOpen(state, line));
+  // Art shelves split by style, so pixel and hand-drawn libraries never share one card or one colour.
+  const shelfName = (line: string) => { const module = core.MODULES[line]; return module.shelf ? module.shelf + (module.style ? ' · ' + module.style : '') : ''; };
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs];
   const shelves: string[] = [];
-  for (const line of lines) if (core.MODULES[line].shelf && !shelves.includes(core.MODULES[line].shelf)) shelves.push(core.MODULES[line].shelf);
+  for (const line of lines) { const name = shelfName(line); if (name && !shelves.includes(name)) shelves.push(name); }
   if (!shelves.length) {
-    blocks.push({ type: 'bricks', items: [...lines].sort(byLevel).map(line => brickOf(state, line)) });
+    blocks.push({ type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) });
   } else {
     const items = shelves.map(name => {
-      const members = lines.filter(line => core.MODULES[line].shelf === name).sort(byLevel);
+      const members = lines.filter(line => shelfName(line) === name).sort(byLevel);
       const have = members.filter(line => core.lineInfo(state, line).level);
-      return { ...brickOf(state, members[0]), name: (name === shelf ? '▾ ' : '') + name, detail: have.length ? have.map(line => (core.MODULES[line].style || core.MODULES[line].name) + ' ' + core.lineInfo(state, line).level + ' 档').join(' · ') : '还没有', open: name === shelf ? axis : axis + ':' + name };
+      return { ...brickOf(state, members[0], { actions: [] }), name: (name === shelf ? '▾ ' : '') + name, detail: have.length ? have.map(line => core.MODULES[line].name + ' ' + core.lineInfo(state, line).level + ' 档').join(' · ') : '还没有', open: name === shelf ? axis : axis + ':' + name };
     });
     blocks.push({ type: 'bricks', items });
     // The tapped shelf opens right under the shelves, so the page never seems to stay the same.
     if (shelf && shelves.includes(shelf)) {
-      const members = lines.filter(line => core.MODULES[line].shelf === shelf).sort(byLevel);
-      blocks.push({ type: 'section', title: shelf }, { type: 'bricks', items: members.map(line => brickOf(state, line)) });
+      const members = lines.filter(line => shelfName(line) === shelf).sort(byLevel);
+      blocks.push({ type: 'section', title: shelf }, { type: 'bricks', items: members.map(line => editableBrick(state, line)) });
     } else blocks.push({ type: 'text', text: '点一个货架，在下方展开里面的模块。', muted: true });
   }
-  blocks.push({ type: 'text', text: '点模块可以单独研发下一档或重做' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
+  blocks.push({ type: 'text', text: '灰色是还没做，上色是已经做好；点模块可以研发下一档或重做' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
   return { title: '模块库', blocks };
 }
 
@@ -1090,8 +1101,8 @@ function composeMenu(state: any, id = '') {
   }
   const module = core.MODULES[line];
   if (!module) return { title: '合成图', blocks: [{ type: 'text', text: '没有找到这个模块。' }] };
-  const root = project ? inProject(line, { route: null }) : brickOf(state, line, { route: null });
-  const children = (module.needs || []).map((key: string) => project ? inProject(key) : brickOf(state, key));
+  const root = project ? inProject(line, { route: null }) : editableBrick(state, line, { route: null });
+  const children = (module.needs || []).map((key: string) => project ? inProject(key) : editableBrick(state, key));
   const blocks: any[] = [{ type: 'compose', root, children }];
   if (!children.length) blocks.push({ type: 'text', text: '这是最底层的模块；高一档是在它上面再做一层。', muted: true });
   const info = core.lineInfo(state, line);
@@ -1381,7 +1392,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
     if (state.event) return null;
     const steps: Array<() => GuideStep | null> = [
       () => state.staff.some((person: any) => person.stressTags.length) ? once('stressIntro', 'nav-team', '有人挂上了负面标签：「疲惫」拉低产出，「想走」每天可能提离职。先停掉加班，团队页还有别的办法。') : null,
-      () => state.catalog.length ? once('unlockWeb', 'nav-team', '首作发售后解锁：招聘网站、音频与测试岗位，以及中型作品。') : null,
+      () => state.catalog.length ? once('unlockWeb', 'nav-team', '已解锁：招聘网站、音频与测试岗位，以及中型作品。') : null,
       () => state.office === 1 && (state.catalog.length || state.staff.length >= core.seats(state)) ? once('unlockMove', 'nav-finance', '办公室随时可以搬：点「公司」，在办公室一栏能看到搬家费和搬家后的月租。') : null,
       () => state.office >= 2 ? once('unlockOffice', 'nav-team', '搬进正式办公室了：多了「行业推荐」和「猎头」，立项也能选大型作品，做好的模块还能授权给同行。') : null,
       () => state.office >= 4 ? once('unlockHuge', 'nav-team', '搬进写字楼整层了：立项可以选超大型作品，做好回报最大，做砸也亏得最多。') : null
@@ -1432,8 +1443,8 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => project?.job && !seen.jobIntro ? explain('jobIntro', 'track', '你一个人在家里接了第一份委托：' + core.MODULES[project.job.module].name + '。做完有一笔报酬，这块模块也会留在你手里，之后做自己的游戏时直接用上。') : null,
       () => project?.job && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，把委托做完。右边可以切换速度。', tap: 'clock' } : null,
       () => project?.job ? null : !project && !state.catalog.length && !seen.firstGame ? explain('firstGame', 'nav-project', '委托做完了。接下来做自己的第一款游戏：立项时会自动用上你手里的模块，缺的部分要自己做，也可以招人帮忙。') : null,
-      () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '「项目」负责立项、查看进度和发售。点这里为第一款游戏立项。', tap: 'navProject' } : null,
-      () => project?.job ? null : project && !seen.trackIntro ? explain('trackIntro', 'track', '这条进度条显示作品做了多少，团队每天的工作都会推着它往前走。立项是开工；25% 出原型，作品有了雏形，也第一次看得到成绩；55% 完成体验版，能请玩家试玩、做推广，从这时起就能发售；100% 是全部做满，发售不必等到这一步。') : null,
+      () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '点「项目」：可以接委托，也可以点「新项目」为第一款游戏立项。', tap: 'navProject' } : null,
+      () => project?.job ? null : project && !seen.trackIntro ? explain('trackIntro', 'track', '进度条显示作品做了多少：原型能看雏形，体验版能试玩和发售，做满就能正式发售。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !project.job && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
       // A hire is only useful against a short board, so the tip names the trade that covers the
@@ -1445,7 +1456,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => project && seen.assign && hasTeammate && !seen.reassign && !project.released ? { anchor: 'nav-project', text: '新同事到岗了。他默认只做自己最擅长的一项，点「项目」→「调整分工」，可以让他多担几项。', tap: 'navReassign' } : null,
       // The radar only appears once a prototype exists, so its explanation has to wait for that moment
       // too — teaching six axes before they are on screen is a wall of words with nothing to point at.
-      () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '原型出来了，六维评分也解锁：创意、深度、流畅、画面、声音、稳定。实线是现在的分数，虚线是按当前团队的水平能到哪；综合评分是六项按玩家口味加权。', ack: 'dimensions' } : null,
+      () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '实线是现在的分数，虚线是按当前团队做完能到哪。', ack: 'dimensions' } : null,
       // "知道了" notes are optional everywhere, the main screen included: the highlighted control stays
       // live, so acting on it and dismissing the tip are both valid. Only the steps below are forced taps —
       // there, opening the page is the lesson itself.

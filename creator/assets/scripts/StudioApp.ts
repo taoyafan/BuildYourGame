@@ -796,8 +796,8 @@ export class StudioApp extends Component {
     const financesY = top + 52;
     const finance = this.box(this.stage, 'Finance', 20, financesY, inner, 42, colors.paper, 10);
     this.anchors.set('finance', finance);
-    const column = inner / 4;
-    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月收入', content.money(state.ledger.income)], ['本月支出', content.money(content.monthSpent(state))]].map(([name, value], index) => {
+    const column = inner / 3;
+    const cashLabel = [['资金', content.money(state.cash)], ['月开支', content.money(core.monthlyCost(state))], ['本月收入', content.money(state.ledger.income)]].map(([name, value], index) => {
       this.text(finance, name, 10 + column * index, 3, column - 10, 16, 10, colors.muted);
       return this.text(finance, value, 10 + column * index, 18, column - 12, 22, 15, index === 0 ? colors.green : index === 2 ? colors.amber : colors.ink, true);
     })[0];
@@ -809,9 +809,10 @@ export class StudioApp extends Component {
       const node = this.box(this.stage, title, index * cellWidth, navY, cellWidth, 54);
       this.clickable(node, () => {
         if (lock) { this.notify(title + '：' + lock + '。'); return; }
-        const target = menu === 'project' && !core.liveProjects(state).length ? 'new-project' : menu;
+        // "项目" always opens the project page. With no running title it offers 接委托 and 新项目,
+        // so the player chooses instead of being dropped straight into the setup form.
         const id = ['project', 'market'].includes(menu) ? this.watching : undefined;
-        this.openMenu(target, id);
+        this.openMenu(menu, id);
       });
       this.navIcon(node, lock ? 'Lock' : icon, (cellWidth - 22) / 2, 5, 22, lock ? colors.line : colors.green);
       this.text(node, title, 0, 32, cellWidth, 18, 11, lock ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
@@ -885,7 +886,7 @@ export class StudioApp extends Component {
       const tag = this.box(monitor, 'Caption', 4, screen.h - 16, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
       this.text(tag, caption, 5, 0, Math.min(screen.w - 18, caption.length * 10), 14, 9, '#ffffff');
     }
-    this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu(state.catalog.length ? 'finance' : 'new-project'));
+    this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu('project'));
     this.anchors.set('work', monitor);
     // Desks: people on the watched project first, then anyone resting or stressed, then by seniority.
     const working = this.playing && core.liveProjects(state).length > 0;
@@ -1370,7 +1371,7 @@ export class StudioApp extends Component {
         drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, module.glyph, status.need, status.brick);
       });
       const textLeft = 8 + Math.max(1, Math.min(2, chosen.length)) * 34 + 4;
-      this.text(row, slot.name + (fixed ? (this.draft.sequel ? ' · 沿用原作' : ' · 首作由出身决定') : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
+      this.text(row, slot.name + (this.draft.sequel && fixed ? ' · 沿用原作' : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
       this.text(row, summary, textLeft, 26, inner - textLeft - 40, 20, 11, colors.muted);
       if (!fixed) {
         this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
@@ -1384,7 +1385,10 @@ export class StudioApp extends Component {
         const on = chosen.includes(key);
         const module = core.MODULES[key];
         const status = statusOf(key);
-        const blocked = core.lineBlocked(this.draft, key);
+        // An art title keeps one visual style: mixing pixel and hand-drawn libraries is not a choice.
+        const pickedStyle = chosen.map(line => core.MODULES[line].style).find(Boolean) || '';
+        const styleClash = slot.key === 'art' && !!pickedStyle && !!module.style && module.style !== pickedStyle;
+        const blocked = core.lineBlocked(this.draft, key) || (styleClash ? '与已选风格不同' : '');
         const x = (index % 3) * (cell + 8);
         const y = cursor + Math.floor(index / 3) * 92;
         const node = this.box(body, 'Pick', x, y, cell, 84, blocked ? colors.pale : on ? colors.soft : colors.paper, 10);
@@ -2116,10 +2120,15 @@ export class StudioApp extends Component {
     if (item.kind === 'unlock') {
       const module = item.line ? core.MODULES[item.line] : null;
       const color = core.AXES[module ? module.axis : item.axis]?.color || colors.green;
-      const bubble = this.box(this.effects, 'Bubble', 20, this.top + 98, width, 40, colors.paper, 14, 250);
+      // The height is only known after the text has been laid out. Drawing the background at the
+      // original 40px and then resizing the node left its lower half transparent, so the body text
+      // sat on the page instead of on the bubble. Paint the paper at the final height instead.
+      const bubble = this.box(this.effects, 'Bubble', 20, this.top + 98, width, 40);
       const textHeight = this.paragraph(bubble, item.text, 34, false, 64, width - 78, 13);
       const height = Math.max(70, textHeight + 44);
       bubble.getComponent(UITransform).setContentSize(width, height);
+      const paper = this.box(bubble, 'Paper', 0, 0, width, height, colors.paper, 14, 250);
+      paper.setSiblingIndex(0);
       const { pen } = this.canvasNode(bubble, 'Face', 10, 10, 44, 44);
       drawBrick(pen, 0, 0, 44, color, module ? module.glyph : 'star', 1, 'have');
       new Pen(this.box(bubble, 'Rim', 0, 0, width, height).addComponent(Graphics)).frame(0, 0, width, height, color, 2, 14);

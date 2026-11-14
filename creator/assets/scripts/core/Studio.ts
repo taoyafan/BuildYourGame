@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.0';
+export const VERSION = '0.4.1';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -451,7 +451,11 @@ export function lineInfo(state: any, line: string) {
 // Slots and lines open up with released titles, so the first game only shows a few choices.
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
 export const slotOpen = (state: any, slot: any) => !!slot && releases(state) >= (slot.unlock || 0);
-export const moduleOpen = (state: any, line: string) => !!MODULES[line] && (!MODULES[line].unlock || !!(state.unlocked || {})[line]) && slotOpen(state, SLOTS.find(slot => slot.key === MODULES[line].slot));
+export const moduleOpen = (state: any, line: string) => !!MODULES[line]
+  && (!MODULES[line].unlock || !!(state.unlocked || {})[line])
+  && slotOpen(state, SLOTS.find(slot => slot.key === MODULES[line].slot))
+  // The two lines the first title needs start gated and are learned one by one during the opening job.
+  && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line]);
 // A hard technical requirement across axes: the line cannot go into a title that lacks the other line.
 export function lineBlocked(plan: any, line: string) {
   const missing = (MODULES[line]?.requires || []).filter((need: string) => !planLines(plan).includes(need));
@@ -569,6 +573,9 @@ export function planIssue(state: any, plan: any) {
     if (ids.length > slot.max) return `${slot.name}最多选 ${slot.max} 个。`;
   }
   if (first && (plan.slots.core || [])[0] !== first) return '首作的玩法由出身决定。';
+  // A title cannot ship with pixel characters over hand-drawn scenery (or the other way round).
+  const artStyles = (plan.slots?.art || []).map((line: string) => MODULES[line]?.style).filter(Boolean);
+  if (new Set(artStyles).size > 1) return '美术风格要一致。';
   for (const line of planLines(plan)) { const reason = lineBlocked(plan, line); if (reason) return `${MODULES[line].name}${reason}。`; }
   if ((plan.rent || []).some((line: string) => !planLines(plan).includes(line))) return '只能租用这一作用到的模块。';
   if ((plan.rent || []).some((line: string) => !rentable(line))) return '玩法不能租用，它就是作品本身。';
@@ -838,6 +845,27 @@ export function nameCompany(state: any, name: string, founder?: string, look?: a
 
 const FOUNDER_FOCUS: any = { code: 'fluidity', design: 'creativity', art: 'picture' };
 
+// The first title needs two more lines than the opening job leaves behind: its gameplay, its engine
+// and one art library. Those two start gated and are learned one at a time while the first module is
+// being built, at evenly spaced progress points, so the opening wait is never a blank stretch.
+function openingLines(origin: any) {
+  const out: string[] = [];
+  for (const line of [origin.firstCore, 'engine2d', 'pixelCharacters']) {
+    if (line && line !== origin.starter && !out.includes(line) && MODULES[line]) out.push(line);
+  }
+  return out.slice(0, 2);
+}
+
+function learnOpeningLine(state: any, line: string) {
+  if (!line || !MODULES[line] || (state.openingLearned || {})[line]) return;
+  state.openingLearned = { ...(state.openingLearned || {}), [line]: state.day };
+  state.unlocked = { ...(state.unlocked || {}), [line]: state.day };
+  const module = MODULES[line];
+  const slot = SLOTS.find(item => item.key === module.slot);
+  announce(state, { kind: 'unlock', title: '边做边学', text: `解锁${module.name}：立项时${slot?.name || ''}就能选它了。`, line, amount: 0 });
+  studioLog(state, `解锁${module.name}`, '做第一份委托时摸索出来的，首作能用上。');
+}
+
 // The opening job: build the starter module for a client. It pays once and the module stays.
 function startJob(state: any) {
   const origin = ORIGINS[state.founder];
@@ -845,6 +873,13 @@ function startJob(state: any) {
   const module = MODULES[origin.starter];
   const project = blankProject(state, `job-${state.seed}`, { name: `委托：${module.name}`, scale: 0, only: [origin.starter], type: MODULES[origin.firstCore].type }, state.day);
   project.job = { pay: origin.pay, client: origin.job, module: origin.starter, opening: true };
+  const lines = openingLines(origin);
+  const gates: any = {};
+  for (const line of lines) gates[line] = true;
+  state.openingGates = gates;
+  state.openingLearned = {};
+  project.unlockLines = lines;
+  project.unlockAt = lines.map((_, index) => Math.round((index + 1) * 100 / (lines.length + 1)));
   state.projects.push(project);
 }
 
@@ -963,10 +998,15 @@ function finishJob(state: any, project: any) {
     announce(state, { kind: 'settle', title: '委托完成', text: `交付${name}，到账 ${moneyText(pay)}`, amount: pay });
     return;
   }
+  // Whatever the opening job was going to teach and has not yet, it teaches now: the first title
+  // must never start with one of its required lines still gated.
+  while ((project.unlockLines || []).length) learnOpeningLine(state, project.unlockLines.shift());
+  project.unlockAt = [];
   const moved = state.office < 1;
   if (moved) state.office = 1;
   if (moved) studioLog(state, `租下${OFFICES[1].name}`, `${OFFICES[1].seats} 个工位，月租 ${moneyText(OFFICES[1].rent)}。`);
-  state.event = { id: 'job', title: '委托完成', text: `客户收下了${name}，付了 ${moneyText(pay)}。这块模块也留在了你手里：首作会直接用上它，不用再做一遍。${moved ? `用这笔钱租下了${OFFICES[1].name}（${OFFICES[1].seats} 个工位，月租 ${moneyText(OFFICES[1].rent)}），可以招人了。` : ''}`, gained, choices: [{ id: 'continue', title: '开始做自己的游戏', detail: '立项时会自动用上已有的模块。' }] };
+  if (moved) announce(state, { kind: 'office', title: `搬进${OFFICES[1].name}，正式创业啦`, text: `${OFFICES[1].seats} 个工位，可以招人做自己的游戏了。`, amount: 0 });
+  state.event = { id: 'job', title: '委托完成', text: `客户收下了${name}，付了 ${moneyText(pay)}。这块模块也留在了你手里：首作会直接用上它，不用再做一遍。${moved ? `搬进${OFFICES[1].name}，正式创业啦！${OFFICES[1].seats} 个工位，月租 ${moneyText(OFFICES[1].rent)}，可以招人了。` : ''}`, gained, choices: [{ id: 'continue', title: '开始做自己的游戏', detail: '立项时会自动用上已有的模块。' }] };
 }
 
 export function channelOpen(state: any, channel: string) {
@@ -1556,9 +1596,10 @@ export function expectedDimensions(state: any, project: any) {
     if (!hands || remaining <= 0.0001) { out[key] = dimensionScore(work); continue; }
     out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
   }
-  // The stability loop above produced the expected test score; with every found defect fixed,
-  // stability lands on the coverage that test score and the playtests reach.
-  out.stability = round(clamp(out.stability + (project.playCover || 0) * 100, 0, COVERAGE_CAP * 100));
+  // The solid line is projectMetrics' stability; the dashed one has to meet it once the work is done
+  // and every found defect is fixed. Both read the same coverage — deriving it from the test work's
+  // raw score here left the two lines permanently apart.
+  out.stability = round(clamp(coverage(project) * 100, 0, COVERAGE_CAP * 100));
   return out;
 }
 
@@ -2356,9 +2397,15 @@ function produceProject(state: any, project: any) {
       project.followers += Math.round(70 * mult);
     }
     if (project.progress >= 100) project.checkpoints.ready = true;
+  }
+  // A commission can teach things too: the opening job unlocks the first title's remaining lines
+  // one at a time, while ordinary titles (and later jobs) learn random new lines from the lens.
+  if (!project.released && (project.kind === 'game' || project.job)) {
     while ((project.unlockAt || []).length && project.progress >= project.unlockAt[0]) {
       project.unlockAt.shift();
-      learnLine(state, project);
+      const opening = (project.unlockLines || []).shift();
+      if (opening) learnOpeningLine(state, opening);
+      else learnLine(state, project);
     }
   }
 }
@@ -4105,6 +4152,8 @@ export function restoreStudio(saved: any) {
     for (const project of next.projects) if (project.job) project.job.opening = true;
     next.version = 9;
   }
+  // Lines learned during the opening job stay learned across saves.
+  if (next && next.openingLearned) next.unlocked = { ...(next.unlocked || {}), ...next.openingLearned };
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
   if ((next.rulesRevision || 0) < 1) {
     for (const project of next.projects) {
