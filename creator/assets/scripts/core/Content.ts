@@ -1088,38 +1088,21 @@ function lineActions(state: any, line: string, info: any) {
 // Only the library and the compose view let a module be changed; every other brick is read-only.
 const editableBrick = (state: any, line: string, extra: any = {}) => brickOf(state, line, { actions: lineActions(state, line, core.lineInfo(state, line)), ...extra });
 
-// The module library, one page per axis. Lines on a shelf (character libraries, engines) share one card;
-// tapping it opens the shelf right underneath.
+// The module library, one page per axis, one brick per learned line. Grouping shelves into a second
+// menu only produced a card named "人物素材库 · 像素" that opened a single almost identically named
+// brick, so every line is shown directly: the name already says the style, and each card keeps its
+// own colour instead of mixing two styles on one card.
 function libraryMenu(state: any, id?: string) {
-  const [tab, shelf] = String(id || 'design').split(':');
+  const [tab] = String(id || 'design').split(':');
   const axis = core.AXES[tab] ? tab : 'design';
   const tabs = { type: 'tabs', items: Object.keys(core.AXES).map(key => ({ text: core.AXES[key].name, route: { menu: 'library', id: key }, active: key === axis })) };
   // Only learned lines appear here: a locked line is not a choice yet, so showing it as a grey brick
   // would be indistinguishable from a learned line that simply has not been built.
   const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].axis === axis && core.moduleOpen(state, line));
-  // Art shelves split by style, so pixel and hand-drawn libraries never share one card or one colour.
-  const shelfName = (line: string) => { const module = core.MODULES[line]; return module.shelf ? module.shelf + (module.style ? ' · ' + module.style : '') : ''; };
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
-  const blocks: any[] = [tabs];
-  const shelves: string[] = [];
-  for (const line of lines) { const name = shelfName(line); if (name && !shelves.includes(name)) shelves.push(name); }
-  if (!shelves.length) {
-    blocks.push({ type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) });
-  } else {
-    const items = shelves.map(name => {
-      const members = lines.filter(line => shelfName(line) === name).sort(byLevel);
-      const have = members.filter(line => core.lineInfo(state, line).level);
-      return { ...brickOf(state, members[0], { actions: [] }), name: (name === shelf ? '▾ ' : '') + name, detail: have.length ? have.map(line => core.MODULES[line].name + ' ' + core.lineInfo(state, line).level + ' 档').join(' · ') : '还没有', open: name === shelf ? axis : axis + ':' + name };
-    });
-    blocks.push({ type: 'bricks', items });
-    // The tapped shelf opens right under the shelves, so the page never seems to stay the same.
-    if (shelf && shelves.includes(shelf)) {
-      const members = lines.filter(line => shelfName(line) === shelf).sort(byLevel);
-      blocks.push({ type: 'section', title: shelf }, { type: 'bricks', items: members.map(line => editableBrick(state, line)) });
-    } else blocks.push({ type: 'text', text: '点一个货架，在下方展开里面的模块。', muted: true });
-  }
-  blocks.push({ type: 'text', text: '灰色是还没做，上色是已经做好；点模块可以研发下一档或重做' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
+  const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];
+  blocks.push({ type: 'text', text: '灰色是还没做，上色是已经做好；点模块查看，可研发下一档或重做' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
   return { title: '模块库', blocks };
 }
 

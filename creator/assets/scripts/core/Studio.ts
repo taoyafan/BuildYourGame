@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.4';
+export const VERSION = '0.4.5';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -451,11 +451,21 @@ export function lineInfo(state: any, line: string) {
 // Slots and lines open up with released titles, so the first game only shows a few choices.
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
 export const slotOpen = (state: any, slot: any) => !!slot && releases(state) >= (slot.unlock || 0);
+// The first title's gameplay is fixed by the founder, so the other basic gameplay is not a choice yet.
+// Showing it in the library with no unlock ever shown to the player reads as a stray, unusable option;
+// it becomes a proper unlock the moment the first title ships.
+function firstTitleGate(state: any, line: string) {
+  if (releases(state) > 0) return false;
+  const first = ORIGINS[state.founder]?.firstCore;
+  if (!first || MODULES[line]?.slot !== 'core' || line === first) return false;
+  return !(state.unlocked || {})[line];
+}
 export const moduleOpen = (state: any, line: string) => !!MODULES[line]
   && (!MODULES[line].unlock || !!(state.unlocked || {})[line])
   && slotOpen(state, SLOTS.find(slot => slot.key === MODULES[line].slot))
   // The two lines the first title needs start gated and are learned one by one during the opening job.
-  && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line]);
+  && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line])
+  && !firstTitleGate(state, line);
 // A hard technical requirement across axes: the line cannot go into a title that lacks the other line.
 export function lineBlocked(plan: any, line: string) {
   const missing = (MODULES[line]?.requires || []).filter((need: string) => !planLines(plan).includes(need));
@@ -2820,6 +2830,18 @@ export function launchProject(state: any, projectId: string) {
     person.level = (person.level || 0) + 1;
     personNote(next, person, `参与《${project.name}》发售` + (gains.length ? `：${gains.join('、')}` : ''));
     if (gains.length) studioLog(next, `${person.name} 积累经验`, `参与《${project.name}》：${gains.join('、')}。工资在招聘时定下，不随成长上调。`);
+  }
+  // The first title's gameplay was the founder's and nothing else could be picked. Shipping it is the
+  // moment that changes: the other basic gameplay unlocks with an explicit message, so it never just
+  // appears in the library out of nowhere.
+  if (book.tutorial) {
+    const first = ORIGINS[next.founder]?.firstCore;
+    const extra = Object.keys(MODULES).filter(line => MODULES[line].slot === 'core' && !MODULES[line].unlock && line !== first && !(next.unlocked || {})[line]);
+    for (const line of extra) {
+      next.unlocked = { ...(next.unlocked || {}), [line]: next.day };
+      announce(next, { kind: 'unlock', title: '做完第一款游戏', text: `解锁${MODULES[line].name}：从下一作起，玩法可以自由选了。`, line, amount: 0 });
+      studioLog(next, `解锁${MODULES[line].name}`, '做完第一款游戏后摸出的新玩法，下一作可以选。');
+    }
   }
   if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首发售出 ${units} 份`, amount: receipt, book: book.id });
