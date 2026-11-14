@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.3';
+export const VERSION = '0.4.4';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -748,10 +748,12 @@ function shareDefects(state: any) {
 }
 
 // How far a project is, counting only its own work: reused modules shorten it, they never fill it.
+// Testing is one of the six work items, so 100% means all six are done — a title nobody tested stays
+// short of the end of the bar until someone is put on testing.
 function progressOf(project: any) {
   const base = project.base || {};
-  const left = sum(CONTENT_KEYS.map(key => Math.max(0, workOf(project, key).total - Math.max(base[key] || 0, workOf(project, key).done))));
-  const span = sum(CONTENT_KEYS.map(key => Math.max(0, workOf(project, key).total - (base[key] || 0))));
+  const left = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - Math.max(base[key] || 0, workOf(project, key).done))));
+  const span = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - (base[key] || 0))));
   return span <= 0.0001 ? 1 : clamp(1 - left / span, 0, 1);
 }
 
@@ -1550,7 +1552,7 @@ export function projectMetrics(project: any) {
     progress: round(progress * 100),
     dimensions, overall: overallOf(project.type, dimensions),
     defects: open, known, found: project.found, coverage: round(coverage(project) * 100),
-    unfinished: CONTENT_KEYS.filter(key => workOf(project, key).done < workOf(project, key).total - 0.001)
+    unfinished: DIM_KEYS.filter(key => workOf(project, key).done < workOf(project, key).total - 0.001)
   };
 }
 
@@ -1601,10 +1603,9 @@ export function expectedDimensions(state: any, project: any) {
   // The dashed stability line is where today's team would land by finishing the remaining test work
   // and clearing what it finds: the coverage the projected test score reaches, with no open defects.
   // While the game is in production it sits above the solid line — that gap is what more testing and
-  // repairs can still buy. The completion bar only counts the five content dimensions, so reaching
-  // 100% is NOT the same as being done: if testing is still staffed and unfinished, keep projecting.
-  // When the content is done and testing is finished or unstaffed (the player ships without it),
-  // there is nothing left to project and the dashed line meets the solid one exactly.
+  // repairs can still buy. The completion bar counts all six work items, so 100% means testing is
+  // done too: while any work is left there is still something to project. Only a finished, released
+  // or fully tested title has nothing left, and then the dashed line meets the solid one exactly.
   const testWork = workOf(project, 'stability');
   const testLeft = Math.max(0, testWork.total - testWork.done);
   const testingLeft = testLeft > 0.0001 && testHands > 0;
@@ -1652,9 +1653,9 @@ export function dimensionPipeline(state: any, project: any) {
   // Reporting a bottleneck over only five rows while the sixth quietly stretched the schedule by a
   // fortnight was ambiguous: the player saw a date and a label that did not describe the same plan.
   const pending = rows.filter((row: any) => row.remaining > 0.0001);
-  // An unstaffed content dimension blocks the date. An unstaffed test does not: the game can ship
-  // without one, and its row already says "未安排测试 · 漏掉的缺陷留给玩家". Keep those separate.
-  const idle = pending.filter((row: any) => row.key !== 'stability' && row.days === null).map((row: any) => row.key);
+  // Testing counts toward the 100% bar, so an unstaffed test row blocks the date just like any
+  // other unstaffed dimension: the title cannot be finished until someone is put on it.
+  const idle = pending.filter((row: any) => row.days === null).map((row: any) => row.key);
   const scheduled = pending.filter((row: any) => row.days !== null);
   // A bottleneck is a dimension that finishes strictly later than every other one. When the day is
   // split in proportion to what is left, all dimensions land together — that is not a bottleneck,
@@ -1674,10 +1675,10 @@ export function projectForecast(state: any, project: any) {
   if (!project) return null;
   const pipeline = dimensionPipeline(state, project);
   const metrics = visibleMetrics(project);
-  const totalRemaining = CONTENT_KEYS.reduce((total, key) => total + Math.max(0, workOf(project, key).total - workOf(project, key).done), 0);
+  const totalRemaining = DIM_KEYS.reduce((total, key) => total + Math.max(0, workOf(project, key).total - workOf(project, key).done), 0);
   const aggregate = sum(CONTENT_KEYS.map(key => pipeline.rows.find((row: any) => row.key === key)?.rate || 0));
-  // The date covers every staffed row, testing included. An unstaffed test row has no date and is
-  // not a blocker, so it is skipped rather than turning the whole estimate into "unknown".
+  // The date covers every staffed row; any unstaffed unfinished row (testing included) makes the
+  // finish date unknown, because the bar cannot reach 100% until someone works on it.
   const scheduled = pipeline.rows.filter((row: any) => row.days !== null);
   const days = pipeline.idle.length ? null : scheduled.length ? Math.max(0, ...scheduled.map((row: any) => row.days || 0)) : 0;
   const done = progressOf(project);
@@ -2741,7 +2742,7 @@ export function companyArchive(state: any) {
 export function launchChecklist(state: any, project: any) {
   const metrics = visibleMetrics(project);
   return [
-    { label: '计划内容完成', ok: metrics.unfinished.length === 0, required: false, text: metrics.unfinished.length ? `还差 ${metrics.unfinished.length} 维，提前发售评分会偏低` : `完成度 ${metrics.progress.toFixed(0)}%` },
+    { label: '全部做完', ok: metrics.unfinished.length === 0, required: false, text: metrics.unfinished.length ? `还差 ${metrics.unfinished.length} 项，提前发售评分会偏低` : `完成度 ${metrics.progress.toFixed(0)}%` },
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
     { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
     { label: '六维估计', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
@@ -4336,6 +4337,8 @@ export function restoreStudio(saved: any) {
   for (const project of next.projects) {
     delete project.deadline;
     delete project.soundOut;
+    // The bar counts testing now; old saves stored the five-dimension percentage in this field.
+    if (!project.released && project.work && Array.isArray(project.defects)) project.progress = projectMetrics(project).progress;
   }
   if (next.event?.id === 'deadline') next.event = null;
   if (next.rulesRevision < 10) next.rulesRevision = 10;

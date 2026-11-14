@@ -1360,7 +1360,7 @@ export class StudioApp extends Component {
       if (!core.slotOpen(state, slot)) continue;
       const chosen: string[] = this.draft.slots?.[slot.key] || [];
       const fixed = !!this.draft.sequel || (slot.key === 'core' && !!first);
-      const expanded = !fixed && !!open[slot.key];
+      const expanded = !!open[slot.key];
       const color = core.AXES[slot.axis].color;
       const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）').join('、') || '未选';
       const row = this.box(body, 'Slot', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
@@ -1373,18 +1373,14 @@ export class StudioApp extends Component {
       const textLeft = 8 + Math.max(1, Math.min(2, chosen.length)) * 34 + 4;
       this.text(row, slot.name + (this.draft.sequel && fixed ? ' · 沿用原作' : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
       this.text(row, summary, textLeft, 26, inner - textLeft - 40, 20, 11, colors.muted);
-      if (!fixed) {
-        this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
-        this.clickable(row, () => { open[slot.key] = !expanded; this.render(); });
-      } else {
-        // A locked slot still has to say so. Without the label players read the missing 调整 as a
-        // broken button; tapping it explains why this one choice is not theirs to make yet.
-        this.text(row, '固定', inner - 48, 16, 40, 20, 11, colors.muted, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
-        this.clickable(row, () => this.notify(this.draft.sequel ? '续作沿用原作的玩法，不能调整。' : '首作的玩法跟着创始人的出身定，从下一作起就能自由选。'));
-      }
+      this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+      this.clickable(row, () => { open[slot.key] = !expanded; this.render(); });
       cursor += 60;
       if (!expanded) continue;
-      const options = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key && core.moduleOpen(state, key));
+      const unlocked = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key && core.moduleOpen(state, key));
+      // A locked slot still opens like any other; its list just holds the one choice already picked,
+      // so there is nothing to switch to. No grey 固定 label and no explanation popup.
+      const options = fixed ? unlocked.filter(key => chosen.includes(key)) : unlocked;
       const cell = (inner - 16) / 3;
       options.forEach((key: string, index: number) => {
         const on = chosen.includes(key);

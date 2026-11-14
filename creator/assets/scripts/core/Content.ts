@@ -237,7 +237,7 @@ export function planPreview(state: any, draft: any) {
     const price = core.rentPrice(line, draft.scale || 0);
     return '\n' + core.MODULES[line].name + '：这条线累计租了 ' + record.count + ' 次，已付约 ' + money(record.paid) + '，自己做约需 ' + money(price.build);
   }).join('');
-  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines + '\n测试是额外投入：完成度只算五项内容，不安排人也能发售，只是稳定度低。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines + '\n测试也要安排人做，六项都做完才到 100%。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
 // The moment the library grows: the bricks this job or title added or levelled up, and what opened up.
@@ -295,8 +295,7 @@ function projectMenu(state: any, id?: string) {
     const status = project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing';
     const metrics = core.visibleMetrics(project);
     const forecast = core.projectForecast(state, project);
-    const idleRows = forecast.rows.filter((row: any) => row.remaining > 0.0001 && row.days === null);
-    const etaText = idleRows.length ? '还有无人负责的评分项' : forecast.eta === null ? '—' : core.dueText(state, forecast.eta);
+    const etaText = metrics.progress >= 100 ? '已完成' : forecast.eta === null ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
     return {
       title: project.job ? '委托' : '模块项目',
       blocks: [
@@ -306,7 +305,7 @@ function projectMenu(state: any, id?: string) {
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
         { type: 'section', title: '六项评分（点开可看详情并分工）' },
         { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
-        { type: 'note', icon: 'Info', text: '完成度只算五项内容；测试是额外投入，不安排人也能交付，只是稳定度低。' },
+        { type: 'note', icon: 'Info', text: '把六项都做完才算完成，测试也要有人负责。' },
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
           { text: '新项目', detail: '同时也能开自己的作品，人要在两个项目之间分配。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
@@ -320,23 +319,20 @@ function projectMenu(state: any, id?: string) {
   const live = core.liveProjects(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
-  // Testing still in progress counts as work left; testing nobody was assigned to does not block a release.
-  const contentDone = forecast.rows.filter((row: any) => row.key !== 'stability').every((row: any) => row.remaining <= 0.0001);
-  const testing = forecast.rows.some((row: any) => row.key === 'stability' && row.remaining > 0.0001 && row.days !== null);
-  const finished = contentDone && !testing;
-  const idleRows = forecast.rows.filter((row: any) => row.remaining > 0.0001 && row.days === null);
-  const etaText = finished ? '已完成' : idleRows.length ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
+  // Testing is part of the bar: an unstaffed, unfinished test row makes the finish date unknown.
+  const finished = metrics.progress >= 100;
+  const etaText = finished ? '已完成' : forecast.eta === null ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
   const order = core.projectOrder(state);
   const rank = order.findIndex((item: any) => item.id === project.id);
   const demo = project.checkpoints.demo;
   const fix = core.fixForecast(state, project);
   const blocks: any[] = [
-    { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['内容完成度', metrics.progress.toFixed(0) + '%']] },
+    { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
     ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
-    { type: 'note', icon: 'Info', text: '测试是额外投入：完成度只算五项内容，测试没做完也能发售，只是稳定度低。测试做得越满，六维里「稳定」越高。' },
+    { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
@@ -361,7 +357,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'section', title: '发售（不可撤销）' },
     { type: 'actions', items: [
       ...(fix.known || project.fixFirst ? [{ text: project.fixFirst ? '正在先修复缺陷 · 点击恢复做内容' : '先修复缺陷', detail: '待修 ' + fix.known + ' 项' + (fix.days ? '，约 ' + fix.days + ' 天修完' : '') + (fix.unstaffed.length ? '；' + fix.unstaffed.join('、') + '没人修' : '') + '。各项负责人暂停做内容，修完自动恢复。', icon: 'Hammer', action: 'fix-first', data: { id: project.id, on: !project.fixFirst } }] : []),
-      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '内容还没做满，带着短板上市换回款。' : '内容已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '', emphasis: project.progress >= 100 && !defectsByDimension(project) }
+      { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '还没做满，带着短板上市换回款。' : '已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '', emphasis: project.progress >= 100 && !defectsByDimension(project) }
     ] }
   ];
   return { title: '项目', blocks };
@@ -378,7 +374,7 @@ function launchConfirmMenu(state: any, id?: string) {
   const early = metrics.unfinished.length > 0;
   const blocks: any[] = [
     { type: 'note', icon: 'Rocket', text: '《' + project.name + '》发售后立即结算首发成绩，转入作品履历，不能再继续制作、返工或推广。' },
-    { type: 'text', text: early ? '还有 ' + metrics.unfinished.length + ' 维没做满（完成度 ' + metrics.progress.toFixed(0) + '%），提前发售会带着这些短板上架，评分与首发收入都会受影响。' : '内容已做满（完成度 ' + metrics.progress.toFixed(0) + '%）。', muted: true },
+    { type: 'text', text: early ? '还有 ' + metrics.unfinished.length + ' 维没做满（完成度 ' + metrics.progress.toFixed(0) + '%），提前发售会带着这些短板上架，评分与首发收入都会受影响。' : '已做满（完成度 ' + metrics.progress.toFixed(0) + '%）。', muted: true },
     { type: 'buttons', items: [
       { text: '再想想', action: 'launch-cancel' },
       { text: early ? '确认提前发售' : '确认发售', action: 'launch-final', data: { id: project.id }, icon: 'Rocket' }
