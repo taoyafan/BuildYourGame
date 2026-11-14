@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.8';
+export const VERSION = '0.4.9';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1583,6 +1583,14 @@ function stabilityFrom(project: any) {
   return round(clamp(cover * (1 - density) + fixed / room * 100, 0, cover));
 }
 
+// A module has no testing workload of its own, so coverage cannot describe its stability. It is read
+// the same way the library card reads it: every defect still open costs eight points, all fixed is 100.
+// The module project page and the library card have to agree, or the same module shows two scores.
+function stabilityOfModule(project: any) {
+  const open = (project.defects || []).filter((defect: any) => !defect.fixed).length;
+  return round(clamp(100 - open * 8, 0, 100));
+}
+
 function overallOf(type: string, dimensions: any) {
   const weights = TYPES[type].weights;
   return round(DIM_KEYS.reduce((total, key) => total + dimensions[key] * weights[key], 0));
@@ -1593,7 +1601,9 @@ export function projectMetrics(project: any) {
   for (const key of CONTENT_KEYS) dimensions[key] = round(clamp(dimensionScore(workOf(project, key)), 0, 100));
   const open = project.defects.filter((defect: any) => !defect.fixed).length;
   const known = project.defects.filter((defect: any) => defect.found && !defect.fixed).length;
-  dimensions.stability = stabilityFrom(project);
+  // A module carries no test workload of its own, so coverage would pin its stability at zero forever.
+  // It is judged the same way the library card judges it: every defect still open costs eight points.
+  dimensions.stability = project.kind === 'module' ? stabilityOfModule(project) : stabilityFrom(project);
   const progress = progressOf(project);
   return {
     progress: round(progress * 100),
@@ -1607,7 +1617,9 @@ export function projectMetrics(project: any) {
 // exist and surface after launch, when players report them.
 export function visibleMetrics(project: any) {
   const metrics = projectMetrics(project);
-  return { ...metrics, untested: coverage(project) <= 0, defects: metrics.known };
+  // A module has no testing step, so "untested" does not apply to it: its stability is the defects
+  // still open, not a coverage figure that would always read zero.
+  return { ...metrics, untested: project.kind !== 'module' && coverage(project) <= 0, defects: metrics.known };
 }
 
 // Each defect is caught by testing once coverage passes its own roll, so on average testing finds its
@@ -1626,6 +1638,23 @@ function syncFound(project: any) {
 // current score — time cannot buy them, only a stronger hand can.
 export function expectedDimensions(state: any, project: any) {
   const out: any = {};
+  // A module project is not a title: nobody has to be assigned for its work to be judged, because the
+  // module is finished by whoever is best at it. The dashed line is "the same tier finished by the
+  // best hand we have", which is also how the library card reads a half-made module. Without this the
+  // module page reused the title rule (nobody assigned = no projection) and showed no dashed line.
+  if (project.kind === 'module') {
+    for (const key of CONTENT_KEYS) {
+      const work = workOf(project, key);
+      if (work.total <= 0) { out[key] = 0; continue; }
+      const job = WORKS.find(item => item.dimension === key);
+      const best = Math.max(0, ...(state.staff || []).map((person: any) => able(person, job.ability)));
+      const remaining = Math.max(0, work.total - work.done);
+      out[key] = round(clamp((work.value + remaining * best) / work.total, 0, 100));
+    }
+    // No test workload of its own, so the dashed stability is the solid one: fixing every open defect.
+    out.stability = stabilityOfModule(project);
+    return out;
+  }
   let testHands = 0;
   for (const key of DIM_KEYS) {
     const job = WORKS.find(item => item.dimension === key);

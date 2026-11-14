@@ -1864,9 +1864,9 @@ export class StudioApp extends Component {
           const idle = item.remaining > 0.0001 && item.days === null;
           const slow = (block.bottlenecks || []).includes(item.key);
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
-          const crewText = item.remaining > 0
+          const crewText = item.text || (item.remaining > 0
             ? (item.days === null ? '无人负责' : '剩余约 ' + item.days + ' 天')
-            : '已完成';
+            : '已完成');
           this.text(row, dimension?.name || item.key, 12, 4, width - 190, 18, 13, colors.ink, true);
           this.text(row, crewText, width - 170, 4, 158, 18, 11, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
           const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : (slow && item.key === 'stability' ? '测试最慢' : '');

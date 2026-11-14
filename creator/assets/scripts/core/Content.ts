@@ -313,6 +313,9 @@ function projectMenu(state: any, id?: string) {
     const status = project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing';
     const metrics = core.visibleMetrics(project);
     const forecast = core.projectForecast(state, project);
+    // A module has no test work: its stability row is not "done/remaining" but the defect score the
+    // library card also shows, so the row says what the number means instead of "已完成".
+    const rows = forecast.rows.map((row: any) => row.key === 'stability' ? { ...row, text: '按待修缺陷计 ' + Math.round(metrics.dimensions.stability) + ' 分' } : row);
     const etaText = metrics.progress >= 100 ? '已完成' : forecast.eta === null ? '还有无人负责的评分项' : core.dueText(state, forecast.eta);
     return {
       title: project.job ? '委托' : '模块项目',
@@ -322,8 +325,8 @@ function projectMenu(state: any, id?: string) {
         { type: 'lines', items: [['完成度', metrics.progress.toFixed(0) + '%'], ['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
         { type: 'section', title: '六项评分（点开可看详情并分工）' },
-        { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-        { type: 'note', icon: 'Info', text: '把六项都做完才算完成，测试也要有人负责。' },
+        { type: 'dimensions', items: rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
+        { type: 'note', icon: 'Info', text: '五项内容都做完就算完成；模块没有单独的测试工序，稳定分按待修缺陷算。' },
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
           { text: '新项目', detail: '同时也能开自己的作品，人要在两个项目之间分配。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
@@ -567,7 +570,10 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   if (dimKey === 'stability') {
     const found = project.defects.filter((defect: any) => defect.found).length;
     const fixed = project.defects.filter((defect: any) => defect.fixed).length;
-    head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known + (metrics.known ? '（' + defectsByDimension(project) + '）' : '')], ['修复投入', '分摊现有 ' + state.staff.length + ' 人的每日工时']] });
+    // A module has no test workload of its own: its stability is read from open defects, so a coverage
+    // figure here would always be zero and mean nothing.
+    if (project.kind === 'module') head.push({ type: 'lines', items: [['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known + (metrics.known ? '（' + defectsByDimension(project) + '）' : '')]] });
+    else head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known + (metrics.known ? '（' + defectsByDimension(project) + '）' : '')], ['修复投入', '分摊现有 ' + state.staff.length + ' 人的每日工时']] });
   }
   const blocks: any[] = [
     ...head,
@@ -590,7 +596,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
       };
     }),
     { type: 'buttons', items: [{ text: '查看整部作品的分工', action: 'menu', data: { menu: 'assign', id: projectId }, anchor: 'to-assign' }] },
-    { type: 'text', text: dimKey === 'stability' ? '评分按未修缺陷估计：测试覆盖越高，找出的缺陷越多，估计也越准；找出的缺陷由做完自己工作的人自动修复，修好就加分。覆盖不到 10% 时无从估计；没测到的缺陷会在发售后被玩家碰到。' : '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。', muted: true }
+    { type: 'text', text: dimKey !== 'stability' ? '评分 = 完成部分的质量 × 进度。做满后继续返工，优先替换最低能力的成果。' : project.kind === 'module' ? '模块没有单独的测试工序，稳定分只看还没修的缺陷：每项扣 8 分，修完就是满分。' : '评分按未修缺陷估计：测试覆盖越高，找出的缺陷越多，估计也越准；找出的缺陷由做完自己工作的人自动修复，修好就加分。覆盖不到 10% 时无从估计；没测到的缺陷会在发售后被玩家碰到。', muted: true }
   ];
   return { title: dimension.name, blocks };
 }
