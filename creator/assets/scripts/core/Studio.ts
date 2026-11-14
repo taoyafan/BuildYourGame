@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.11';
+export const VERSION = '0.4.12';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1723,11 +1723,7 @@ export function dimensionPipeline(state: any, project: any) {
     const daily = rate[key];
     // A finished dimension is done whether or not anyone is still on it; only unfinished ones can block.
     const days = remaining <= 0.0001 ? 0 : daily > 0.0001 ? Math.ceil(remaining / daily) : null;
-    // The workload estimate is one newcomer's: a work unit is one person-day, so the row is comparable
-    // across dimensions and does not move when the crew is reshuffled. The team's own date lives in
-    // `days`, which only the schedule above the list uses.
-    const solo = remaining <= 0.0001 ? 0 : Math.ceil(remaining);
-    return { key, remaining: round(remaining), rate: round(daily), days, solo };
+    return { key, remaining: round(remaining), rate: round(daily), days };
   });
   // Testing is a real work item with its own person-days, so it competes for the slowest date too.
   // Reporting a bottleneck over only five rows while the sixth quietly stretched the schedule by a
@@ -1736,13 +1732,13 @@ export function dimensionPipeline(state: any, project: any) {
   // Testing counts toward the 100% bar, so an unstaffed test row blocks the date just like any
   // other unstaffed dimension: the title cannot be finished until someone is put on it.
   const idle = pending.filter((row: any) => row.days === null).map((row: any) => row.key);
-  // A bottleneck is a dimension with the most work left. That is a property of the plan, not of who
-  // happens to be assigned today, so it is read off the one-person estimate. A narrow tie of two or
-  // three rows is still a real bottleneck — the player has to cut all of them down — but when every
-  // row lands together the plan is balanced, and naming them all would just mean "nothing stands out".
-  const slowestSolo = pending.length ? Math.max(...pending.map((row: any) => row.solo)) : 0;
-  const slowest = pending.filter((row: any) => row.solo === slowestSolo);
-  const bottlenecks = pending.length > 1 && slowestSolo > 0 && slowest.length <= 3 ? slowest.map((row: any) => row.key) : [];
+  const scheduled = pending.filter((row: any) => row.days !== null);
+  // A bottleneck is a dimension that finishes latest. A narrow tie of two or three rows is still a
+  // real bottleneck — the player has to speed all of them up — but when every row lands together the
+  // day split is balanced, and naming them all would just mean "nothing stands out".
+  const slowestDays = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : 0;
+  const slowest = scheduled.filter((row: any) => row.days === slowestDays);
+  const bottlenecks = scheduled.length > 1 && slowestDays > 0 && slowest.length <= 3 ? slowest.map((row: any) => row.key) : [];
   const bottleneck = bottlenecks.length ? slowest[0] : null;
   return { rows, discover: round(discover), repair: round(repair), bottleneck, bottlenecks, idle, blocked: idle.length > 0 };
 }
