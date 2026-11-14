@@ -230,7 +230,7 @@ export class StudioApp extends Component {
           this.resumeAfterMenu = false;
           this.routes = [{ menu: 'event' }];
         }
-        if (content.guide(this.state, null, true)?.ack) { this.elapsed = 0; break; }
+        if (content.guide(this.state, null, true)) { this.elapsed = 0; break; }
       }
       if (this.state.over) this.playing = false;
       // Daily sales and payroll are summarised at month end instead of floating every day.
@@ -723,7 +723,9 @@ export class StudioApp extends Component {
     if (this.editing && key === this.scrollKey) { this.renderPending = true; return; }
     if (this.editing) this.editing = false;
     this.renderPending = false;
-    if (this.playing && !this.routes.length && !this.state.event && !this.state.over && content.guide(this.state, null, true)?.ack) {
+    // Any tutorial note on the main screen freezes the clock, forced taps included. Pausing only for
+    // "知道了" notes let the days keep running behind tips that asked the player to go and hire someone.
+    if (this.playing && !this.routes.length && !this.state.event && !this.state.over && content.guide(this.state, null, true)) {
       this.guidePaused = true;
       this.playing = false;
       this.elapsed = 0;
@@ -1014,7 +1016,7 @@ export class StudioApp extends Component {
     this.anchors.set('track', track);
     this.box(track, 'Rail', 0, 22, inner, 4, colors.line);
     this.box(track, 'Fill', 0, 22, inner * forecast.share, 4, colors.green);
-    this.text(track, forecast.days === null ? '还没有人做 · 点开安排补丁人手' : forecast.days === 0 ? '即将上线' : '约 ' + forecast.days + ' 天上线 · 剩余 ' + forecast.left.toFixed(1) + ' 人日', 0, 0, inner, 18, 11, forecast.days === null ? colors.amber : colors.green, true);
+    this.text(track, forecast.days === null ? '还没有人做 · 点开安排补丁人手' : forecast.days === 0 ? '即将上线' : '现有 ' + this.state.staff.length + ' 人约 ' + forecast.days + ' 天上线', 0, 0, inner, 18, 11, forecast.days === null ? colors.amber : colors.green, true);
     this.clickable(track, () => this.openMenu('project', project.id));
     y += 46;
     const metrics = core.projectMetrics(project);
@@ -1123,6 +1125,57 @@ export class StudioApp extends Component {
       if (project && !project.released) this.clickable(label.node, () => this.openMenu('dimension', project.id, false, key));
     });
     if (!compact && caption) this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
+    return height;
+  }
+
+  // Six axes of planned work, not score. The shape is the relative workload; each label is how many
+  // days the current crew needs for that dimension. Used before committing to a commission or a title.
+  private workRadar(body: Node, y: number, values: any, title: string) {
+    const inner = this.width - 40;
+    const height = 184;
+    const { node, pen } = this.canvasNode(body, 'WorkRadar', 0, y, inner, height);
+    this.anchors.set('workload', node);
+    const center = { x: inner / 2, y: 82 };
+    const radius = 52;
+    const count = core.DIM_KEYS.length;
+    const crew = this.state.staff.length;
+    const capacity = this.state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > this.state.day ? 0 : person.speed / 100), 0);
+    const daysOf = (value: number) => capacity > 0.0001 && value > 0 ? Math.max(1, Math.ceil(value / capacity)) : 0;
+    const max = Math.max(1, ...core.DIM_KEYS.map((key: string) => Number(values?.[key]) || 0));
+    const point = (index: number, ratio: number) => {
+      const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
+      return { x: center.x + Math.cos(angle) * radius * ratio, y: center.y + Math.sin(angle) * radius * ratio };
+    };
+    for (const ring of [0.25, 0.5, 0.75, 1]) {
+      const points = core.DIM_KEYS.map((_key: string, index: number) => point(index, ring));
+      for (let index = 0; index < count; index += 1) {
+        const next = points[(index + 1) % count];
+        pen.line(points[index].x, points[index].y, next.x, next.y, ring === 1 ? colors.line : colors.pale, 1);
+      }
+    }
+    core.DIM_KEYS.forEach((_key: string, index: number) => {
+      const far = point(index, 1);
+      pen.line(center.x, center.y, far.x, far.y, colors.pale, 1);
+    });
+    const shape: number[] = [];
+    core.DIM_KEYS.forEach((key: string, index: number) => {
+      const spot = point(index, (Number(values?.[key]) || 0) / max);
+      shape.push(spot.x, spot.y);
+    });
+    pen.poly(shape, colors.green, 90);
+    for (let index = 0; index < count; index += 1) {
+      const next = (index + 1) % count;
+      pen.line(shape[index * 2], shape[index * 2 + 1], shape[next * 2], shape[next * 2 + 1], colors.green, 2);
+    }
+    core.DIM_KEYS.forEach((key: string, index: number) => {
+      const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
+      const days = daysOf(Number(values?.[key]) || 0);
+      const label = this.text(node, name + '\n' + (days ? days + ' 天' : '—'), 0, 0, 56, 32, 11, colors.muted);
+      label.horizontalAlign = HorizontalTextAlignment.CENTER;
+      const spot = point(index, 1.2);
+      label.node.setPosition(spot.x - 28, -spot.y + 16);
+    });
+    this.text(node, title + ' · 现有 ' + crew + ' 人，每个角是这一项约需的天数', 8, height - 16, inner - 16, 14, 10, colors.muted);
     return height;
   }
 
@@ -1434,6 +1487,18 @@ export class StudioApp extends Component {
         this.button(body, core.SCALES[index].name, position * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index);
       });
       cursor += 54;
+    }
+    // Show the shape of the work before the days-and-cost line: testing is the sixth spoke.
+    if (!core.planIssue(state, this.draft)) {
+      const plan = core.planWork(state, this.draft);
+      const values: any = {};
+      for (const key of core.DIM_KEYS) values[key] = 0;
+      for (const [key, amount] of Object.entries(plan.fresh) as any) {
+        const dim = key === 'discover' ? 'stability' : key;
+        if (values[dim] !== undefined) values[dim] += amount;
+      }
+      values.stability += plan.total * core.TEST_SHARE;
+      cursor += this.workRadar(body, cursor, values, '六项工作量') + 12;
     }
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
     const coming = core.nextUnlocks(state);
@@ -1787,18 +1852,22 @@ export class StudioApp extends Component {
         return y + 4;
       case 'payout': return y + this.payout(parent, y, block) + 10;
       case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId)) + 12;
+      case 'workload': return y + this.workRadar(parent, y, block.values, block.title || '六项工作量') + 12;
       case 'dimensions': {
-        // Each dimension shows its remaining person-days and estimated finish; the slowest staffed one
-        // is the bottleneck, and dimensions nobody works on are called out instead of pencilled in.
+        // Each dimension shows the current crew and the days it needs; the slowest staffed one is the
+        // bottleneck, and dimensions nobody works on are called out instead of pencilled in.
         const start = y;
         for (const item of block.items) {
           const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
           const idle = item.remaining > 0.0001 && item.days === null;
           const slow = item.key === block.bottleneck;
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
-          this.text(row, dimension?.name || item.key, 12, 4, width - 150, 18, 13, colors.ink, true);
-          this.text(row, item.remaining > 0 ? item.remaining.toFixed(0) + ' 人日' : '已完成', width - 140, 4, 128, 18, 12, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : '预计 ' + item.days + ' 天' + (slow && item.key === 'stability' ? ' · 测试最慢' : '');
+          const crewText = item.remaining > 0
+            ? (item.days === null ? '现有 ' + this.state.staff.length + ' 人 · 无人负责' : '现有 ' + this.state.staff.length + ' 人约 ' + item.days + ' 天')
+            : '已完成';
+          this.text(row, dimension?.name || item.key, 12, 4, width - 190, 18, 13, colors.ink, true);
+          this.text(row, crewText, width - 170, 4, 158, 18, 11, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : (slow && item.key === 'stability' ? '测试最慢' : '');
           this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
           if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
@@ -1839,7 +1908,7 @@ export class StudioApp extends Component {
           const node = this.box(card, 'Work-' + work.key, 12 + column * (cell + 8), header + line * 50, cell, 42, done ? colors.pale : on ? colors.green : colors.soft, 8);
           const shortName = work.key === 'discover' ? '找缺陷' : work.key === 'repair' ? '修缺陷' : work.name;
           this.text(node, shortName, 2, 2, cell - 4, 22, 12, on && !done ? colors.paper : colors.muted, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-          const sub = done ? (on ? '已完成 · 让出工时' : '已完成') : '能力 ' + (work.ability ?? '—');
+          const sub = done ? '已完成' : '能力 ' + (work.ability ?? '—');
           this.text(node, sub, 2, 23, cell - 4, 16, 9, on && !done ? '#e8f3ed' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
           this.clickable(node, () => {
             // 界面只报“谁、哪个项目、点了哪项”，由 core 按存档取反并保证不为空。
@@ -2169,7 +2238,7 @@ export class StudioApp extends Component {
   private resumeFromGuide() {
     if (!this.guidePaused) return;
     const next = content.guide(this.state, null, false);
-    if (next?.ack) return;
+    if (next) return;
     this.guidePaused = false;
     if (!this.routes.length && !this.state.event && !this.state.over) {
       this.playing = true;

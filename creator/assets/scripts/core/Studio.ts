@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.5';
+export const VERSION = '0.4.6';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1453,12 +1453,9 @@ export function personActivity(state: any, project: any, person: any) {
   if (split.repair) return '自动修复待修缺陷（消耗工时）';
   const busy = Object.keys(split);
   if (!busy.length) return '空闲（不做工作，工资照付）';
-  // Items that are done drop out of the split, so what is left is always real work — except when
-  // everything assigned is finished and the leftover hours go back into reworking that same item.
-  // Saying "创意返工" there reads like he is still producing new content; say it is rework instead.
-  const open = assignedWorks(project, person).some((key: string) => remainingOf(project, key) > 0.0001);
+  // Finished items drop out of the split; with everything done `split` is empty and the branch above
+  // has already reported the person as idle, so whatever is left here is always real work.
   const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}制作`;
-  if (!open) return '已做满：' + busy.map(label).join('、') + '（时间用于返工）';
   return busy.map(label).join('、');
 }
 
@@ -1476,8 +1473,9 @@ function assignDay(state: any, project: any, person: any) {
     const left = remainingOf(project, key);
     if (left > 0.0001) { remaining[key] = left; open.push(key); }
   }
-  // A finished dimension still gets time when it is the only thing assigned, so rework can happen.
-  const list = open.length ? open : usable.slice(0, 1);
+  // Finished items stop taking time. When every assigned item is done and no defect is waiting, the
+  // person idles instead of quietly reworking a finished dimension.
+  const list = open;
   const total = sum(list.map((key: string) => remaining[key] ?? 1));
   if (!list.length) return {};
   const out: any = {};
@@ -2931,6 +2929,7 @@ function sideSkillWins(state: any) {
 }
 export const ACHIEVEMENT_GROUPS = [['milestone', '里程碑'], ['business', '经营'], ['works', '作品'], ['team', '团队'], ['industry', '行业'], ['hidden', '隐藏']];
 export const ACHIEVEMENTS: any[] = [
+  { key: 'firstModule', group: 'milestone', title: '第一块模块', text: '做完一块模块，收进自己的模块库。', reward: '这块模块以后立项直接复用', check: (s: any) => Object.keys(MODULES).some(line => lineInfo(s, line).level >= 1) },
   { key: 'firstRelease', group: 'milestone', title: '完成首作', text: '把第一款游戏做完并发售。', reward: '开放招聘网站与音频、测试岗位', check: (s: any) => s.goals.firstRelease !== null },
   { key: 'breakEven', group: 'milestone', title: '第一次回本', text: '让一款作品的回款超过投入。', reward: '证明作品能赚钱', check: (s: any) => s.goals.breakEven !== null },
   { key: 'moved', group: 'milestone', title: '搬进正式办公室', text: `在「公司」页搬家，一次性 ${OFFICES[2].cost} 万。`, reward: `${OFFICES[2].seats} 个工位，开放行业推荐、猎头与模块授权`, check: (s: any) => s.goals.moved !== null },

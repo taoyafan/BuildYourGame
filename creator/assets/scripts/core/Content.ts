@@ -69,7 +69,7 @@ export function advice(state: any, projectId?: string) {
     const patch = core.patchForecast(state, project);
     const left = patch ? Number(patch.left) : NaN;
     const days = patch ? patch.days : null;
-    const text = !Number.isFinite(left) ? '点开可看补丁进度与人手。' : days === null ? '还没有人做这个补丁，安排人手后才会开始修。' : days === 0 ? '即将上线。' : `还剩 ${left.toFixed(1)} 人日，约 ${days} 天上线。`;
+    const text = !Number.isFinite(left) ? '点开可看补丁进度与人手。' : days === null ? '还没有人做这个补丁，安排人手后才会开始修。' : days === 0 ? '即将上线。' : `现有 ${state.staff.length} 人，约 ${days} 天上线。`;
     return { title: '推进《' + project.name + '》补丁', text, menu: 'project', id: project.id };
   }
   if (!project) {
@@ -87,7 +87,7 @@ export function advice(state: any, projectId?: string) {
   if (project.kind === 'game' && project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
   if (project.kind === 'game' && project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '《' + project.name + '》推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
   if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.bottleneckName(pipeline.bottleneck.key)}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
-  return { title: '推进《' + project.name + '》', text: '查看各评分项的剩余人日与预计完成日，点开可给对应的人分工。', menu: 'project', id: project.id };
+  return { title: '推进《' + project.name + '》', text: '查看各评分项还要几天做完，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
 
 function recruitMenu(state: any, id: string) {
@@ -266,6 +266,14 @@ export function randomTitle(state: any) {
   return pickOne(TITLE_FIRST) + pickOne(TITLE_LAST) + ' ' + (state.catalog.length + 1);
 }
 
+// Work is never shown as person-days: the player only ever sees the current crew and the days it needs.
+function crewDays(state: any, work: number) {
+  const crew = (state.staff || []).length;
+  const capacity = (state.staff || []).reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
+  if (capacity <= 0.0001 || !Number.isFinite(work)) return '现有 ' + crew + ' 人，还没有能推进的人手';
+  return '现有 ' + crew + ' 人约 ' + Math.max(1, Math.ceil(work / capacity)) + ' 天';
+}
+
 // Known, unfixed defects grouped by the dimension that left them, e.g. "流畅 3 · 画面 1"; '' when none.
 function defectsByDimension(project: any) {
   const counts: any = {};
@@ -285,9 +293,9 @@ function newProjectMenu(state: any) {  return {
 function projectMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   // With no running title the page is a choice, not a form: take a commission or start a title.
-  if (!project) return { title: '项目', blocks: [{ type: 'actions', items: [
+  if (!project) return { title: '项目', blocks: [{ type: 'actions', anchor: 'new-project', items: [
     ...jobAction(state),
-    { text: '新项目', detail: '选类型与体量，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+    { text: '新项目', detail: '选类型与体量，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-game-0' }
   ] }] };
   if (project.released) return patchProjectMenu(state, project);
   if (project.kind === 'module') {
@@ -402,7 +410,7 @@ function patchProjectMenu(state: any, project: any) {
         ['修复', forecast.fixed + ' / ' + forecast.targets + ' 项已报告缺陷'],
         ...(rework ? [['返工' + rework, Math.round(forecast.reworkDone / Math.max(0.001, forecast.reworkTotal) * 100) + '%']] : []),
         ...(forecast.sync ? [['同步更新', forecast.synced ? '已做好，上线时生效' : '进行中']] : []),
-        ['剩余', forecast.left.toFixed(1) + ' 人日'],
+        ['剩余', forecast.days === null ? '现有 ' + state.staff.length + ' 人，还没安排人手' : '现有 ' + state.staff.length + ' 人约 ' + forecast.days + ' 天'],
         ['预计上线', forecast.days === null ? '还没有人做' : forecast.days === 0 ? '即将上线' : core.dueText(state, forecast.eta)],
         ['人手', crew.length ? crew.map((person: any) => person.name).join('、') : '无']
       ] },
@@ -452,8 +460,17 @@ function jobDetailMenu(state: any, id: string) {
   const work = Array.from({ length: offer.level }, (_v, index) => core.partId(offer.line, index + 1))
     .filter((part: string) => !core.partBuilt(state, part))
     .reduce((total: number, part: string) => total + (Object.values(core.partOf(part).work) as number[]).reduce((a, b) => a + b, 0), 0);
-  const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
-  const days = capacity > 0.0001 ? Math.ceil(work / capacity) : null;
+  // Six axes for the workload radar: a commission only has module work, so testing stays empty.
+  const dims: any = {};
+  for (const key of core.DIM_KEYS) dims[key] = 0;
+  for (let tier = 1; tier <= offer.level; tier += 1) {
+    const id = core.partId(offer.line, tier);
+    if (core.partBuilt(state, id)) continue;
+    for (const [key, amount] of Object.entries(core.partOf(id)?.work || {}) as any) {
+      const dim = key === 'discover' ? 'stability' : key;
+      if (dims[dim] !== undefined) dims[dim] += amount;
+    }
+  }
   const busy = state.projects.some((project: any) => project.job);
   return {
     title: '委托详情',
@@ -462,10 +479,9 @@ function jobDetailMenu(state: any, id: string) {
       { type: 'lines', items: [
         ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 档' : '')],
         ['报酬', money(offer.pay) + '（交付时一次到账）'],
-        ['工作量', Math.round(work) + ' 人日 · ' + (days ? '现有 ' + state.staff.length + ' 人约 ' + days + ' 天' : '还没有能推进的人')],
-        ['完成后', '模块留在你的模块库，之后的作品直接复用']
+        ['工作量', crewDays(state, work)]
       ] },
-      { type: 'note', icon: 'Info', text: '接下后立刻开工，时间开始走。一个人同一时间只做一个项目，可以在「项目」里调整分工；同时只能接一份委托，每月换一批。' },
+      { type: 'workload', values: dims, crew: state.staff.length },
       { type: 'buttons', items: [
         { text: busy ? '手上还有一份委托' : '接下这份委托', action: 'take-job', data: { id: offer.id }, disabled: busy },
         { text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }
@@ -486,12 +502,12 @@ function patchMenu(state: any, routeId: string) {
   const sync = preview.any && mode !== 'bare';
   const fix = core.patchPlan(state, project, null, sync);
   const items: any[] = [];
-  if (sync && !fix.targets) items.push({ text: '只同步更新', detail: '约 ' + core.SYNC_WORK + ' 人日', icon: 'RotateCcw', action: 'patch-start', data: { id, rework: null, sync: true } });
-  if (fix.targets) items.push({ text: '只修缺陷', detail: '修复已报告的 ' + fix.targets + ' 项缺陷 · 约 ' + fix.work.toFixed(1) + ' 人日', icon: 'Bug', action: 'patch-start', data: { id, rework: null, sync } });
+  if (sync && !fix.targets) items.push({ text: '只同步更新', detail: crewDays(state, core.SYNC_WORK), icon: 'RotateCcw', action: 'patch-start', data: { id, rework: null, sync: true } });
+  if (fix.targets) items.push({ text: '只修缺陷', detail: '修复已报告的 ' + fix.targets + ' 项缺陷 · ' + crewDays(state, fix.work), icon: 'Bug', action: 'patch-start', data: { id, rework: null, sync } });
   for (const key of core.CONTENT_KEYS) {
     const plan = core.patchPlan(state, project, key, sync);
     const name = core.DIMENSIONS.find(item => item.key === key)?.name;
-    items.push({ text: (fix.targets ? '修缺陷 + 返工' : '返工') + name, detail: '当前 ' + Math.round(metrics.dimensions[key]) + ' 分 · 约 ' + plan.work.toFixed(1) + ' 人日；返工只替换比返工者能力低的成果', icon: 'Hammer', action: 'patch-start', data: { id, rework: key, sync } });
+    items.push({ text: (fix.targets ? '修缺陷 + 返工' : '返工') + name, detail: '当前 ' + Math.round(metrics.dimensions[key]) + ' 分 · ' + crewDays(state, plan.work) + '；返工只替换比返工者能力低的成果', icon: 'Hammer', action: 'patch-start', data: { id, rework: key, sync } });
   }
   const updates: any[] = preview.any ? [
     { type: 'section', title: '可同步的更新' },
@@ -534,11 +550,14 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
   const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
-  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['剩余', row && row.remaining > 0.0001 ? row.remaining.toFixed(0) + ' 人日' : '已做满'], ['预计完成', finish]] }];
+  const remainingText = row && row.remaining > 0.0001
+    ? (row.days === null ? '无人负责' : '约 ' + row.days + ' 天')
+    : '已做满';
+  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['现有 ' + state.staff.length + ' 人', remainingText], ['预计完成', finish]] }];
   if (dimKey === 'stability') {
     const found = project.defects.filter((defect: any) => defect.found).length;
     const fixed = project.defects.filter((defect: any) => defect.fixed).length;
-    head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known + (metrics.known ? '（' + defectsByDimension(project) + '）' : '')], ['修复投入', forecast.repair + ' 人日/天']] });
+    head.push({ type: 'lines', items: [['测试覆盖', metrics.coverage.toFixed(0) + '%'], ['缺陷', '已发现 ' + found + ' · 已修 ' + fixed + ' · 待修 ' + metrics.known + (metrics.known ? '（' + defectsByDimension(project) + '）' : '')], ['修复投入', '分摊现有 ' + state.staff.length + ' 人的每日工时']] });
   }
   const blocks: any[] = [
     ...head,
@@ -583,8 +602,8 @@ function assignMenu(state: any, projectId: string) {
     ] };
   }
   const blocks: any[] = [
-    { type: 'text', text: '每人只属于一个项目，可同时做多项。哪一项做满，他那部分时间就自动让给还没做完的项；全部做满后才会去修测试抓到的缺陷，没有待修问题才继续返工。', muted: false },
-    { type: 'text', text: '六项全部关掉就是让他空闲：不出任何产出，工资照付。', muted: true }
+    { type: 'text', text: '每人只属于一个项目，可同时做多项。', muted: false },
+    { type: 'text', text: '手上的活都做完了，人就会空闲，工资照付。', muted: true }
   ];
   // Read the remaining work once for the whole page instead of per card, so every box agrees with the
   // production numbers it sits next to.
@@ -598,6 +617,10 @@ function assignMenu(state: any, projectId: string) {
     const assigned: string[] = core.personWorks(state, project, person);
     const home = core.projectOf(state, person);
     const elsewhere = home && home.id !== projectId ? home : null;
+    const works = core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001 }));
+    // With every assigned item finished the person is idle; the card says so instead of pointing at
+    // six completed boxes. Nothing here asks the player to "hand back" hours — the day does that.
+    const idle = !!assigned.length && works.every((work: any) => work.done);
     blocks.push({
       type: 'person-assign',
       title: person.name + ' · ' + core.ROLES[person.role].name,
@@ -606,11 +629,11 @@ function assignMenu(state: any, projectId: string) {
       projectId: project.id,
       index,
       assigned,
-      status: elsewhere ? '在《' + elsewhere.name + '》' + (core.personWorks(state, elsewhere, person).length ? '' : ' · 空闲') : '',
+      status: elsewhere ? '在《' + elsewhere.name + '》' + (core.personWorks(state, elsewhere, person).length ? '' : ' · 空闲') : idle ? '空闲' : '',
       // Anyone running at reduced output is flagged here, so a slow-down is never a mystery later.
       stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
       fame: !!person.fame && state.day - (person.joined || 0) < 30,
-      works: core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001 }))
+      works
     });
   });
   return { title: '分工', blocks };
@@ -1154,7 +1177,7 @@ function financeMenu(state: any) {
       ...(nextOffice && moveCost !== null ? [{ type: 'buttons', anchor: 'move', items: [{ text: (state.office === 1 ? '搬进' : '扩建为') + nextOffice.name + ' · ' + money(moveCost), action: 'move', icon: 'Building2', disabled: state.cash < moveCost }] }, { type: 'text', text: '搬家费 ' + money(moveCost) + '，之后月开支约 ' + money(core.monthlyCost(state) - core.OFFICES[state.office].rent + nextOffice.rent) + '。', muted: true }] : nextOffice ? [{ type: 'text', text: '交付委托后会租下' + nextOffice.name + '。', muted: true }] : [{ type: 'text', text: '已经是最大的办公室了。', muted: true }]),
       { type: 'actions', items: [
         { text: core.STAR_MARKS[rating.tier] + ' ' + core.STAR_NAMES[rating.tier] + '工作室 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · ' + core.dueText(state, rating.next), icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
-        { text: '模块库', detail: Object.keys(core.MODULES).filter(line => core.lineInfo(state, line).level).length + ' 个已有模块 · 玩法、技术、美术、音乐' + (Object.keys(state.licenses || {}).length ? ' · 授权中 ' + Object.keys(state.licenses).length + ' 个' : ''), icon: 'Wrench', action: 'menu', data: { menu: 'library' } },
+        { text: '模块库', detail: Object.keys(core.MODULES).filter(line => core.lineInfo(state, line).level).length + ' 个已有模块 · 玩法、技术、美术、音乐' + (Object.keys(state.licenses || {}).length ? ' · 授权中 ' + Object.keys(state.licenses).length + ' 个' : ''), icon: 'Wrench', action: 'menu', data: { menu: 'library' }, anchor: 'library' },
         { text: '成就', detail: core.achievementsOf(state).count + ' / ' + core.ACHIEVEMENTS.length + ' · 里程碑与荣誉', icon: 'Trophy', action: 'menu', data: { menu: 'achievements' } },
         { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
@@ -1468,11 +1491,13 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       // Where you are comes before what you do: the goal card carries both the ambition and the current
       // state, so the opening sequence starts there, then reads the money, and only then asks for a title.
       () => introduce('goal', 'shelf', '欢迎！你是工作室的创始人。办公室里的奖杯架是成就墙：点开看看公司要走的里程碑。'),
-      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除；资金 ÷ 月开支 ≈ 还能撑几个月。'),
+      () => explain('money', 'finance', '资金是你的全部家当。月开支 = 工资 + 房租，按天累计、月底统一扣除。'),
       () => project?.job && !seen.jobIntro ? explain('jobIntro', 'track', '你一个人在家里接了第一份委托：' + core.MODULES[project.job.module].name + '。做完有一笔报酬，这块模块也会留在你手里，之后做自己的游戏时直接用上。') : null,
       () => project?.job && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，把委托做完。右边可以切换速度。', tap: 'clock' } : null,
-      () => project?.job ? null : !project && !state.catalog.length && !seen.firstGame ? explain('firstGame', 'nav-project', '委托做完了。接下来做自己的第一款游戏：立项时会自动用上你手里的模块，缺的部分要自己做，也可以招人帮忙。') : null,
-      () => !project && !state.catalog.length ? { anchor: 'nav-project', text: '点「项目」：可以接委托，也可以点「新项目」为第一款游戏立项。', tap: 'navProject' } : null,
+      // The finished commission becomes a library entry: go and see it before starting a title.
+      () => project?.job ? null : !project && !state.catalog.length && !seen.moduleTour ? { anchor: 'nav-finance', text: '第一块模块做好了，收进公司的模块库：点「公司」看看它。', tap: 'moduleTour' } : null,
+      // One tip for the first title, not an explanation followed by a second tap to the same place.
+      () => project?.job ? null : !project && !state.catalog.length && !seen.firstGame ? { anchor: 'nav-project', text: '委托做完了。点「项目」→「新项目」，做自己的第一款游戏；手里的模块会自动用上，缺的部分要自己做，也可以招人帮忙。', tap: 'firstGame' } : null,
       () => project?.job ? null : project && !seen.trackIntro ? explain('trackIntro', 'track', '进度条显示作品做了多少：原型能看雏形，体验版能试玩和发售，做满就能正式发售。') : null,
       () => project && !playing && !seen.clock ? { anchor: 'clock', text: '点这里开始时间，团队每天推进开发。右边可以切换速度。', tap: 'clock' } : null,
       () => project && !project.job && !seen.assign ? { anchor: 'nav-project', text: '作品需要有人去做：点「项目」，找到「调整分工」，把人分到各项工作上。', tap: 'navProject' } : null,
@@ -1503,15 +1528,20 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
   }
   switch (route.menu) {
     case 'team': return hasTeammate ? null : { anchor: 'recruit-' + weakestRole(state), text: '招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '。' };
-    case 'finance': return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
+    case 'finance':
+      if (!project && !state.catalog.length && !seen.moduleLibrary) return { anchor: 'library', text: '这就是模块库：做好的模块会一直留在这里，以后立项直接复用。', tap: 'moduleLibrary' };
+      return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
     case 'recruit':
       return state.candidates[route.id] ? (hasTeammate ? null : { anchor: 'candidates', text: '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。' };
     case 'candidate': return hasTeammate ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
     case 'project':
-      if (!project || project.kind !== 'game') return null;
+      // With no running title the page is a choice. Force the tap onto 新项目 so the tutorial leads
+      // into the setup form instead of stopping at the page it just opened.
+      if (!project) return !state.catalog.length && !seen.newGame ? { anchor: 'new-game-0', text: '点「新项目」，选类型和体量，开始第一款游戏。', tap: 'newGame', tapGroup: 'new-game' } : null;
+      if (project.kind !== 'game') return null;
       // Before sending the player to the assignment page, show what the six rows are for. Stay with
       // what is on screen — work left and the estimated day — instead of systems taught later.
-      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着还剩多少工作、预计几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
+      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着现有多少人、约几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
       if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
       if (project.checkpoints.demo && !seen.testing && !seen.testingEntry) return { anchor: 'testing', text: '点「试玩」，招一批玩家来找缺陷、听评价。', tap: 'testingEntry' };
