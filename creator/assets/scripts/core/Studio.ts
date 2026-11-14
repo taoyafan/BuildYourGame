@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1596,10 +1596,18 @@ export function expectedDimensions(state: any, project: any) {
     if (!hands || remaining <= 0.0001) { out[key] = dimensionScore(work); continue; }
     out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
   }
-  // The solid line is projectMetrics' stability; the dashed one has to meet it once the work is done
-  // and every found defect is fixed. Both read the same coverage — deriving it from the test work's
-  // raw score here left the two lines permanently apart.
-  out.stability = round(clamp(coverage(project) * 100, 0, COVERAGE_CAP * 100));
+  // The dashed stability line is where today's team would land by finishing the remaining test work
+  // and clearing what it finds: the coverage the projected test score reaches, with no open defects.
+  // While the game is in production it sits above the solid line — that gap is what more testing and
+  // repairs can still buy. Once the game is finished (the release decision) or all testing is done,
+  // there is nothing left to project, so it meets the solid line exactly, just like the other five
+  // dimensions do when their own remaining work hits zero.
+  const testWork = workOf(project, 'stability');
+  const testLeft = Math.max(0, testWork.total - testWork.done);
+  const finished = progressOf(project) >= 1 - 0.000001 || !!project.released;
+  out.stability = finished || testLeft <= 0.0001
+    ? stabilityFrom(project)
+    : round(clamp(out.stability / 100 + (project.playCover || 0), 0, COVERAGE_CAP) * 100);
   return out;
 }
 
