@@ -86,7 +86,11 @@ export function advice(state: any, projectId?: string) {
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
   if (project.kind === 'game' && project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
   if (project.kind === 'game' && project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '《' + project.name + '》推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
-  if (pipeline.bottleneck) return { title: '推进《' + project.name + '》', text: `最慢的是${core.bottleneckName(pipeline.bottleneck.key)}，约 ${pipeline.bottleneck.days} 天。`, menu: 'project', id: project.id };
+  if (pipeline.bottlenecks.length) {
+    const names = pipeline.bottlenecks.map((key: string) => core.bottleneckName(key));
+    const days = Math.max(...pipeline.bottlenecks.map((key: string) => pipeline.rows.find((row: any) => row.key === key)?.days || 0));
+    return { title: '推进《' + project.name + '》', text: `最慢的是${names.join('、')}，约 ${days} 天。`, menu: 'project', id: project.id };
+  }
   return { title: '推进《' + project.name + '》', text: '查看各评分项还要几天做完，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
 
@@ -105,8 +109,14 @@ function recruitMenu(state: any, id: string) {
   const channels = Object.keys(core.CHANNELS);
   const blocks: any[] = [
     { type: 'tabs', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role })) },
+    { type: 'text', text: core.ROLES[role].task, muted: true },
     { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
-    { type: 'text', text: core.ROLES[role].task + '。' + core.CHANNELS[channel].text, muted: true }
+    // Channels differ in who answers and in what they ask for, so each one gets its own line with
+    // the wage band it actually pays instead of one shared note under the whole page.
+    ...channels.map(key => {
+      const band = core.channelWageRange(key);
+      return { type: 'text', text: core.CHANNELS[key].name + '：' + core.CHANNELS[key].text + '月薪约 ' + band.low.toFixed(1) + '–' + band.high.toFixed(1) + ' 万', muted: true };
+    })
   ];
   if ((state.notices.layout || 0) > 0) blocks.push({ type: 'note', icon: 'Users', text: '近期裁员影响了公司的招聘吸引力，招聘费用已上浮。' });
   const lockedRoles = Object.keys(core.ROLES).filter((key: string) => !core.roleOpen(state, key));
@@ -312,7 +322,7 @@ function projectMenu(state: any, id?: string) {
         { type: 'lines', items: [['完成度', metrics.progress.toFixed(0) + '%'], ['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
         { type: 'section', title: '六项评分（点开可看详情并分工）' },
-        { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
+        { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
         { type: 'note', icon: 'Info', text: '把六项都做完才算完成，测试也要有人负责。' },
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
@@ -339,7 +349,7 @@ function projectMenu(state: any, id?: string) {
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
     { type: 'radar', metrics, genre: project.type, projectId: project.id },
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
-    { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
+    { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
@@ -910,7 +920,7 @@ function teamMenu(state: any, sort = 'joined') {
     title: '团队',
     blocks: [
       { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（含房租）', money(core.monthlyCost(state))]] },
-      ...(state.office < 1 ? [{ type: 'text', text: '自家只有一个工位。交付委托、租下' + core.OFFICES[1].name + '后才能招人。', muted: true }] : [{ type: 'buttons', columns: 3, items: openRoles.map(role => ({ text: '招聘' + core.ROLES[role].name, action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: role + ':' + channel }, anchor: 'recruit-' + role })) }]),
+      ...(state.office < 1 ? [{ type: 'text', text: '自家只有一个工位。交付委托、租下' + core.OFFICES[1].name + '后才能招人。', muted: true }] : [{ type: 'buttons', items: [{ text: '招聘', action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: openRoles[0] + ':' + channel }, anchor: 'recruit' }] }]),
       ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
       ...(state.office >= 2 ? [{ type: 'actions', items: [{ text: '猎头', detail: '向对手的名人开高薪挖人。', icon: 'Briefcase', action: 'menu', data: { menu: 'talents' } }] }] : []),
       ...(state.staff.length > 1 ? [
@@ -1534,7 +1544,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     return null;
   }
   switch (route.menu) {
-    case 'team': return hasTeammate ? null : { anchor: 'recruit-' + weakestRole(state), text: '招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '。' };
+    case 'team': return hasTeammate ? null : { anchor: 'recruit', text: '招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '。' };
     case 'finance':
       if (!project && !state.catalog.length && !seen.moduleLibrary) return { anchor: 'library', text: '这就是模块库：做好的模块会一直留在这里，以后立项直接复用。', tap: 'moduleLibrary' };
       return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
@@ -1548,7 +1558,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       if (project.kind !== 'game') return null;
       // Before sending the player to the assignment page, show what the six rows are for. Stay with
       // what is on screen — work left and the estimated day — instead of systems taught later.
-      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着现有多少人、约几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
+      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着这一项还剩约几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
       if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
       if (project.checkpoints.demo && !seen.testing && !seen.testingEntry) return { anchor: 'testing', text: '点「试玩」，招一批玩家来找缺陷、听评价。', tap: 'testingEntry' };

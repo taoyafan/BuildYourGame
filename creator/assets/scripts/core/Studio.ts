@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.7';
+export const VERSION = '0.4.8';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1136,6 +1136,18 @@ export function recruitFee(state: any, channel: string) {
   return round(CHANNELS[channel].fee * (1 + Math.min(1, layoffs * 0.25)));
 }
 
+// What this channel's shortlist typically asks per month. It is the same formula publishRecruitment
+// uses, read at the bottom and the top of the channel's ability and speed bands, so the quote under
+// the channel tabs never drifts from the wages on the cards.
+export function channelWageRange(channel: string) {
+  const source = CHANNELS[channel];
+  if (!source) return { low: 0, high: 0 };
+  const [lowPeak, highPeak] = CHANNEL_PEAK[channel] || CHANNEL_PEAK.friends;
+  const [lowSpeed, highSpeed] = source.speed;
+  const wage = (peak: number, speed: number) => source.wage[0] + peak * source.wage[1] + (speed - lowSpeed) * source.wage[2];
+  return { low: round(wage(lowPeak, lowSpeed)), high: round(wage(highPeak, highSpeed) + source.wage[3]) };
+}
+
 // A star is a specialist at the top of one trade, not good at everything.
 function starFrom(state: any, role: string, talent: any = null) {
   const prior = ROLES[role].prior;
@@ -1692,13 +1704,14 @@ export function dimensionPipeline(state: any, project: any) {
   // other unstaffed dimension: the title cannot be finished until someone is put on it.
   const idle = pending.filter((row: any) => row.days === null).map((row: any) => row.key);
   const scheduled = pending.filter((row: any) => row.days !== null);
-  // A bottleneck is a dimension that finishes strictly later than every other one. When the day is
-  // split in proportion to what is left, all dimensions land together — that is not a bottleneck,
-  // it is a balanced plan; reporting the arbitrary slowest row as one was simply wrong.
+  // A bottleneck is a dimension that finishes latest. A narrow tie of two or three rows is still a
+  // real bottleneck — the player has to speed all of them up — but when every row lands together the
+  // day split is balanced, and naming them all would just mean "nothing stands out".
   const slowestDays = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : 0;
   const slowest = scheduled.filter((row: any) => row.days === slowestDays);
-  const bottleneck = scheduled.length > 1 && slowest.length === 1 && slowestDays > 0 ? slowest[0] : null;
-  return { rows, discover: round(discover), repair: round(repair), bottleneck, idle, blocked: idle.length > 0 };
+  const bottlenecks = scheduled.length > 1 && slowestDays > 0 && slowest.length <= 3 ? slowest.map((row: any) => row.key) : [];
+  const bottleneck = bottlenecks.length ? slowest[0] : null;
+  return { rows, discover: round(discover), repair: round(repair), bottleneck, bottlenecks, idle, blocked: idle.length > 0 };
 }
 
 // "稳定" as a bottleneck means the testing workload is the slowest, not that the score is low.
