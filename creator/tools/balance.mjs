@@ -6,8 +6,8 @@ export const P = {
   scales: {
     小: { w: 1, W: 47, pc: 1, S: 48 },
     中: { w: 5, W: 235, pc: 1.4, S: 60 },
-    大: { w: 20, W: 940, pc: 1.8, S: 70 },
-    超大: { w: 90, W: 4230, pc: 2.4, S: 78 }
+    大: { w: 20, W: 940, pc: 2.45, S: 70 },
+    超大: { w: 90, W: 4230, pc: 3.76, S: 78 }
   },
   // 市场与口碑
   pool: 6000, poolExp: 0.93, scoreExp: 1.3,
@@ -19,19 +19,20 @@ export const P = {
   fanCarry: 0.7, valuationDays: 540,
   // 宣发：关注单价 = 单价 × (基础 + 斜率 × 付费覆盖)，越买越贵
   unitBase: 0.47, unitSlope: 0.35,
-  // 成本（元/人日）
-  wageDay: 400, standardQ: 60,
+  // 成本（元/人日）：工资 = 标准日薪 × (能力/60)^溢价比，人日成本与工资同口径
+  wageDay: 400, standardQ: 60, wageExp: 3,
   // 宣发五档：首发总关注占市场的比例
   tiers: [['不投', 0.10], ['试水', 0.25], ['常规', 0.45], ['力推', 0.65], ['全力', 0.85]]
 };
 
+// peak = 该阶段建议编制的平均能力，用来算月固定工资
 export const offices = [
-  { name: '自家', seats: 1, rent: 0, cost: 0, crew: 1 },
-  { name: '起步小屋', seats: 4, rent: 1.5, cost: 0, crew: 3 },
-  { name: '正式办公室', seats: 10, rent: 3, cost: 8, crew: 6 },
-  { name: '独立工作室', seats: 16, rent: 5, cost: 26, crew: 10 },
-  { name: '写字楼整层', seats: 40, rent: 12, cost: 64, crew: 24 },
-  { name: '园区大楼', seats: 100, rent: 30, cost: 160, crew: 60 }
+  { name: '自家', seats: 1, rent: 0, cost: 0, crew: 1, peak: 45 },
+  { name: '起步小屋', seats: 4, rent: 1.5, cost: 0, crew: 3, peak: 48 },
+  { name: '正式办公室', seats: 10, rent: 3, cost: 8, crew: 6, peak: 60 },
+  { name: '独立工作室', seats: 16, rent: 5, cost: 26, crew: 10, peak: 70 },
+  { name: '写字楼整层', seats: 40, rent: 12, cost: 64, crew: 24, peak: 85 },
+  { name: '园区大楼', seats: 100, rent: 30, cost: 160, crew: 60, peak: 93 }
 ];
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -43,7 +44,14 @@ export const marketOf = (s, qe) =>
 export const priceOf = s => P.priceBase * P.scales[s].pc;
 export const conversion = qe => P.convBase + P.convGain * Math.pow(quality(qe), P.convExp);
 export const spread = qe => clamp(P.kSlope * quality(qe) - P.kOffset, -1, 2);
-export const dayCost = q => (P.wageDay * q / P.standardQ) / 10000;   // 万 / 人日
+export const monthlyWage = (peak, speed = 100) =>
+  1.2 * (peak <= P.standardQ ? peak / P.standardQ : Math.pow(peak / P.standardQ, P.wageExp)) * (speed / 100);  // 万元 / 月
+// 60 分以下线性（新人便宜但要能活），60 分以上按指数涨价（高手稀缺）
+const wageFactor = q => {
+  const r = q / P.standardQ;
+  return r <= 1 ? r : Math.pow(r, P.wageExp);
+};
+export const dayCost = q => (P.wageDay * wageFactor(q)) / 10000;   // 万 / 人日
 export const unitPrice = (s, cover) =>
   priceOf(s) * (P.unitBase + P.unitSlope * Math.max(0, cover - P.platform));
 export const promoCost = (s, qe, cover) => {
@@ -130,7 +138,7 @@ function main() {
 
   console.log('\n【办公室】');
   for (const o of offices) {
-    const fixed = o.rent + o.crew * 1.2;
+    const fixed = o.rent + o.crew * monthlyWage(o.peak);
     console.log(`${o.name}  工位 ${o.seats}  月租 ${o.rent}  搬家 ${o.cost}  月固定 ${fixed.toFixed(1)}  最低搬家现金 ${(o.cost + fixed).toFixed(1)}`);
   }
 }
