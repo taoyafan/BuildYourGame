@@ -168,7 +168,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'finance': return financeMenu(state);
     case 'gameover': return { title: '经营失败', blocks: [
       { type: 'note', icon: 'Lock', text: '公司没能支付月底开支，时间已经停下。这份存档会保留，也可以换一份接着玩。' },
-      { type: 'lines', items: [['现金', money(state.cash)], ['月开支（工资 + 房租）', money(core.monthlyCost(state))], ['经营天数', state.day + ' 天']] },
+      { type: 'lines', items: [['现金', money(state.cash)], ['月开支（整月）', money(core.monthlyCost(state))], ['经营天数', state.day + ' 天']] },
       { type: 'buttons', columns: 2, items: [
         { text: '重新创业', action: 'menu', icon: 'RotateCcw', data: { menu: 'restart' } },
         { text: '存档管理', action: 'menu', icon: 'ScrollText', data: { menu: 'slots' } }
@@ -925,7 +925,7 @@ function teamMenu(state: any, sort = 'joined') {
   return {
     title: '团队',
     blocks: [
-      { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（含房租）', money(core.monthlyCost(state))]] },
+      { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（整月 · 含房租）', money(core.monthlyCost(state))]] },
       ...(state.office < 1 ? [{ type: 'text', text: '自家只有一个工位。交付委托、租下' + core.OFFICES[1].name + '后才能招人。', muted: true }] : [{ type: 'buttons', items: [{ text: '招聘', action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: openRoles[0] + ':' + channel }, anchor: 'recruit' }] }]),
       ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
       ...(state.office >= 2 ? [{ type: 'actions', items: [{ text: '猎头', detail: '向对手的名人开高薪挖人。', icon: 'Briefcase', action: 'menu', data: { menu: 'talents' } }] }] : []),
@@ -1194,7 +1194,10 @@ function financeMenu(state: any) {
   return {
     title: '公司',
     blocks: [
-      { type: 'lines', items: [['现金', money(state.cash)], ['本月收入', money(ledger.income)], ['本月已开支', money(monthSpent(state))], ['已累计应付', money(state.accrued)], ['月开支（工资 + 房租）', money(core.monthlyCost(state))]] },
+      { type: 'lines', items: [['现金', money(state.cash)], ['本月收入', money(ledger.income)], ['本月已开支', money(monthSpent(state))], ['月开支（整月 · 工资 + 房租）', money(core.monthlyCost(state))], ['其中已累计应付', money(state.accrued)]] },
+      // Wages and rent accrue one day at a time, so a month with a mid-month hire, dismissal, raise or
+      // move settles short of the full-month figure — that is the bill, not a calculation error.
+      { type: 'text', text: '月底按当月实际在职天数结算：月中招人、裁人、调薪或搬办公室，都只从当天的比例开始计入，所以账单会比「月开支」少一些。', muted: true },
       { type: 'section', title: '办公室' },
       { type: 'lines', items: [['现在', core.OFFICES[state.office].name + ' · ' + core.seats(state) + ' 个工位 · 月租 ' + money(core.OFFICES[state.office].rent)], ...(nextOffice ? [['下一档', nextOffice.name + ' · ' + nextOffice.seats + ' 个工位 · 月租 ' + money(nextOffice.rent)]] : [])] },
       ...(nextOffice && moveCost !== null ? [{ type: 'buttons', anchor: 'move', items: [{ text: (state.office === 1 ? '搬进' : '扩建为') + nextOffice.name + ' · ' + money(moveCost), action: 'move', icon: 'Building2', disabled: state.cash < moveCost }] }, { type: 'text', text: '搬家费 ' + money(moveCost) + '，之后月开支约 ' + money(core.monthlyCost(state) - core.OFFICES[state.office].rent + nextOffice.rent) + '。', muted: true }] : nextOffice ? [{ type: 'text', text: '交付委托后会租下' + nextOffice.name + '。', muted: true }] : [{ type: 'text', text: '已经是最大的办公室了。', muted: true }]),

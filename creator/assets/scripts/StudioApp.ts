@@ -1059,7 +1059,7 @@ export class StudioApp extends Component {
     const bottleneck = (forecast.bottlenecks || []).length ? forecast.bottlenecks.map((key: string) => core.bottleneckName(key)).join('、') : '—';
     this.anchors.set('stats', this.box(body, 'StatsAnchor', radarWidth + 6, y, inner - radarWidth - 6, 164));
     this.statColumn(body, radarWidth + 6, y, inner - radarWidth - 6, [
-      ['综合估计', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
+      ['综合评分', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
       ['待修缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
