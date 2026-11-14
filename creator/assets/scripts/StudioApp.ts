@@ -1376,6 +1376,11 @@ export class StudioApp extends Component {
       if (!fixed) {
         this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
         this.clickable(row, () => { open[slot.key] = !expanded; this.render(); });
+      } else {
+        // A locked slot still has to say so. Without the label players read the missing 调整 as a
+        // broken button; tapping it explains why this one choice is not theirs to make yet.
+        this.text(row, '固定', inner - 48, 16, 40, 20, 11, colors.muted, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+        this.clickable(row, () => this.notify(this.draft.sequel ? '续作沿用原作的玩法，不能调整。' : '首作的玩法跟着创始人的出身定，从下一作起就能自由选。'));
       }
       cursor += 60;
       if (!expanded) continue;

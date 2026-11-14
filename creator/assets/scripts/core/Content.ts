@@ -152,6 +152,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'dismiss': return dismissMenu(state, route.id);
     case 'patch': return patchMenu(state, route.id);
     case 'jobs': return jobsMenu(state);
+    case 'job': return jobDetailMenu(state, route.id);
     case 'rating': return ratingMenu(state);
     case 'archive':
     case 'finance': return financeMenu(state);
@@ -236,7 +237,7 @@ export function planPreview(state: any, draft: any) {
     const price = core.rentPrice(line, draft.scale || 0);
     return '\n' + core.MODULES[line].name + '：这条线累计租了 ' + record.count + ' 次，已付约 ' + money(record.paid) + '，自己做约需 ' + money(price.build);
   }).join('');
-  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines + '\n测试是额外投入：完成度只算五项内容，不安排人也能发售，只是稳定度低。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
 }
 
 // The moment the library grows: the bricks this job or title added or levelled up, and what opened up.
@@ -292,12 +293,25 @@ function projectMenu(state: any, id?: string) {
   if (project.kind === 'module') {
     const lines = project.rebuild ? [core.partOf(project.rebuild).line] : project.only || [];
     const status = project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing';
+    const metrics = core.visibleMetrics(project);
+    const forecast = core.projectForecast(state, project);
+    const idleRows = forecast.rows.filter((row: any) => row.remaining > 0.0001 && row.days === null);
+    const etaText = idleRows.length ? '还有无人负责的评分项' : forecast.eta === null ? '—' : core.dueText(state, forecast.eta);
     return {
       title: project.job ? '委托' : '模块项目',
       blocks: [
         { type: 'text', text: project.job ? project.job.client + '。做完就能拿到 ' + money(project.job.pay) + '，这块模块也会留在你手里。' : project.rebuild ? '从头重做这一档，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
         { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
-        { type: 'actions', items: [{ text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' }] }
+        { type: 'lines', items: [['完成度', metrics.progress.toFixed(0) + '%'], ['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
+        { type: 'radar', metrics, genre: project.type, projectId: project.id },
+        { type: 'section', title: '六项评分（点开可看详情并分工）' },
+        { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
+        { type: 'note', icon: 'Info', text: '完成度只算五项内容；测试是额外投入，不安排人也能交付，只是稳定度低。' },
+        { type: 'actions', items: [
+          { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+          { text: '新项目', detail: '同时也能开自己的作品，人要在两个项目之间分配。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
+          ...jobAction(state)
+        ] }
       ]
     };
   }
@@ -317,11 +331,12 @@ function projectMenu(state: any, id?: string) {
   const demo = project.checkpoints.demo;
   const fix = core.fixForecast(state, project);
   const blocks: any[] = [
-    { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
+    { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['内容完成度', metrics.progress.toFixed(0) + '%']] },
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
     ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
+    { type: 'note', icon: 'Info', text: '测试是额外投入：完成度只算五项内容，测试没做完也能发售，只是稳定度低。测试做得越满，六维里「稳定」越高。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
@@ -423,9 +438,44 @@ function jobAction(state: any) {
 function jobsMenu(state: any) {
   const offers = core.jobBoard(state);
   return { title: '接委托', blocks: [
-    { type: 'text', text: '给别人做一块模块，报酬固定，做完到账；模块也留在你的模块库里。每月换一批。', muted: true },
-    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 档' : '') + ' · ' + money(offer.pay), detail: offer.client, action: 'take-job', data: { id: offer.id } })) }
+    { type: 'text', text: '给别人做一块模块，报酬固定，做完到账；模块也留在你的模块库里。每月换一批。点开可以先看详情。', muted: true },
+    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 档' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 点开看详情', action: 'menu', data: { menu: 'job', id: offer.id } })) }
   ] };
+}
+
+// A commission starts the clock immediately, so the board only opens this page. The player gets to
+// read the client, the deliverable, the pay and the workload before committing.
+function jobDetailMenu(state: any, id: string) {
+  const offer = core.jobBoard(state).find((item: any) => item.id === id);
+  if (!offer) return { title: '委托详情', blocks: [
+    { type: 'text', text: '这份委托已经不在了，每月会换一批。' },
+    { type: 'buttons', items: [{ text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }] }
+  ] };
+  const module = core.MODULES[offer.line];
+  const tiers = core.lineTiers(offer.line);
+  const work = Array.from({ length: offer.level }, (_v, index) => core.partId(offer.line, index + 1))
+    .filter((part: string) => !core.partBuilt(state, part))
+    .reduce((total: number, part: string) => total + (Object.values(core.partOf(part).work) as number[]).reduce((a, b) => a + b, 0), 0);
+  const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
+  const days = capacity > 0.0001 ? Math.ceil(work / capacity) : null;
+  const busy = state.projects.some((project: any) => project.job);
+  return {
+    title: '委托详情',
+    blocks: [
+      { type: 'text', text: offer.client + '。' + (module.desc || '') },
+      { type: 'lines', items: [
+        ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 档' : '')],
+        ['报酬', money(offer.pay) + '（交付时一次到账）'],
+        ['工作量', Math.round(work) + ' 人日 · ' + (days ? '现有 ' + state.staff.length + ' 人约 ' + days + ' 天' : '还没有能推进的人')],
+        ['完成后', '模块留在你的模块库，之后的作品直接复用']
+      ] },
+      { type: 'note', icon: 'Info', text: '接下后立刻开工，时间开始走。一个人同一时间只做一个项目，可以在「项目」里调整分工；同时只能接一份委托，每月换一批。' },
+      { type: 'buttons', items: [
+        { text: busy ? '手上还有一份委托' : '接下这份委托', action: 'take-job', data: { id: offer.id }, disabled: busy },
+        { text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }
+      ] }
+    ]
+  };
 }
 
 // Opening a patch: fix what players have reported, optionally rework one dimension, and bring the title up
