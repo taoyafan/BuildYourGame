@@ -3,15 +3,16 @@
 
 export const P = {
   // 体量：w 市场系数，W 总人日（含测试与修复），pc 单价系数，S 水准线（= 保本线）
+  // rent = 该档常用办公室的房租摊销（元/人日）= 月租 / (工位数 × 30)，按满员工位摊
   scales: {
-    小: { w: 1, W: 47, pc: 1, S: 48 },
-    中: { w: 5, W: 235, pc: 1.4, S: 60 },
-    大: { w: 20, W: 940, pc: 2.45, S: 70 },
-    超大: { w: 90, W: 4230, pc: 3.76, S: 78 }
+    小:   { w: 1,  W: 47,   pc: 1,    S: 48, off: '起步小屋' },
+    中:   { w: 5,  W: 235,  pc: 1.26, S: 60, off: '正式办公室' },
+    大:   { w: 20, W: 940,  pc: 2.05, S: 70, off: '独立工作室' },
+    超大: { w: 90, W: 4230, pc: 3.01, S: 78, off: '写字楼整层' }
   },
   // 市场与口碑
   pool: 6000, poolExp: 0.93, scoreExp: 1.3,
-  target: 70,              // 相对分基准：Q = S 时 Qe = 70，即保本点
+  target: 72.5,            // 相对分基准：Q = S 时 Qe = 72.5，即保本点
   priceBase: 66.7,
   convBase: 0.05, convGain: 0.55, convExp: 2, forget: 0.15,
   kSlope: 3.6, kOffset: 1.9,
@@ -51,7 +52,12 @@ const wageFactor = q => {
   const r = q / P.standardQ;
   return r <= 1 ? r : Math.pow(r, P.wageExp);
 };
-export const dayCost = q => (P.wageDay * wageFactor(q)) / 10000;   // 万 / 人日
+// 房租摊销：月租 / (满员工位 × 30 天)，元/人日
+export const rentDay = s => {
+  const o = offices.find(x => x.name === P.scales[s].off) || offices[0];
+  return o.rent * 10000 / (o.seats * 30);
+};
+export const dayCost = (q, s) => (P.wageDay * wageFactor(q) + rentDay(s)) / 10000;   // 万 / 人日
 export const unitPrice = (s, cover) =>
   priceOf(s) * (P.unitBase + P.unitSlope * Math.max(0, cover - P.platform));
 export const promoCost = (s, qe, cover) => {
@@ -77,7 +83,7 @@ export function title(s, q, cover, fansStock = 0) {
     sold += units;
   }
   const promo = promoCost(s, qe, cover);
-  const labor = P.scales[s].W * dayCost(q);
+  const labor = P.scales[s].W * dayCost(q, s);
   const total = labor + promo;
   const revenue = sold * price / 10000;
   return {
