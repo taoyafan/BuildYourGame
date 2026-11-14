@@ -1139,9 +1139,9 @@ export class StudioApp extends Component {
     const center = { x: inner / 2, y: 82 };
     const radius = 52;
     const count = core.DIM_KEYS.length;
-    const crew = this.state.staff.length;
-    const capacity = this.state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > this.state.day ? 0 : person.speed / 100), 0);
-    const daysOf = (value: number) => capacity > 0.0001 && value > 0 ? Math.max(1, Math.ceil(value / capacity)) : 0;
+    // One work unit is one person-day, so the radar reads the same for a plan as for a running title:
+    // every corner is what a single person would need, not what today's crew would need.
+    const daysOf = (value: number) => value > 0 ? Math.max(1, Math.ceil(value)) : 0;
     const max = Math.max(1, ...core.DIM_KEYS.map((key: string) => Number(values?.[key]) || 0));
     const point = (index: number, ratio: number) => {
       const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
@@ -1176,7 +1176,7 @@ export class StudioApp extends Component {
       const spot = point(index, 1.2);
       label.node.setPosition(spot.x - 28, -spot.y + 16);
     });
-    this.text(node, title + ' · 现有 ' + crew + ' 人，每个角是这一项约需的天数', 8, height - 16, inner - 16, 14, 10, colors.muted);
+    this.text(node, title + ' · 每个角是一个人做完约需的天数', 8, height - 16, inner - 16, 14, 10, colors.muted);
     return height;
   }
 
@@ -1856,20 +1856,22 @@ export class StudioApp extends Component {
       case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId), 0, true, block.expected || null) + 12;
       case 'workload': return y + this.workRadar(parent, y, block.values, block.title || '六项工作量') + 12;
       case 'dimensions': {
-        // Each dimension shows the current crew and the days it needs; the slowest staffed one is the
-        // bottleneck, and dimensions nobody works on are called out instead of pencilled in.
+        // Each row states the work itself — what one person would need — so the six numbers compare
+        // with each other and do not shuffle when the crew is reassigned. The crew's own finish date
+        // is the one above the list.
         const start = y;
         for (const item of block.items) {
           const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
           const idle = item.remaining > 0.0001 && item.days === null;
           const slow = (block.bottlenecks || []).includes(item.key);
           const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
+          const solo = item.solo === undefined ? item.days : item.solo;
           const crewText = item.text || (item.remaining > 0
-            ? (item.days === null ? '无人负责' : '剩余约 ' + item.days + ' 天')
+            ? (solo ? '剩余约 ' + solo + ' 天' : '无人负责')
             : '已完成');
           this.text(row, dimension?.name || item.key, 12, 4, width - 190, 18, 13, colors.ink, true);
           this.text(row, crewText, width - 170, 4, 158, 18, 11, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          const note = item.days === null ? (item.remaining > 0.0001 ? '无人负责 · 点开分工' : '') : (slow && item.key === 'stability' ? '测试最慢' : '');
+          const note = item.days === null ? (item.remaining > 0.0001 ? '当前无人负责 · 点开分工' : '') : (slow && item.key === 'stability' ? '测试最慢' : '');
           this.text(row, note, 12, 24, width - 180, 16, 11, idle ? colors.danger : slow ? colors.amber : colors.muted);
           if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;

@@ -88,8 +88,8 @@ export function advice(state: any, projectId?: string) {
   if (project.kind === 'game' && project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '《' + project.name + '》推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
   if (pipeline.bottlenecks.length) {
     const names = pipeline.bottlenecks.map((key: string) => core.bottleneckName(key));
-    const days = Math.max(...pipeline.bottlenecks.map((key: string) => pipeline.rows.find((row: any) => row.key === key)?.days || 0));
-    return { title: '推进《' + project.name + '》', text: `最慢的是${names.join('、')}，约 ${days} 天。`, menu: 'project', id: project.id };
+    const days = Math.max(...pipeline.bottlenecks.map((key: string) => pipeline.rows.find((row: any) => row.key === key)?.solo || 0));
+    return { title: '推进《' + project.name + '》', text: `最慢的是${names.join('、')}，一个人要约 ${days} 天。`, menu: 'project', id: project.id };
   }
   return { title: '推进《' + project.name + '》', text: '查看各评分项还要几天做完，点开可给对应的人分工。', menu: 'project', id: project.id };
 }
@@ -277,11 +277,11 @@ export function randomTitle(state: any) {
 }
 
 // Work is never shown as person-days: the player only ever sees the current crew and the days it needs.
+// Workload is quoted the way a plan is quoted: one work unit is one newcomer's day, so the number is
+// the same whoever you happen to have on staff and can be compared with any other quote.
 function crewDays(state: any, work: number) {
-  const crew = (state.staff || []).length;
-  const capacity = (state.staff || []).reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
-  if (capacity <= 0.0001 || !Number.isFinite(work)) return '现有 ' + crew + ' 人，还没有能推进的人手';
-  return '现有 ' + crew + ' 人约 ' + Math.max(1, Math.ceil(work / capacity)) + ' 天';
+  if (!Number.isFinite(work)) return '—';
+  return Math.max(1, Math.ceil(work)) + ' 天（1 人）';
 }
 
 // Known, unfixed defects grouped by the dimension that left them, e.g. "流畅 3 · 画面 1"; '' when none.
@@ -326,7 +326,7 @@ function projectMenu(state: any, id?: string) {
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
         { type: 'section', title: '六项评分（点开可看详情并分工）' },
         { type: 'dimensions', items: rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-        { type: 'note', icon: 'Info', text: '五项内容都做完就算完成；模块没有单独的测试工序，稳定分按待修缺陷算。' },
+        { type: 'note', icon: 'Info', text: '五项内容都做完就算完成；模块没有单独的测试工序，稳定分按待修缺陷算。每行天数按一个人做完估算。' },
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
           { text: '新项目', detail: '同时也能开自己的作品，人要在两个项目之间分配。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
@@ -353,7 +353,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'radar', metrics, genre: project.type, projectId: project.id },
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-    { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
+    { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。每行天数按一个人做完估算，和现有人手无关。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
@@ -563,10 +563,8 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
   const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
-  const remainingText = row && row.remaining > 0.0001
-    ? (row.days === null ? '无人负责' : '约 ' + row.days + ' 天')
-    : '已做满';
-  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['现有 ' + state.staff.length + ' 人', remainingText], ['预计完成', finish]] }];
+  const remainingText = row && row.remaining > 0.0001 ? '约 ' + row.solo + ' 天（1 人）' : '已做满';
+  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['剩余工作量', remainingText], ['现有 ' + state.staff.length + ' 人预计完成', finish]] }];
   if (dimKey === 'stability') {
     const found = project.defects.filter((defect: any) => defect.found).length;
     const fixed = project.defects.filter((defect: any) => defect.fixed).length;
