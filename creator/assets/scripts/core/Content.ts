@@ -337,7 +337,7 @@ function projectMenu(state: any, id?: string) {
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
-    ...(project.checkpoints.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
+    { type: 'radar', metrics, genre: project.type, projectId: project.id },
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottleneck: forecast.bottleneck ? forecast.bottleneck.key : null, projectId: project.id },
     { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
@@ -1090,7 +1090,9 @@ function brickOf(state: any, line: string, extra: any = {}) {
     : info.next > 0 ? '做了 ' + Math.round(info.next * 100) + '%' : '还没有';
   return {
     module: line, name: module.name, axis: module.axis, glyph: module.glyph,
-    level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : 'missing',
+    level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : info.next > 0.001 ? 'partial' : 'missing',
+    // How much of this tier is done, so a half-built module reads as half coloured and half grey.
+    progress: info.level ? 1 : info.next,
     detail, note: module.desc, route: { menu: 'compose', id: 'module:' + line }, actions: [], ...extra
   };
 }
@@ -1142,11 +1144,11 @@ function composeMenu(state: any, id = '') {
     const progress = rented ? 1 : core.partProgress(state, core.partId(key, level));
     const before = project.levels?.[key] || 0;
     const detail = rented ? '租用 · 质量 ' + core.RENT_QUALITY : '需 ' + level + ' 档 · ' + (before >= level ? '已有' : progress >= 0.999 ? '做好了' : progress > 0.001 ? '做了 ' + Math.round(progress * 100) + '%' : '新做');
-    return brickOf(state, key, { level, status: progress >= 0.999 ? 'have' : progress > 0.001 ? 'partial' : 'missing', detail, route: { menu: 'compose', id: 'module:' + key + '@' + project.id }, actions: [], ...extra });
+    return brickOf(state, key, { level, status: progress >= 0.999 ? 'have' : progress > 0.001 ? 'partial' : 'missing', progress, detail, route: { menu: 'compose', id: 'module:' + key + '@' + project.id }, actions: [], ...extra });
   };
   if (kind === 'project' && project) {
     const picked = project.rebuild ? [core.partOf(project.rebuild).line] : project.kind === 'module' ? core.projectLines(project).filter((key: string) => (project.only || []).includes(key)) : core.planLines(project);
-    const root = { name: '《' + project.name + '》', glyph: 'star', level: project.scale + 1, status: project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing', detail: (project.kind === 'module' ? '模块项目' : core.SCALES[project.scale].name + ' · ' + core.TYPES[project.type].name) + ' · 完成度 ' + project.progress.toFixed(0) + '%', note: '', game: true };
+    const root = { name: '《' + project.name + '》', glyph: 'star', level: project.scale + 1, status: project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing', progress: project.progress / 100, detail: (project.kind === 'module' ? '模块项目' : core.SCALES[project.scale].name + ' · ' + core.TYPES[project.type].name) + ' · 完成度 ' + project.progress.toFixed(0) + '%', note: '', game: true, route: { menu: 'project', id: project.id } };
     const blocks: any[] = [{ type: 'compose', root, children: picked.map((key: string) => inProject(key)) }];
     if (project.kind === 'game') blocks.push({ type: 'text', text: '另有本作内容（关卡、剧情、立绘等）只属于这一作，不进模块库。', muted: true });
     return { title: '合成图', blocks };
@@ -1158,8 +1160,13 @@ function composeMenu(state: any, id = '') {
   const blocks: any[] = [{ type: 'compose', root, children }];
   if (!children.length) blocks.push({ type: 'text', text: '这是最底层的模块；高一档是在它上面再做一层。', muted: true });
   const info = core.lineInfo(state, line);
+  // The module's own card comes before the numbers: a finished module has its six scores, and a
+  // half-built one shows both the quality already reached and where the current crew would take it.
+  const tier = project ? core.tierFor(line, project.scale) : Math.max(1, info.level + (info.next > 0 ? 1 : 0));
+  const metrics = core.moduleMetrics(state, core.partId(line, Math.min(core.lineTiers(line), tier)));
+  if (info.level || info.next > 0) blocks.push({ type: 'radar', metrics, genre: module.type || '', projectId: null, expected: metrics.expected });
   if (info.level || info.next > 0) blocks.push({ type: 'lines', items: [['档位', info.level + ' / ' + info.top + ' 档' + (info.next > 0 ? '（下一档 ' + Math.round(info.next * 100) + '%）' : '')], ['质量', String(Math.round(info.quality))], ['首次来自', info.first ? '《' + info.first + '》' : '—'], ['用过', info.uses + ' 次'], ['未修缺陷', info.defects + ' 项'], ['标签', (module.tags || []).join('、') || '—']] });
-  return { title: '合成图', blocks };
+  return { title: module.name, blocks };
 }
 
 function financeMenu(state: any) {

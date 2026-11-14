@@ -6,7 +6,7 @@ export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.6';
+export const VERSION = '0.4.7';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -446,6 +446,33 @@ export function lineInfo(state: any, line: string) {
     defects: sum(records.map((record: any) => (record.defects || []).filter((defect: any) => !defect.fixed).length)),
     licensed: !!(state.licenses || {})[line]
   };
+}
+
+// One module's own six-dimension card, so a module can be judged on its own before any title uses it.
+// The solid line is the quality already reached per dimension; the dashed line is where today's crew
+// would take this same tier by finishing the rest of it. A module carries no test workload of its own,
+// so its stability comes from the defects still open on it — all fixed is a full score.
+export function moduleMetrics(state: any, id: string) {
+  const part = partOf(id);
+  const record = (state.modules || {})[id] || {};
+  const dimensions: any = {};
+  const expected: any = {};
+  let value = 0;
+  let done = 0;
+  for (const key of CONTENT_KEYS) {
+    const total = part ? part.work[key] || 0 : 0;
+    const made = Math.min(total, record.done?.[key] || 0);
+    const points = record.value?.[key] || 0;
+    value += points;
+    done += made;
+    dimensions[key] = made > 0 ? round(clamp(points / made, 0, 100)) : 0;
+    const work = WORKS.find(item => item.dimension === key);
+    const best = work ? Math.max(0, ...(state.staff || []).map((person: any) => able(person, work.ability))) : 0;
+    expected[key] = total > 0 ? round(clamp((points + Math.max(0, total - made) * best) / total, 0, 100)) : 0;
+  }
+  const open = ((record.defects || []) as any[]).filter((defect: any) => !defect.fixed).length;
+  dimensions.stability = expected.stability = round(clamp(100 - open * 8, 0, 100));
+  return { dimensions, expected, quality: done > 0 ? round(value / done) : 0, progress: partProgress(state, id), open };
 }
 
 // Slots and lines open up with released titles, so the first game only shows a few choices.

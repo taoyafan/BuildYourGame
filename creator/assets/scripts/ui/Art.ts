@@ -233,8 +233,10 @@ export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: stri
 }
 
 // A module brick: family colour, the module's glyph on the face, one stud per level on top and a metal
-// rim from the third level up. Built means solid, in progress half filled, missing only an outline.
-export function drawBrick(pen: Pen, x: number, y: number, size: number, color: string, glyph: string, level: number, status: string, oneOff = false) {
+// rim from the third level up. Built means solid; a brick in progress keeps what is still missing grey
+// and fills the finished share from the bottom, so a half-done module reads as half coloured and half
+// grey at a glance instead of as a slightly paler brick.
+export function drawBrick(pen: Pen, x: number, y: number, size: number, color: string, glyph: string, level: number, status: string, oneOff = false, progress = 1) {
   const studs = Math.max(1, Math.min(5, level || 1));
   const studW = size * 0.14;
   const top = y + size * 0.14;
@@ -243,16 +245,24 @@ export function drawBrick(pen: Pen, x: number, y: number, size: number, color: s
   const faint = status === 'missing';
   const alpha = faint ? 70 : 255;
   const gap = (size - studs * studW) / (studs + 1);
-  for (let index = 0; index < studs; index++) pen.rect(x + gap + index * (studW + gap), y + size * 0.03, studW, size * 0.13, faint ? '#c9d3cd' : color, size * 0.03, alpha);
+  for (let index = 0; index < studs; index++) pen.rect(x + gap + index * (studW + gap), y + size * 0.03, studW, size * 0.13, faint ? '#c9d3cd' : solid ? color : '#c9d3cd', size * 0.03, alpha);
   if (faint) pen.rect(x, top, size, body, '#eef2ef', size * 0.12);
-  else {
-    pen.rect(x, top, size, body, color, size * 0.12, solid ? 255 : 110);
-    if (!solid) pen.rect(x, top + body / 2, size, body / 2, color, size * 0.12);
+  else if (solid) {
+    pen.rect(x, top, size, body, color, size * 0.12);
     pen.rect(x + size * 0.06, top + size * 0.05, size * 0.88, body * 0.18, '#ffffff', size * 0.06, 50);
+  } else {
+    // Grey for what is still missing, the family colour for what is done, growing up from the bottom.
+    const filled = body * Math.max(0, Math.min(1, progress));
+    pen.rect(x, top, size, body, '#dfe5e1', size * 0.12);
+    if (filled > 0.5) pen.rect(x, top + body - filled, size, filled, color, size * 0.12);
+    if (filled > 0.5) pen.rect(x + size * 0.06, top + body - filled + size * 0.04, size * 0.88, Math.min(body * 0.18, filled * 0.4), '#ffffff', size * 0.06, 50);
   }
   const rim = level >= 5 ? '#e0a526' : level >= 4 ? '#c3ccd2' : level >= 3 ? '#b07b4f' : faint ? '#b8c4bd' : '#5c6a66';
   pen.frame(x, top, size, body, rim, level >= 3 ? 2.5 : 1.2, size * 0.12);
   if (oneOff) pen.frame(x + 3, top + 3, size - 6, body - 6, '#ffffff', 1, size * 0.1);
+  // A half-built brick puts its glyph over grey as well as colour, so it gets a soft dark badge behind
+  // it; without one the white line-art disappears against the pale grey.
+  if (!solid && !faint) pen.circle(x + size / 2, top + body / 2, size * 0.30, '#2f3a37', 55);
   drawGlyph(pen, x + size / 2, top + body / 2, size * 0.32, glyph, faint ? '#a9b5ae' : '#ffffff');
 }
 

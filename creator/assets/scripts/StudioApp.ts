@@ -608,7 +608,7 @@ export class StudioApp extends Component {
   private tipLayout(boardName: string) {
     const tip = this.brickTip;
     if (!tip || tip.board !== boardName) return null;
-    const buttons = [...(tip.item.route ? [{ text: '看组成', route: tip.item.route }] : []), ...(tip.item.actions || [])];
+    const buttons = [...(tip.item.route ? [{ text: tip.item.route.menu === 'project' ? '看作品' : '看模块', route: tip.item.route }] : []), ...(tip.item.actions || [])];
     const cardH = 72 + Math.ceil(buttons.length / 2) * 32;
     return { tip, buttons, cardH, bottom: tip.y + tip.size + tip.gap + cardH + 6 };
   }
@@ -1073,7 +1073,7 @@ export class StudioApp extends Component {
   // Six-axis radar: the solid layer is the current score, the dashed one is where today's team would
   // land if it finished the work. The gap between them is what time can still buy. On the main screen
   // it takes the left part of the row and the stats sit beside it.
-  private radar(body: Node, y: number, metrics: any, type: string, project?: any, compact = 0, caption = true) {
+  private radar(body: Node, y: number, metrics: any, type: string, project?: any, compact = 0, caption = true, projected: any = null) {
     const inner = compact || this.width - 40;
     const height = compact ? 164 : caption ? 184 : 168;
     const { node, pen } = this.canvasNode(body, 'Radar', 0, y, inner, height);
@@ -1098,8 +1098,9 @@ export class StudioApp extends Component {
       const far = point(index, 100);
       pen.line(center.x, center.y, far.x, far.y, colors.pale, 1);
     });
-    // The dashed layer shows where today's team would land if it finished all planned work.
-    const expected = project ? core.expectedDimensions(this.state, project) : null;
+    // The dashed layer shows where today's team would land if it finished all planned work. A module
+    // page passes its own projection, since a module has no project to read it from.
+    const expected = projected || (project ? core.expectedDimensions(this.state, project) : null);
     if (expected) {
       const dash = core.DIM_KEYS.map((key: string, index: number) => point(index, expected[key] || 0));
       for (let index = 0; index < count; index += 1) {
@@ -1124,7 +1125,7 @@ export class StudioApp extends Component {
       label.node.setPosition(spot.x - 28, -spot.y + 16);
       if (project && !project.released) this.clickable(label.node, () => this.openMenu('dimension', project.id, false, key));
     });
-    if (!compact && caption) this.text(node, '绿线为当前 · 黄虚线为做完预期 · 点评分看详情', 8, height - 16, inner - 16, 14, 10, colors.muted);
+    if (!compact && caption) this.text(node, project ? '绿线为当前 · 黄虚线为做完预期 · 点评分看详情' : '绿线为当前 · 黄虚线为做完预期', 8, height - 16, inner - 16, 14, 10, colors.muted);
     return height;
   }
 
@@ -1404,10 +1405,11 @@ export class StudioApp extends Component {
     const statusOf = (key: string) => {
       const need = core.tierFor(key, this.draft.scale || 0);
       const info = core.lineInfo(state, key);
-      if (info.level >= need) return { need, text: '已有', tone: colors.green, brick: 'have' };
-      if (rent.includes(key)) return { need, text: '租用', tone: colors.blue, brick: 'have' };
-      if (info.level > 0 || info.next > 0) return { need, text: '补到 ' + need + ' 档', tone: colors.amber, brick: 'partial' };
-      return { need, text: '新做', tone: colors.amber, brick: 'missing' };
+      if (info.level >= need) return { need, text: '已有', tone: colors.green, brick: 'have', progress: 1 };
+      if (rent.includes(key)) return { need, text: '租用', tone: colors.blue, brick: 'have', progress: 1 };
+      // Tiers already built count as done shares of what this title needs, so the brick fills that much.
+      if (info.level > 0 || info.next > 0) return { need, text: '补到 ' + need + ' 档', tone: colors.amber, brick: 'partial', progress: Math.max(0, Math.min(1, (info.level + info.next) / Math.max(1, need))) };
+      return { need, text: '新做', tone: colors.amber, brick: 'missing', progress: 0 };
     };
     for (const slot of core.SLOTS) {
       if (!core.slotOpen(state, slot)) continue;
@@ -1421,7 +1423,7 @@ export class StudioApp extends Component {
       chosen.slice(0, 2).forEach((key: string, index: number) => {
         const module = core.MODULES[key];
         const status = statusOf(key);
-        drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, module.glyph, status.need, status.brick);
+        drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, module.glyph, status.need, status.brick, false, status.progress);
       });
       const textLeft = 8 + Math.max(1, Math.min(2, chosen.length)) * 34 + 4;
       this.text(row, slot.name + (this.draft.sequel && fixed ? ' · 沿用原作' : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
@@ -1447,7 +1449,7 @@ export class StudioApp extends Component {
         const y = cursor + Math.floor(index / 3) * 92;
         const node = this.box(body, 'Pick', x, y, cell, 84, blocked ? colors.pale : on ? colors.soft : colors.paper, 10);
         new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
-        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, blocked ? colors.line : color, module.glyph, status.need, blocked ? 'missing' : status.brick);
+        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, blocked ? colors.line : color, module.glyph, status.need, blocked ? 'missing' : status.brick, false, blocked ? 0 : status.progress);
         this.text(node, module.name, 4, 46, cell - 8, 18, 11, blocked ? colors.muted : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.text(node, blocked || '需 ' + status.need + ' 档 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.clickable(node, () => {
@@ -1717,10 +1719,10 @@ export class StudioApp extends Component {
         const spots = block.children.map((_child: any, index: number) => ({ x: pitch * (index % columns) + (pitch - size) / 2, y: top + 34 + Math.floor(index / columns) * (size + 22) }));
         for (const spot of spots) pen.line(width / 2, 8 + rootSize, spot.x + size / 2, spot.y + 2, '#b48a5a', 1.5);
         const color = (item: any) => core.AXES[item.axis]?.color || colors.green;
-        drawBrick(pen, (width - rootSize) / 2, 6, rootSize, color(block.root), block.root.glyph || 'star', block.root.level || 1, block.root.status, block.root.oneOff);
+        drawBrick(pen, (width - rootSize) / 2, 6, rootSize, color(block.root), block.root.glyph || 'star', block.root.level || 1, block.root.status, block.root.oneOff, block.root.progress ?? 1);
         this.brickSpot(node, (width - rootSize) / 2, 6, rootSize, block.root, 6);
         block.children.forEach((child: any, index: number) => {
-          drawBrick(pen, spots[index].x, spots[index].y, size, color(child), child.glyph, child.level || 1, child.status, child.oneOff);
+          drawBrick(pen, spots[index].x, spots[index].y, size, color(child), child.glyph, child.level || 1, child.status, child.oneOff, child.progress ?? 1);
           this.brickSpot(node, spots[index].x, spots[index].y, size, child, 24);
           // A light plate under each name keeps it readable on the wooden table.
           pen.rect(spots[index].x - (pitch - size) / 2 + 4, spots[index].y + size + 2, pitch - 8, 18, '#fffaf0', 6, 235);
@@ -1745,7 +1747,7 @@ export class StudioApp extends Component {
         block.items.forEach((item: any, index: number) => {
           const x = pitch * (index % columns) + (pitch - size) / 2;
           const top = Math.floor(index / columns) * (size + 40);
-          drawBrick(pen, x, top, size, core.AXES[item.axis]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff);
+          drawBrick(pen, x, top, size, core.AXES[item.axis]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff, item.progress ?? 1);
           this.text(node, item.name, pitch * (index % columns) + 2, top + size + 2, pitch - 4, 30, 10, item.status === 'missing' ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
           // A shelf opens in place instead of showing a card.
           if (item.open) {
@@ -1851,7 +1853,7 @@ export class StudioApp extends Component {
         }
         return y + 4;
       case 'payout': return y + this.payout(parent, y, block) + 10;
-      case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId)) + 12;
+      case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId), 0, true, block.expected || null) + 12;
       case 'workload': return y + this.workRadar(parent, y, block.values, block.title || '六项工作量') + 12;
       case 'dimensions': {
         // Each dimension shows the current crew and the days it needs; the slowest staffed one is the
