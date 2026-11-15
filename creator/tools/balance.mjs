@@ -18,6 +18,13 @@ export const P = {
   kSlope: 3.6, kOffset: 1.9,
   half: 21, natural: 0.0004, platform: 0.10,
   fanCarry: 0.7, valuationDays: 540,
+  // 按标准团队估算日历工期；岗位不均衡只计入排期，不重复增加人日成本。
+  rotation: {
+    crew: [3, 6, 10, 24], utilization: 0.75, roundDays: 15,
+    rise: 0.5, hold: 2, fall: 0.5,
+    amplitude: 0.20, quiet: 0.05, crowd: 0.04, crowdWeight: 0.20,
+    otherWeight: 0.20
+  },
   // 宣发：关注单价 = 单价 × (基础 + 斜率 × 付费覆盖)，越买越贵
   unitBase: 0.47, unitSlope: 0.35,
   // 成本（元/人日）：工资 = 标准日薪 × (能力/60)^溢价比，人日成本与工资同口径
@@ -37,6 +44,31 @@ export const offices = [
 ];
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+export function rotationSpan(s) {
+  const r = P.rotation;
+  const crew = r.crew[Object.keys(P.scales).indexOf(s)];
+  const work = P.scales[s].W;
+  const production = Math.ceil(work / (crew * r.utilization) / r.roundDays) * r.roundDays;
+  const rise = Math.ceil(production * r.rise);
+  const hold = Math.ceil(production * r.hold);
+  const fall = Math.ceil(production * r.fall);
+  return { production, rise, hold, fall, total: rise + hold + fall };
+}
+
+// age 是本轮已过的游戏天数，边界连续，退潮回到中性。
+export function rotationPhase(s, age) {
+  const span = rotationSpan(s);
+  if (age < span.rise) return { phase: '升温', strength: clamp(age / span.rise, 0, 1) };
+  if (age < span.rise + span.hold) return { phase: '持续', strength: 1 };
+  return { phase: '退潮', strength: clamp((span.total - age) / span.fall, 0, 1) };
+}
+
+function rotationBlock(s) {
+  const t = rotationSpan(s);
+  const launch = t.rise + t.production;
+  console.log(`${s}  标准工期 ${t.production}天  升温/持续/退潮 ${t.rise}/${t.hold}/${t.fall}天  单类周期 ${t.total}天  升温结束开工→第${launch}天上市，持续期还剩 ${t.rise + t.hold - launch}天`);
+}
 
 export const relativeScore = (s, q) => clamp(P.target + q - P.scales[s].S, 0, 100);
 export const quality = qe => clamp((qe - 40) / 60, 0, 1);
@@ -60,16 +92,17 @@ export const rentDay = s => {
 export const dayCost = (q, s) => (P.wageDay * wageFactor(q) + rentDay(s)) / 10000;   // 万 / 人日
 export const unitPrice = (s, cover) =>
   priceOf(s) * (P.unitBase + P.unitSlope * Math.max(0, cover - P.platform));
-export const promoCost = (s, qe, cover) => {
+export const promoCost = (s, qe, cover, demand = 1) => {
   const x = Math.max(0, cover - P.platform);
-  return x * marketOf(s, qe) * unitPrice(s, cover) / 10000;
+  return x * marketOf(s, qe) * demand * unitPrice(s, cover) / 10000;
 };
 
 // 单作结算。q 绝对评分，cover 首发总覆盖，fansStock 上作粉丝存量。
-export function title(s, q, cover, fansStock = 0) {
+export function title(s, q, cover, fansStock = 0, demand = 1) {
+  if (!Number.isFinite(demand) || demand <= 0) throw new Error('需求系数必须为正数');
   const price = priceOf(s);
   const qe = relativeScore(s, q);
-  const market = marketOf(s, qe);
+  const market = marketOf(s, qe) * demand;
   const conv = conversion(qe);
   const k = spread(qe);
   let fans = Math.min(market, cover * market + P.fanCarry * fansStock);
@@ -82,7 +115,7 @@ export function title(s, q, cover, fansStock = 0) {
     fans = Math.max(0, fans * (1 - P.forget) - units + units * k * room * heat + market * P.natural * heat);
     sold += units;
   }
-  const promo = promoCost(s, qe, cover);
+  const promo = promoCost(s, qe, cover, demand);
   const labor = P.scales[s].W * dayCost(q, s);
   const total = labor + promo;
   const revenue = sold * price / 10000;
@@ -126,6 +159,11 @@ function block(s) {
 function main() {
   const arg = process.argv[2];
   const one = arg && P.scales[arg] ? arg : null;
+  console.log('【市场轮换：固定参考工期，不跟随实时人数、加速或模块复用跳变】');
+  for (const s of one ? [one] : names) rotationBlock(s);
+  console.log('【行情对净利的影响：Q=S+4、常规宣发，已同时计入宣发涨价】');
+  for (const s of one ? [one] : names) console.log(`${s}  ` + [0.8, 1, 1.2].map(d => `需求×${d.toFixed(1)} 净利${title(s, P.scales[s].S + 4, 0.45, 0, d).net.toFixed(2)}万`).join('  '));
+  if (arg === '--market') return;
   if (one) { block(one); return; }
 
   for (const s of names) block(s);
