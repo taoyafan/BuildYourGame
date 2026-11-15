@@ -3,12 +3,13 @@
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, SLOTS, AXES, ORIGINS } from './Modules';
 import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
+import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand } from './Planning';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.14';
+export const VERSION = '0.4.15';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -299,6 +300,8 @@ for (const module of Object.values(MODULES) as any[]) for (const tag of module.t
 export const LENS_ORDER = ['design', 'art', 'audio', 'tech'];
 export const LENS_ABILITY: any = { design: 'creativity', art: 'picture', audio: 'sound', tech: 'fluidity' };
 export const lensOf = (state: any) => LENS_ORDER[state.marketCycle?.index || 0];
+const cycleClocks = (cycle: any): any[] => cycle.clocks || [cycle];
+export const activeMarketAxes = (state: any): string[] => state.marketCycle ? cycleClocks(state.marketCycle).map(clock => LENS_ORDER[clock.index]) : ['design'];
 
 function chooseDirections(state: any, cycle: any) {
   const axis = LENS_ORDER[cycle.index];
@@ -316,12 +319,21 @@ function chooseDirections(state: any, cycle: any) {
 }
 
 function ensureMarketCycle(state: any) {
-  if (state.marketCycle) return;
+  if (state.marketCycle) {
+    const c = state.marketCycle;
+    if (!Array.isArray(c.reviews)) c.reviews = (c.seen || []).filter((axis: string) => state.catalog.some((book: any) => !book.parentId && book.firstRanks && (book.tags || []).some((tag: string) => TAG_AXIS[tag] === axis)));
+    c.dualReviews = c.dualReviews || 0;
+    c.parallel = c.parallel || 1;
+    return;
+  }
   const scale = Math.max(0, ...state.projects.filter((p: any) => p.kind === 'game' && !p.parentId && !p.port).map((p: any) => p.scale), ...state.catalog.filter((b: any) => !b.parentId).map((b: any) => b.scale));
   const oldIndex = LENS_ORDER.indexOf(state.lens);
   const index = Math.max(0, oldIndex);
   state.marketCycle = { scale, index, from: state.day, hot: {}, last: {}, seen: state.lens === null ? [...LENS_ORDER] : LENS_ORDER.slice(0, index + 1), reported: false };
   chooseDirections(state, state.marketCycle);
+  state.marketCycle.reviews = [];
+  state.marketCycle.dualReviews = 0;
+  state.marketCycle.parallel = 1;
   delete state.lens;
   delete state.lensFrom;
 }
@@ -330,29 +342,69 @@ function extendMarketCycle(state: any, scale: number) {
   ensureMarketCycle(state);
   const c = state.marketCycle;
   if (scale <= c.scale) return;
-  const age = extendedAge(c.scale, scale, Math.max(0, state.day - c.from));
+  for (const clock of cycleClocks(c)) {
+    const age = extendedAge(c.scale, scale, Math.max(0, state.day - clock.from));
+    clock.from = state.day - age;
+    if (clock.activated !== undefined) {
+      const warm = clamp((state.day - clock.activated) / rotationSpan(c.scale).rise, 0, 1);
+      clock.activated = state.day - warm * rotationSpan(scale).rise;
+    }
+  }
   c.scale = scale;
-  c.from = state.day - age;
+  if (c.clocks) Object.assign(c, c.clocks[0]);
+}
+
+function reviewMarket(state: any, book: any) {
+  if (book.parentId) return;
+  ensureMarketCycle(state);
+  const c = state.marketCycle;
+  c.reviews = Array.from(new Set([...c.reviews, ...(book.marketAxes || [])]));
+  if (book.marketParallel === 2) c.dualReviews += 1;
+  const next = marketComplexity(c.reviews.length, c.dualReviews);
+  if (next <= c.parallel) return;
+  const span = rotationSpan(c.scale);
+  const clocks = cycleClocks(c).map(clock => ({ index: clock.index, from: clock.from, hot: { ...clock.hot }, last: { ...clock.last }, reported: clock.reported, activated: clock.activated }));
+  const occupied = clocks.map(clock => clock.index);
+  for (let i = clocks.length; i < next; i++) {
+    const index = LENS_ORDER.findIndex((_, n) => !occupied.includes(n));
+    occupied.push(index);
+    const offset = next === 2 ? span.total / 2 : (i === 2 ? span.total / 4 : span.total * 3 / 4);
+    const age = ((state.day - c.from + offset) % span.total + span.total) % span.total;
+    const clock: any = { index, from: state.day - age, hot: {}, last: {}, reported: false, activated: state.day };
+    chooseDirections(state, clock);
+    clocks.push(clock);
+  }
+  c.clocks = clocks;
+  c.parallel = next;
+  announce(state, { kind: 'unlock', title: '看懂了更多市场变化', text: next === 2 ? '四类都经历过发售复盘了。接下来可以同时观察两类行情，各类仍有完整的研发窗口。' : '已经完成两次双类行情复盘。现在各类行情独立变化，每作可以按需要组合。', axis: lensOf(state), amount: 0 });
 }
 
 function marketCycleDay(state: any) {
   ensureMarketCycle(state);
   const c = state.marketCycle;
   const span = rotationSpan(c.scale);
-  if (state.day - c.from >= span.total) {
-    c.from += span.total;
-    c.index = (c.index + 1) % LENS_ORDER.length;
-    c.reported = false;
-    const axis = LENS_ORDER[c.index];
-    if (!c.seen.includes(axis)) c.seen.push(axis);
-    chooseDirections(state, c);
-    announce(state, { kind: 'unlock', title: '行业关注变化', text: `最近大家开始更多讨论${AXES[axis].name}。新闻和榜单会突出这一类的表现。`, axis, amount: 0 });
+  const clocks = cycleClocks(c);
+  for (const clock of clocks) {
+    if (state.day - clock.from >= span.total) {
+      clock.from += span.total;
+      if (c.parallel < 4) {
+        const occupied = clocks.filter(item => item !== clock).map(item => item.index);
+        do { clock.index = (clock.index + 1) % LENS_ORDER.length; } while (occupied.includes(clock.index));
+      }
+      clock.reported = false;
+      const axis = LENS_ORDER[clock.index];
+      if (!c.seen.includes(axis)) c.seen.push(axis);
+      chooseDirections(state, clock);
+      if (c.parallel === 1) announce(state, { kind: 'unlock', title: '行业关注变化', text: `最近大家开始更多讨论${AXES[axis].name}。新闻和榜单会突出这一类的表现。`, axis, amount: 0 });
+    }
+    const warm = clock.activated === undefined || state.day - clock.activated >= span.rise;
+    if (!clock.reported && warm && state.day - clock.from >= span.rise) {
+      clock.reported = true;
+      const tags = Object.values(clock.hot).join('、');
+      news(state, state.focus || 0, false, `${AXES[LENS_ORDER[clock.index]].name}成为近期话题`, `近期${tags}方向受到关注。同类新作的表现值得留意，作品品质与宣传仍会影响销量。`, null, true);
+    }
   }
-  if (!c.reported && state.day - c.from >= span.rise) {
-    c.reported = true;
-    const tags = Object.values(c.hot).join('、');
-    news(state, state.focus || 0, false, `${AXES[lensOf(state)].name}成为近期话题`, `近期${tags}方向受到关注。同类新作的表现值得留意，作品品质与宣传仍会影响销量。`, null, true);
-  }
+  if (c.clocks) Object.assign(c, c.clocks[0]);
 }
 export function tagHeat(value: number) {
   return value >= 1.12 ? { label: '热门', tone: 'up' } : value <= 0.88 ? { label: '拥挤', tone: 'down' } : { label: '平稳', tone: 'flat' };
@@ -375,9 +427,11 @@ export function tagDemand(state: any, tag: string) {
   const raw = ((state.tags || {})[tag] ?? 1) / Math.max(0.1, mean);
   const crowd = clamp((raw - 1) * ROTATION.crowdWeight, -ROTATION.crowd, ROTATION.crowd);
   const c = state.marketCycle;
-  if (!c || TAG_AXIS[tag] !== lensOf(state)) return round(1 + clamp(crowd, -ROTATION.quiet, ROTATION.quiet));
-  const strength = rotationPhase(c.scale, state.day - c.from).strength;
-  const bias = group.length <= 1 ? 0 : c.hot[TAG_GROUP[tag]] === tag ? ROTATION.amplitude : -ROTATION.amplitude / (group.length - 1);
+  const clock = c && cycleClocks(c).find(item => LENS_ORDER[item.index] === TAG_AXIS[tag]);
+  if (!clock) return round(1 + clamp(crowd, -ROTATION.quiet, ROTATION.quiet));
+  const warm = clock.activated === undefined ? 1 : clamp((state.day - clock.activated) / rotationSpan(c.scale).rise, 0, 1);
+  const strength = rotationPhase(c.scale, state.day - clock.from).strength * warm;
+  const bias = group.length <= 1 ? 0 : clock.hot[TAG_GROUP[tag]] === tag ? ROTATION.amplitude : -ROTATION.amplitude / (group.length - 1);
   return round(1 + clamp(bias * strength + crowd, -ROTATION.amplitude, ROTATION.amplitude));
 }
 function seedTags(state: any) {
@@ -397,17 +451,26 @@ function tagDay(state: any) {
 }
 // Average within each category, then use fixed weights: adding a quiet tag cannot dilute the focus.
 export function tagFactor(state: any, tags: string[], scale = 0) {
-  const unique = [...new Set(tags)];
+  const unique = Array.from(new Set(tags));
   const axes = LENS_ORDER.map(axis => {
-    const groups = [...new Set(unique.filter(tag => TAG_AXIS[tag] === axis).map(tag => TAG_GROUP[tag]))];
+    const groups = Array.from(new Set(unique.filter(tag => TAG_AXIS[tag] === axis).map(tag => TAG_GROUP[tag])));
     if (!groups.length) return 0;
     const changes = groups.map(group => {
       const matching = unique.filter(tag => TAG_GROUP[tag] === group);
       return sum(matching.map(tag => tagDemand(state, tag) - 1)) / matching.length;
     });
-    return sum(changes) / changes.length * (axis === lensOf(state) ? 1 : ROTATION.otherWeight);
+    return groups.length ? sum(changes) / changes.length : 0;
   });
-  return round(clamp(1 + sum(axes), 0.75, 1.25));
+  const active = activeMarketAxes(state);
+  const strong = active.map(axis => axes[LENS_ORDER.indexOf(axis)]);
+  const weights = active.map(axis => {
+    if (!state.marketCycle) return 1;
+    const clock = cycleClocks(state.marketCycle).find(item => LENS_ORDER[item.index] === axis);
+    return clock.activated === undefined ? 1 : clamp((state.day - clock.activated) / rotationSpan(state.marketCycle.scale).rise, 0, 1);
+  });
+  const main = combinedDemand(strong, weights);
+  const background = sum(LENS_ORDER.filter(axis => !active.includes(axis)).map(axis => axes[LENS_ORDER.indexOf(axis)])) * ROTATION.otherWeight;
+  return round(clamp(main + background, 1 - ROTATION.amplitude, 1 + ROTATION.amplitude));
 }
 
 // Testing is the whole game's work, not a module: a share of all the content, reused parts included.
@@ -761,6 +824,98 @@ function refreshWork(state: any, project: any) {
       work.batches = done > 0 ? [{ amount: done, quality: value / done }] : [];
     }
   }
+  prepareModuleUpdates(state, project);
+}
+
+// Updates are a separate effort ledger: quality points still describe the original module work,
+// so spending time on an update never dilutes the score or creates a second copy of the module.
+function prepareModuleUpdates(state: any, project: any) {
+  if (project.released || project.rebuild || !state.projects.some((item: any) => item.id === project.id)) return;
+  project.updateHands = project.updateHands || {};
+  project.moduleUpdates = project.moduleUpdates || {};
+  project.updateWork = {};
+  const hands: any = {};
+  for (const person of state.staff) {
+    if (!belongsTo(state, project, person)) continue;
+    const saved = project.updateHands[person.id] || (project.updateHands[person.id] = {});
+    for (const key of assignedWorks(project, person)) {
+      const work = WORKS.find(item => item.key === key);
+      if (!work || work.dimension === 'stability') continue;
+      if (saved[key] === undefined) saved[key] = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
+      hands[work.dimension] = Math.max(hands[work.dimension] || 0, saved[key]);
+    }
+  }
+  for (const id of project.parts || []) {
+    const record = state.modules[id];
+    if (!record) continue;
+    for (const [key, planned] of Object.entries(partOf(id).work) as any) {
+      const work = Math.min(planned, record.done[key] || 0);
+      if (work <= 0) continue;
+      const quality = record.done[key] > 0 ? record.value[key] / record.done[key] : 0;
+      const goals = project.moduleUpdates[id] || (project.moduleUpdates[id] = {});
+      let goal = goals[key];
+      const target = hands[key] || goal?.target || 0;
+      const left = moduleUpdateWork(work, quality, target);
+      if (!goal && left <= 0.0001) continue;
+      if (!goal) goal = goals[key] = { target, total: left };
+      else if (target !== goal.target) {
+        goal.total = Math.max(0, goal.total + left - moduleUpdateWork(work, quality, goal.target));
+        goal.target = target;
+      }
+      const row = project.updateWork[key] || (project.updateWork[key] = { total: 0, done: 0, left: 0, gain: 0 });
+      row.total += Math.max(goal.total, left);
+      row.left += left;
+      row.done += Math.max(0, goal.total - left);
+      row.gain += Math.max(0, target - quality) * work;
+    }
+  }
+}
+
+function personalRemaining(state: any, project: any, person: any, workKey: string) {
+  const work = WORKS.find(item => item.key === workKey);
+  if (!work) return 0;
+  const key = work.dimension;
+  let left = Math.max(0, workOf(project, key).total - workOf(project, key).done);
+  const cap = Math.min(project.updateHands?.[person.id]?.[workKey] ?? 100, able(person, work.ability) + rareBonus(state, project, key));
+  for (const [id, goals] of Object.entries(project.moduleUpdates || {}) as any) {
+    const goal = goals[key];
+    const record = state.modules[id];
+    if (!goal || !record?.done[key]) continue;
+    left += moduleUpdateWork(Math.min(partOf(id).work[key], record.done[key]), record.value[key] / record.done[key], Math.min(cap, goal.target));
+  }
+  return left;
+}
+
+function deliverModuleUpdates(state: any, project: any, person: any, key: string, budget: number, quality: number) {
+  const targets: any[] = [];
+  const cap = Math.min(quality, project.updateHands?.[person.id]?.[key] ?? quality);
+  for (const [id, goals] of Object.entries(project.moduleUpdates || {}) as any) {
+    const goal = goals[key];
+    const record = state.modules[id];
+    if (!goal || !record?.done[key]) continue;
+    const old = record.value[key] / record.done[key];
+    const work = Math.min(partOf(id).work[key], record.done[key]);
+    const target = Math.min(cap, goal.target);
+    const left = moduleUpdateWork(work, old, target);
+    if (left > 0.000001) targets.push({ id, old, work, target, left });
+  }
+  const total = sum(targets.map(item => item.left));
+  const used = Math.min(budget, total);
+  project.lastOwners = { ...(project.lastOwners || {}), [key]: [] };
+  if (used <= 0) return 0;
+  for (const item of targets) {
+    const effort = used * item.left / total;
+    const record = state.modules[item.id];
+    record.value[key] = record.done[key] * moduleUpdatedQuality(item.work, item.old, item.target, effort);
+    project.lastOwners[key].push({ id: item.id, amount: effort });
+  }
+  return used;
+}
+
+export function moduleUpdateSummary(state: any, project: any) {
+  refreshWork(state, project);
+  const work = sum(Object.values(project.updateWork || {}).map((row: any) => row.left));
+  return { work, modules: Object.entries(project.moduleUpdates || {}).filter(([, goals]: any) => Object.keys(goals).length).map(([id]) => MODULES[partOf(id).line].name) };
 }
 
 // New work in a dimension goes to whatever still needs it there, in proportion to what each has left:
@@ -845,14 +1000,15 @@ function shareDefects(state: any) {
 // short of the end of the bar until someone is put on testing.
 function progressOf(project: any) {
   const base = project.base || {};
-  const left = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - Math.max(base[key] || 0, workOf(project, key).done))));
-  const span = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - (base[key] || 0))));
+  const updates: any[] = Object.values(project.updateWork || {});
+  const left = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - Math.max(base[key] || 0, workOf(project, key).done)))) + sum(updates.map(row => row.left));
+  const span = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - (base[key] || 0)))) + sum(updates.map(row => row.total));
   return span <= 0.0001 ? 1 : clamp(1 - left / span, 0, 1);
 }
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 12, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 13, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -1021,6 +1177,7 @@ export function takeJob(state: any, id: string) {
 // A module project builds lines ahead of any title (up to a tier), or rebuilds one tier from scratch to
 // replace weaker work. It has no milestones and ends by itself once its work is done.
 export function startModuleProject(state: any, line: string, level: number, rebuild = false) {
+  if (rebuild) throw new Error('使用模块的作品会自动安排质量更新，无需单独重做。');
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
   const module = MODULES[line];
@@ -1559,14 +1716,14 @@ function assignDay(state: any, project: any, person: any) {
   const usable = assignedWorks(project, person);
   // Nothing assigned: no output at all. Without this guard an idle person still picked up defect repair.
   if (!usable.length) return {};
-  const pending = usable.some(key => remainingOf(project, key) > 0.0001);
+  const pending = usable.some(key => personalRemaining(state, project, person, key) > 0.0001);
   if (!pending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
   const remaining: any = {};
   const open: string[] = [];
   // One threshold both here and in `pending`: the box that counts as finished must be the box that
   // stops taking time, otherwise a sliver of work keeps soaking up a share of the day.
   for (const key of usable) {
-    const left = remainingOf(project, key);
+    const left = personalRemaining(state, project, person, key);
     if (left > 0.0001) { remaining[key] = left; open.push(key); }
   }
   // Finished items stop taking time. When every assigned item is done and no defect is waiting, the
@@ -1580,8 +1737,9 @@ function assignDay(state: any, project: any, person: any) {
 }
 
 function remainingOf(project: any, workKey: string) {
-  const work = workOf(project, WORKS.find(item => item.key === workKey)?.dimension || workKey);
-  return Math.max(0, work.total - work.done);
+  const key = WORKS.find(item => item.key === workKey)?.dimension || workKey;
+  const work = workOf(project, key);
+  return Math.max(0, work.total - work.done) + (project.updateWork?.[key]?.left || 0);
 }
 
 // How much of one work item is still to do. A finished item keeps its place in the assignment list,
@@ -1601,7 +1759,7 @@ function spreadSpare(state: any, project: any, person: any, budget: number, skip
     if (key === skipKey || key === 'repair') continue;
     const work = WORKS.find(item => item.key === key);
     if (!work) continue;
-    const room = remainingOf(project, key);
+    const room = personalRemaining(state, project, person, key);
     if (room <= 0.0001) continue;
     const amount = Math.min(left, room);
     const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
@@ -1666,7 +1824,7 @@ export function projectMetrics(project: any) {
     progress: round(progress * 100),
     dimensions, overall: overallOf(project.type, dimensions),
     defects: open, known, found: project.found, coverage: round(coverage(project) * 100),
-    unfinished: DIM_KEYS.filter(key => workOf(project, key).done < workOf(project, key).total - 0.001)
+    unfinished: DIM_KEYS.filter(key => remainingOf(project, key) > 0.001)
   };
 }
 
@@ -1730,8 +1888,8 @@ export function expectedDimensions(state: any, project: any) {
       hands += output;
     }
     if (key === 'stability') testHands = hands;
-    if (!hands || remaining <= 0.0001) { out[key] = dimensionScore(work); continue; }
-    out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
+    if (!hands) { out[key] = dimensionScore(work); continue; }
+    out[key] = round(clamp((work.value + remaining * (weighted / hands) + (project.updateWork?.[key]?.gain || 0)) / work.total, 0, 100));
   }
   // The dashed stability line is where today's team would land by finishing the remaining test work
   // and clearing what it finds: the coverage the projected test score reaches, with no open defects.
@@ -1758,6 +1916,7 @@ function conditionFactor(person: any, project: any) {
 }
 
 export function dimensionPipeline(state: any, project: any) {
+  refreshWork(state, project);
   const rate: any = {};
   for (const key of DIM_KEYS) rate[key] = 0;
   let discover = 0;
@@ -1776,7 +1935,7 @@ export function dimensionPipeline(state: any, project: any) {
     }
   }
   const rows = DIM_KEYS.map(key => {
-    const remaining = Math.max(0, workOf(project, key).total - workOf(project, key).done);
+    const remaining = remainingOf(project, key);
     const daily = rate[key];
     // A finished dimension is done whether or not anyone is still on it; only unfinished ones can block.
     const days = remaining <= 0.0001 ? 0 : daily > 0.0001 ? Math.ceil(remaining / daily) : null;
@@ -1809,7 +1968,7 @@ export function projectForecast(state: any, project: any) {
   if (!project) return null;
   const pipeline = dimensionPipeline(state, project);
   const metrics = visibleMetrics(project);
-  const totalRemaining = DIM_KEYS.reduce((total, key) => total + Math.max(0, workOf(project, key).total - workOf(project, key).done), 0);
+  const totalRemaining = DIM_KEYS.reduce((total, key) => total + remainingOf(project, key), 0);
   const aggregate = sum(CONTENT_KEYS.map(key => pipeline.rows.find((row: any) => row.key === key)?.rate || 0));
   // The date covers every staffed row; any unstaffed unfinished row (testing included) makes the
   // finish date unknown, because the bar cannot reach 100% until someone works on it.
@@ -2091,6 +2250,8 @@ export function startProject(state: any, plan: any, priority = -1) {
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   if (!project.parentId && !project.port) extendMarketCycle(next, project.scale);
+  refreshWork(next, project);
+  project.progress = projectMetrics(project).progress;
   if (priority >= 0) return setPriority(next, project.id, priority);
   studioLog(next, '新作立项', `《${name}》面向${TYPES[project.type].audience}，${SCALES[plan.scale].name}作品。`);
   return next;
@@ -2113,6 +2274,7 @@ export function assign(state: any, projectId: string, personId: string, works: s
   }
   if (!project.assignments) project.assignments = {};
   project.assignments[personId] = list;
+  for (const item of next.projects) if (!item.released) { refreshWork(next, item); item.progress = projectMetrics(item).progress; }
   studioLog(next, '调整分工', `${person.name} 参与《${project.name}》：${list.length ? list.map(key => WORKS.find(work => work.key === key)?.name).join('、') : '空闲（不做任何工作）'}。`);
   return next;
 }
@@ -2330,6 +2492,9 @@ function recordWork(project: any, person: any, key: string, amount: number, qual
   if (amount <= 0) return;
   const work = workOf(project, key);
   if (work.total <= 0) return;
+  const updating = state && key !== 'stability' ? deliverModuleUpdates(state, project, person, key, amount, quality) : 0;
+  const updateOwners = updating ? [...project.lastOwners[key]] : [];
+  amount -= updating;
   const space = work.total - work.done;
   const used = Math.min(amount, Math.max(0, space));
   if (used > 0) {
@@ -2341,8 +2506,10 @@ function recordWork(project: any, person: any, key: string, amount: number, qual
     work.value += used * quality;
     if (state && key !== 'stability') creditWork(state, project, key, used, quality);
   }
-  project.contributions[person.id] = (project.contributions[person.id] || 0) + used;
-  person.work = round(person.work + used);
+  if (updating) project.lastOwners[key] = [...updateOwners, ...(used > 0 ? project.lastOwners[key] || [] : [])];
+  project.contributions[person.id] = (project.contributions[person.id] || 0) + used + updating;
+  person.work = round(person.work + used + updating);
+  if (state) refreshWork(state, project);
 }
 
 // Rework: once a dimension is full, further work replaces the weakest finished part, so the score
@@ -2504,7 +2671,7 @@ function produceProject(state: any, project: any) {
         person.work = round(person.work + amount);
       } else {
         const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
-        const remaining = workOf(project, work.dimension).total - workOf(project, work.dimension).done;
+        const remaining = personalRemaining(state, project, person, key);
         const used = Math.min(amount, Math.max(0, remaining));
         if (remaining > 0) {
           recordWork(project, person, work.dimension, used, quality, state);
@@ -2518,7 +2685,7 @@ function produceProject(state: any, project: any) {
           const left = spare - given;
           if (left > 0.0001) {
             if (project.defects.some((defect: any) => defect.found && !defect.fixed)) repair(state, project, left, person);
-            else { rework(project, work.dimension, left, quality, state); practice(person, work.ability, left, growth); }
+            // Completed items stop taking time. Module improvements use the explicit effort ledger.
           }
           project.contributions[person.id] = (project.contributions[person.id] || 0) + spare;
           person.work = round(person.work + spare);
@@ -2927,7 +3094,8 @@ export function launchProject(state: any, projectId: string) {
     tutorial: next.catalog.length === 0, review,
     sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [], flawless: metrics.defects === 0, clash: clash.works.length,
     capacity, left: capacity, sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0,
-    tags, lean, royalty: 0, rent: [...(project.rent || [])]
+    tags, lean, royalty: 0, rent: [...(project.rent || [])],
+    marketAxes: activeMarketAxes(next), marketParallel: next.marketCycle?.parallel || 1
   };
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
@@ -3271,6 +3439,7 @@ export function stepDay(state: any) {
     produceProject(next, project);
     if (project.released) syncReleased(next, project);
   }
+  for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   const job = next.projects.find((project: any) => project.job && project.progress >= 100);
   if (job && !next.event) finishJob(next, job);
   for (const project of next.projects.filter((item: any) => item.kind === 'module' && !item.job && item.progress >= 100)) finishModuleProject(next, project);
@@ -3625,8 +3794,8 @@ export function currentScale(state: any) {
 
 // The tags worth mentioning right now: those of the category the market is about (all once learned).
 export function lensTags(state: any, tags: string[]) {
-  const lens = lensOf(state);
-  return lens === null ? tags : tags.filter(tag => TAG_AXIS[tag] === lens);
+  const axes = activeMarketAxes(state);
+  return tags.filter(tag => axes.includes(TAG_AXIS[tag]));
 }
 
 // One chart for the industry menu: first-week sales over the last year, or lifetime sales.
@@ -3907,6 +4076,7 @@ function industryDay(state: any) {
     // The first-week numbers live in the news, the archive and the ledger. A banner on top of all
     // three was the fourth copy of the same result, so it no longer pops up.
     studioLog(state, `《${book.name}》首周总结`, `首周售出 ${firstWeek} 份，全国首周榜第 ${national} 名。${clashText}`);
+    reviewMarket(state, book);
     if (national <= 10 && state.goals.topTen === null) {
       state.goals.topTen = state.day;
       state.fans += 200;
@@ -4498,6 +4668,8 @@ export function restoreStudio(saved: any) {
     }
     next.rulesRevision = 12;
   }
+  if (next.rulesRevision < 13) next.rulesRevision = 13;
+  for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
 }
@@ -4609,6 +4781,14 @@ function validStudio(state: any) {
     || !object(cycle.hot) || !object(cycle.last) || typeof cycle.reported !== 'boolean'
     || !Array.isArray(cycle.seen) || !cycle.seen.includes(LENS_ORDER[cycle.index]) || !cycle.seen.every((axis: string) => LENS_ORDER.includes(axis))
     || Object.entries(cycle.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_AXIS[tag] !== LENS_ORDER[cycle.index]))) return false;
+  if (cycle?.clocks && (!Array.isArray(cycle.clocks) || ![2, 4].includes(cycle.parallel) || cycle.clocks.length !== cycle.parallel
+    || new Set(cycle.clocks.map((clock: any) => clock.index)).size !== cycle.parallel
+    || cycle.clocks.some((clock: any) => !Number.isInteger(clock.index) || clock.index < 0 || clock.index >= LENS_ORDER.length
+      || !number(clock.from) || clock.from > state.day || state.day - clock.from > rotationSpan(cycle.scale).total
+      || !object(clock.hot) || !object(clock.last) || typeof clock.reported !== 'boolean'
+      || clock.activated !== undefined && (!number(clock.activated) || clock.activated > state.day)
+      || Object.entries(clock.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_AXIS[tag] !== LENS_ORDER[clock.index])))) return false;
+  if (cycle?.reviews && (!Array.isArray(cycle.reviews) || !cycle.reviews.every((axis: string) => LENS_ORDER.includes(axis)))) return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;

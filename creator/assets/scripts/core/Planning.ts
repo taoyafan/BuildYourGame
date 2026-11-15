@@ -1,6 +1,31 @@
 // Plain JavaScript syntax: the balance CLI loads this module without a TypeScript compiler.
 // One source for the economic model's work, office staffing, salary speed and market reference time.
 export const STANDARD_SPEED = 100;
+export const LABOR_PARAMETERS = { wageDay: 400, standardQ: 60, wageExp: 3 };
+export const MARKET_LEARNING = { dualReviews: 2 };
+
+export function salaryFactor(quality) {
+  const ratio = Math.max(0, quality) / LABOR_PARAMETERS.standardQ;
+  return ratio <= 1 ? ratio : Math.pow(ratio, LABOR_PARAMETERS.wageExp);
+}
+export function qualityFromFactor(value) {
+  return Math.min(100, LABOR_PARAMETERS.standardQ * (value <= 1 ? Math.max(0, value) : Math.pow(value, 1 / LABOR_PARAMETERS.wageExp)));
+}
+export function moduleUpdateWork(work, oldQuality, target) {
+  const value = salaryFactor(target);
+  return value > 0 ? work * Math.max(0, 1 - salaryFactor(oldQuality) / value) : 0;
+}
+export function moduleUpdatedQuality(work, oldQuality, target, effort) {
+  if (work <= 0 || target <= oldQuality) return oldQuality;
+  return Math.max(oldQuality, Math.min(target, qualityFromFactor(salaryFactor(oldQuality) + Math.max(0, effort) / work * salaryFactor(target))));
+}
+export function marketComplexity(reviews, dualReviews) {
+  return reviews >= 4 ? (dualReviews >= MARKET_LEARNING.dualReviews ? 4 : 2) : 1;
+}
+export function combinedDemand(changes, weights) {
+  const total = weights.reduce((n, v) => n + v, 0);
+  return total > 0 ? 1 + changes.reduce((n, v, i) => n + v * weights[i], 0) / total : 1;
+}
 export const PLANNING_OFFICES = [
   { name: '自家', seats: 1, rent: 0, cost: 0, crew: 1, peak: 45 },
   { name: '起步小屋', seats: 4, rent: 1.5, cost: 0, crew: 3, peak: 48 },

@@ -3,7 +3,8 @@
 import { readFileSync } from 'node:fs';
 // Planning.ts intentionally contains plain JS and no imports; share the runtime source on Node 18+.
 const planning = await import('data:text/javascript;base64,' + readFileSync(new URL('../assets/scripts/core/Planning.ts', import.meta.url)).toString('base64'));
-const { PLANNING_SCALES, PLANNING_OFFICES, STANDARD_SPEED, ROTATION_PARAMETERS } = planning;
+const { PLANNING_SCALES, PLANNING_OFFICES, STANDARD_SPEED, ROTATION_PARAMETERS, LABOR_PARAMETERS } = planning;
+export const { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand } = planning;
 
 export const P = {
   // 体量：w 市场系数，W 总人日（含测试与修复），pc 单价系数，S 水准线（= 保本线）
@@ -21,7 +22,7 @@ export const P = {
   // 宣发：关注单价 = 单价 × (基础 + 斜率 × 付费覆盖)，越买越贵
   unitBase: 0.47, unitSlope: 0.35,
   // 成本（元/人日）：工资 = 标准日薪 × (能力/60)^溢价比，人日成本与工资同口径
-  wageDay: 400, standardQ: 60, wageExp: 3,
+  ...LABOR_PARAMETERS,
   // 宣发五档：首发总关注占市场的比例
   tiers: [['不投', 0.10], ['试水', 0.25], ['常规', 0.45], ['力推', 0.65], ['全力', 0.85]]
 };
@@ -58,12 +59,9 @@ export const priceOf = s => P.priceBase * P.scales[s].pc;
 export const conversion = qe => P.convBase + P.convGain * Math.pow(quality(qe), P.convExp);
 export const spread = qe => clamp(P.kSlope * quality(qe) - P.kOffset, -1, 2);
 export const monthlyWage = (peak, speed = STANDARD_SPEED) =>
-  1.2 * (peak <= P.standardQ ? peak / P.standardQ : Math.pow(peak / P.standardQ, P.wageExp)) * (speed / STANDARD_SPEED);  // 万元 / 月
+  1.2 * planning.salaryFactor(peak) * (speed / STANDARD_SPEED);  // 万元 / 月
 // 60 分以下线性（新人便宜但要能活），60 分以上按指数涨价（高手稀缺）
-const wageFactor = q => {
-  const r = q / P.standardQ;
-  return r <= 1 ? r : Math.pow(r, P.wageExp);
-};
+const wageFactor = planning.salaryFactor;
 // 房租摊销：月租 / (满员工位 × 30 天)，元/人日
 export const rentDay = s => {
   const o = offices.find(x => x.name === P.scales[s].off) || offices[0];
@@ -139,6 +137,14 @@ function block(s) {
 function main() {
   const arg = process.argv[2];
   const one = arg && P.scales[arg] ? arg : null;
+  console.log('【模块自动更新：原工作量10人日、目标80，使用同一工资曲线】');
+  for (const old of [40, 60, 75, 79, 80, 90]) {
+    const work = moduleUpdateWork(10, old, 80);
+    console.log(`原质量${old} → ${Math.max(old, 80)}，更新 ${work.toFixed(3)}人日；更新前研发+本轮更新人工 ${(10 * P.wageDay * wageFactor(old) + work * P.wageDay * wageFactor(80)).toFixed(0)}元`);
+  }
+  console.log('【市场信息递进】四类分别有发售复盘→2类；双类行情下两次发售复盘→4类；各类错峰、需求加权平均，单类20%/双类20%/四类20%上限相同。');
+  for (const n of [1, 2, 4]) console.log(`${n}类：全热门×${combinedDemand(Array(n).fill(.2), Array(n).fill(1)).toFixed(2)}，一类热门其余平稳×${combinedDemand([.2, ...Array(n - 1).fill(0)], Array(n).fill(1)).toFixed(2)}`);
+  if (arg === '--modules') return;
   console.log('【市场轮换：固定参考工期，不跟随实时人数、加速或模块复用跳变】');
   for (const s of one ? [one] : names) rotationBlock(s);
   console.log('【行情对净利的影响：Q=S+4、常规宣发，已同时计入宣发涨价】');

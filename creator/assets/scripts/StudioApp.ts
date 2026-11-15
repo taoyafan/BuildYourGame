@@ -2563,9 +2563,8 @@ export class StudioApp extends Component {
           break;
         }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
-        case 'module-build':
-        case 'module-rebuild': {
-          const next = core.startModuleProject(this.state, data.line, Number(data.level), action === 'module-rebuild');
+        case 'module-build': {
+          const next = core.startModuleProject(this.state, data.line, Number(data.level));
           const project = next.projects[next.projects.length - 1];
           this.watching = project.id;
           this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];

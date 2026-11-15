@@ -338,6 +338,7 @@ function projectMenu(state: any, id?: string) {
   const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
   const live = core.liveProjects(state);
+  const updates = core.moduleUpdateSummary(state, project);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   // A finished title has no remaining work, so its date is not "nobody can push it" but "done".
   // Testing is part of the bar: an unstaffed, unfinished test row makes the finish date unknown.
@@ -355,6 +356,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
+    ...(updates.work > 0.001 ? [{ type: 'text', text: '沿用模块自动更新质量：还需约 ' + updates.work.toFixed(1) + ' 人日，已计入分工与预计工期。', muted: true }] : []),
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
       { type: 'text', text: '当前第 ' + (rank + 1) + ' 优先。' },
@@ -1121,7 +1123,6 @@ function lineActions(state: any, line: string, info: any) {
   const out: any[] = [];
   const next = info.level + 1;
   if (next <= info.top && core.scaleOpen(state, next - 1)) out.push({ text: '研发' + (info.top > 1 ? ' ' + next + ' 档' : ''), action: 'module-build', data: { line, level: next } });
-  if (info.level) out.push({ text: '重做', action: 'module-rebuild', data: { line, level: info.level } });
   if (info.level && (state.office >= core.LICENSE_OFFICE || info.licensed)) out.push({ text: info.licensed ? '收回授权' : '授权', action: 'license', data: { line, on: !info.licensed } });
   return out;
 }
@@ -1143,7 +1144,7 @@ function libraryMenu(state: any, id?: string) {
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];
-  blocks.push({ type: 'text', text: '灰色是还没做，上色是已经做好；点模块查看，可研发下一档或重做' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
+  blocks.push({ type: 'text', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一档' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
   return { title: '模块库', blocks };
 }
 
@@ -1401,7 +1402,7 @@ function marketBlocks(state: any, id?: string) {
   const color = (point: any) => { const index = options.findIndex((option: string) => point.tags.includes(option)); return index < 0 ? '#b9b2a6' : OPTION_COLORS[index % OPTION_COLORS.length]; };
   return [
     { type: 'tabs', items: core.SCALES.map((item: any, index: number) => ({ text: item.name, route: route(index, axis, ''), active: index === scale })) },
-    ...(axes.length > 1 ? [{ type: 'tabs', items: axes.map((key: string) => ({ text: core.AXES[key].name + (key === core.lensOf(state) ? ' · 当前关注' : ''), route: route(scale, key, ''), active: key === axis })) }] : []),
+    ...(axes.length > 1 ? [{ type: 'tabs', items: axes.map((key: string) => ({ text: core.AXES[key].name + (core.activeMarketAxes(state).includes(key) ? ' · 关注' : ''), route: route(scale, key, ''), active: key === axis })) }] : []),
     { type: 'scatter', points: shown.map((point: any) => ({ ...point, color: color(point) })), few: shown.length < 5, legend: options.map((option: string, index: number) => ({ text: option, color: OPTION_COLORS[index % OPTION_COLORS.length], active: option === tag, route: route(scale, axis, option === tag ? '' : option) })) },
     { type: 'text', text: '近 12 个月发售的' + core.SCALES[scale].name + '作品：横轴口碑，纵轴首周销量，大圆点是本社的。点圆点看作品，点图例只看这一种。', muted: true }
   ];
