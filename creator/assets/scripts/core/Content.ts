@@ -1393,7 +1393,7 @@ function marketBlocks(state: any, id?: string) {
   const [, scaleText = '', axisText = '', tag = ''] = String(id || '').split(':');
   const axes = core.marketAxes(state);
   const scale = scaleText !== '' && core.SCALES[Number(scaleText)] ? Number(scaleText) : core.currentScale(state);
-  const axis = axes.includes(axisText) ? axisText : axes[axes.length - 1];
+  const axis = axes.includes(axisText) ? axisText : core.lensOf(state);
   const options = core.axisOptions(axis);
   const route = (nextScale: number, nextAxis: string, nextTag: string) => ({ menu: 'industry', id: ['market', nextScale, nextAxis, nextTag].join(':') });
   const all = core.marketPoints(state).filter((point: any) => point.scale === scale);
@@ -1401,7 +1401,7 @@ function marketBlocks(state: any, id?: string) {
   const color = (point: any) => { const index = options.findIndex((option: string) => point.tags.includes(option)); return index < 0 ? '#b9b2a6' : OPTION_COLORS[index % OPTION_COLORS.length]; };
   return [
     { type: 'tabs', items: core.SCALES.map((item: any, index: number) => ({ text: item.name, route: route(index, axis, ''), active: index === scale })) },
-    ...(axes.length > 1 ? [{ type: 'tabs', items: axes.map((key: string) => ({ text: core.AXES[key].name, route: route(scale, key, ''), active: key === axis })) }] : []),
+    ...(axes.length > 1 ? [{ type: 'tabs', items: axes.map((key: string) => ({ text: core.AXES[key].name + (key === core.lensOf(state) ? ' · 当前关注' : ''), route: route(scale, key, ''), active: key === axis })) }] : []),
     { type: 'scatter', points: shown.map((point: any) => ({ ...point, color: color(point) })), few: shown.length < 5, legend: options.map((option: string, index: number) => ({ text: option, color: OPTION_COLORS[index % OPTION_COLORS.length], active: option === tag, route: route(scale, axis, option === tag ? '' : option) })) },
     { type: 'text', text: '近 12 个月发售的' + core.SCALES[scale].name + '作品：横轴口碑，纵轴首周销量，大圆点是本社的。点圆点看作品，点图例只看这一种。', muted: true }
   ];

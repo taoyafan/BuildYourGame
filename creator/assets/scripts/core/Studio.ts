@@ -2,11 +2,13 @@
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, SLOTS, AXES, ORIGINS } from './Modules';
+import { ROTATION, rotationSpan, rotationPhase, extendedAge } from './MarketCycle';
+export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.12';
+export const VERSION = '0.4.13';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -293,22 +295,64 @@ const TAG_RELEASE = 0.07;
 export const TAG_AXIS: any = {};
 for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_AXIS[tag]) TAG_AXIS[tag] = module.axis;
 
-// The market speaks about one category at a time: news, charts and the swings in demand all lean on the
-// category the studio is learning now, while the others stay near their defaults. That keeps one
-// variable moving at a time, so a result can be traced back to a choice. `state.lens` is that category;
-// null once every category has been learned.
+// One category at a time, on a calendar clock independent of hiring and release success.
 export const LENS_ORDER = ['design', 'art', 'audio', 'tech'];
 export const LENS_ABILITY: any = { design: 'creativity', art: 'picture', audio: 'sound', tech: 'fluidity' };
-export const lensOf = (state: any) => state.lens === undefined ? LENS_ORDER[0] : state.lens;
-// Measured on raw demand (about ±5% at the 90th percentile): the category being learned swings about
-// ±20%, the others stay within about ±5%.
-const LENS_SPREAD = 3.5;
-const QUIET_SPREAD = 0.8;
-const LEARNED_SPREAD = 1.5;
-function spreadOf(state: any, tag: string) {
-  const lens = lensOf(state);
-  if (lens === null) return LEARNED_SPREAD;
-  return TAG_AXIS[tag] === lens ? LENS_SPREAD : QUIET_SPREAD;
+export const lensOf = (state: any) => LENS_ORDER[state.marketCycle?.index || 0];
+
+function chooseDirections(state: any, cycle: any) {
+  const axis = LENS_ORDER[cycle.index];
+  const groups = Array.from(new Set(ALL_TAGS.filter(tag => TAG_AXIS[tag] === axis).map(tag => TAG_GROUP[tag])));
+  cycle.hot = {};
+  for (const group of groups) {
+    const tags = ALL_TAGS.filter(tag => TAG_GROUP[tag] === group);
+    const choices = tags.filter(tag => tags.length === 1 || tag !== cycle.last[group]);
+    choices.sort((a, b) => (state.tags[a] ?? 1) - (state.tags[b] ?? 1));
+    // Greater raw demand means fewer recent releases, hence more room for this direction.
+    const best = choices[choices.length - 1];
+    cycle.hot[group] = best;
+    cycle.last[group] = best;
+  }
+}
+
+function ensureMarketCycle(state: any) {
+  if (state.marketCycle) return;
+  const scale = Math.max(0, ...state.projects.filter((p: any) => p.kind === 'game' && !p.parentId && !p.port).map((p: any) => p.scale), ...state.catalog.filter((b: any) => !b.parentId).map((b: any) => b.scale));
+  const oldIndex = LENS_ORDER.indexOf(state.lens);
+  const index = Math.max(0, oldIndex);
+  state.marketCycle = { scale, index, from: state.day, hot: {}, last: {}, seen: state.lens === null ? [...LENS_ORDER] : LENS_ORDER.slice(0, index + 1), reported: false };
+  chooseDirections(state, state.marketCycle);
+  delete state.lens;
+  delete state.lensFrom;
+}
+
+function extendMarketCycle(state: any, scale: number) {
+  ensureMarketCycle(state);
+  const c = state.marketCycle;
+  if (scale <= c.scale) return;
+  const age = extendedAge(c.scale, scale, Math.max(0, state.day - c.from));
+  c.scale = scale;
+  c.from = state.day - age;
+}
+
+function marketCycleDay(state: any) {
+  ensureMarketCycle(state);
+  const c = state.marketCycle;
+  const span = rotationSpan(c.scale);
+  if (state.day - c.from >= span.total) {
+    c.from += span.total;
+    c.index = (c.index + 1) % LENS_ORDER.length;
+    c.reported = false;
+    const axis = LENS_ORDER[c.index];
+    if (!c.seen.includes(axis)) c.seen.push(axis);
+    chooseDirections(state, c);
+    announce(state, { kind: 'unlock', title: '行业关注变化', text: `最近大家开始更多讨论${AXES[axis].name}。新闻和榜单会突出这一类的表现。`, axis, amount: 0 });
+  }
+  if (!c.reported && state.day - c.from >= span.rise) {
+    c.reported = true;
+    const tags = Object.values(c.hot).join('、');
+    news(state, state.focus || 0, false, `${AXES[lensOf(state)].name}成为近期话题`, `近期${tags}方向受到关注。同类新作的表现值得留意，作品品质与宣传仍会影响销量。`, null, true);
+  }
 }
 export function tagHeat(value: number) {
   return value >= 1.12 ? { label: '热门', tone: 'up' } : value <= 0.88 ? { label: '拥挤', tone: 'down' } : { label: '平稳', tone: 'flat' };
@@ -329,7 +373,12 @@ export function tagDemand(state: any, tag: string) {
   const group = ALL_TAGS.filter(item => TAG_GROUP[item] === TAG_GROUP[tag]);
   const mean = sum(group.map(item => (state.tags || {})[item] ?? 1)) / Math.max(1, group.length);
   const raw = ((state.tags || {})[tag] ?? 1) / Math.max(0.1, mean);
-  return round(clamp(1 + (raw - 1) * spreadOf(state, tag), 0.6, 1.4));
+  const crowd = clamp((raw - 1) * ROTATION.crowdWeight, -ROTATION.crowd, ROTATION.crowd);
+  const c = state.marketCycle;
+  if (!c || TAG_AXIS[tag] !== lensOf(state)) return round(1 + clamp(crowd, -ROTATION.quiet, ROTATION.quiet));
+  const strength = rotationPhase(c.scale, state.day - c.from).strength;
+  const bias = group.length <= 1 ? 0 : c.hot[TAG_GROUP[tag]] === tag ? ROTATION.amplitude : -ROTATION.amplitude / (group.length - 1);
+  return round(1 + clamp(bias * strength + crowd, -ROTATION.amplitude, ROTATION.amplitude));
 }
 function seedTags(state: any) {
   state.tags = {};
@@ -346,12 +395,19 @@ function tagDay(state: any) {
     state.tags[tag] = Math.round(clamp(value + (1 - value) * 0.012 + (random(state) - 0.5) * 0.012, 0.55, 1.45) * 1000) / 1000;
   }
 }
-// How a title's tags meet the market: the average demand of its tags, felt more strongly the bigger the
-// title is (a higher tier shows its style more), always within a modest band.
+// Average within each category, then use fixed weights: adding a quiet tag cannot dilute the focus.
 export function tagFactor(state: any, tags: string[], scale = 0) {
-  if (!tags.length) return 1;
-  const average = sum(tags.map(tag => tagDemand(state, tag))) / tags.length;
-  return round(clamp(1 + (average - 1) * (0.8 + scale * 0.3), 0.7, 1.4));
+  const unique = [...new Set(tags)];
+  const axes = LENS_ORDER.map(axis => {
+    const groups = [...new Set(unique.filter(tag => TAG_AXIS[tag] === axis).map(tag => TAG_GROUP[tag]))];
+    if (!groups.length) return 0;
+    const changes = groups.map(group => {
+      const matching = unique.filter(tag => TAG_GROUP[tag] === group);
+      return sum(matching.map(tag => tagDemand(state, tag) - 1)) / matching.length;
+    });
+    return sum(changes) / changes.length * (axis === lensOf(state) ? 1 : ROTATION.otherWeight);
+  });
+  return round(clamp(1 + sum(axes), 0.75, 1.25));
 }
 
 // Testing is the whole game's work, not a module: a share of all the content, reused parts included.
@@ -796,7 +852,7 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 10, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 11, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -808,6 +864,7 @@ export function createStudio(seed = Date.now()) {
   };
   seedTags(state);
   seedIndustry(state);
+  ensureMarketCycle(state);
   return state;
 }
 
@@ -2033,6 +2090,7 @@ export function startProject(state: any, plan: any, priority = -1) {
   project.unlockAt = Array.from({ length: moments }, (_, index) => Math.round(30 + (index + random(next)) * 40 / moments));
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
+  if (!project.parentId && !project.port) extendMarketCycle(next, project.scale);
   if (priority >= 0) return setPriority(next, project.id, priority);
   studioLog(next, '新作立项', `《${name}》面向${TYPES[project.type].audience}，${SCALES[plan.scale].name}作品。`);
   return next;
@@ -2836,9 +2894,9 @@ export function launchProject(state: any, projectId: string) {
   // Releasing early means shipping with unfinished dimensions — but it still requires the trial build.
   if (metrics.progress < TRIAL * 100) throw new Error('体验版完成后才能发售；提前发售指带着未完成的维度上市。');
   const trend = market(next, project.type);
-  // The genre's own tag is the trend above; the other tags (style, music, variant) add their own lean.
+  // One combined factor, shared with rivals; the genre trend is explanatory, not a second multiplier.
   const tags = planTags(project);
-  const lean = tagFactor(next, tags.filter(tag => tag !== TYPE_TAG[project.type]), project.scale);
+  const lean = tagFactor(next, tags, project.scale);
   const score = round(clamp(projectScore(project) + (random(next) - 0.5) * 3, 0, 100));
   // Creativity breaks out through a tail jump, not a linear bonus: a high-creativity title has a better
   // chance of catching on, but there is no guarantee and it cannot be bought. A breakout multiplies the
@@ -2849,7 +2907,7 @@ export function launchProject(state: any, projectId: string) {
   const exposure = MEDIA_BONUS[next.stars || 0];
   if (exposure) project.followers = Math.round(project.followers * (1 + exposure));
   const clash = clashOf(next, next.day, project.followers);
-  const { units, price, receipt } = openingSales(project, trend.multiplier * lean * clash.factor, score);
+  const { units, price, receipt } = openingSales(project, lean * clash.factor, score);
   // The campaign's share of the launch, counted in its share of the launch audience.
   const promo = project.promoted > 0 ? { cost: project.promoted, followers: project.promoFollowers || 0, receipt: round(receipt * clamp((project.promoFollowers || 0) / Math.max(1, project.followers), 0, 1)) } : null;
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
@@ -2920,7 +2978,7 @@ export function launchProject(state: any, projectId: string) {
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广 ${moneyText(promo.cost)}带来 ${promo.followers} 位关注，按本作转化约折合首发 ${moneyText(promo.receipt)}。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${moneyText(receipt)}。发售时市场：${trend.label}，首发需求 ×${trend.multiplier.toFixed(2)}；其余标签（${tags.filter(tag => tag !== TYPE_TAG[project.type]).join('、') || '无'}）反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${moneyText(receipt)}。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -3227,7 +3285,6 @@ export function stepDay(state: any) {
   industryDay(next);
   scheduledCash(next);
   refreshBoard(next);
-  checkLens(next);
   if (!next.event) rollRandomEvent(next);
   checkAchievements(next);
   if (next.day % 30 === 0) {
@@ -3260,6 +3317,7 @@ export function stepDay(state: any) {
     studioLog(next, `${monthText(report.month)}账单`, `收入 ${moneyText(report.income)}，支出 ${moneyText(report.expense)}，净变化 ${moneyText(report.net)}。`);
   }
   next.day += 1;
+  marketCycleDay(next);
   return next;
 }
 
@@ -3553,8 +3611,7 @@ export function marketPoints(state: any) {
 }
 // The categories the page may sort points by: the ones learned so far and the one being learned.
 export function marketAxes(state: any) {
-  const lens = lensOf(state);
-  return lens === null ? [...LENS_ORDER] : LENS_ORDER.slice(0, LENS_ORDER.indexOf(lens) + 1);
+  return LENS_ORDER.filter(axis => (state.marketCycle?.seen || ['design']).includes(axis));
 }
 // The options of a category a point can carry; gameplay is read by genre.
 export function axisOptions(axis: string) {
@@ -4432,6 +4489,8 @@ export function restoreStudio(saved: any) {
   }
   if (next.event?.id === 'deadline') next.event = null;
   if (next.rulesRevision < 10) next.rulesRevision = 10;
+  ensureMarketCycle(next);
+  if (next.rulesRevision < 11) next.rulesRevision = 11;
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
 }
@@ -4467,12 +4526,6 @@ function keepModules(state: any, project: any) {
 // is about right now; now and then one from another category slips in. Each one is a short moment with a
 // person, a reason and what it opens.
 const SIDE_EVERY = [4, 5];
-// Rival releases in the studio's own range carrying the next category's tags the studio has to see
-// before it reads that category by itself.
-export const LENS_OBSERVE = 15;
-export const LENS_EXPERT = 75;
-export const LENS_FALLBACK = 6;
-
 function lockedReady(state: any) {
   const open = (line: string) => !MODULES[line].unlock || !!(state.unlocked || {})[line];
   return Object.keys(MODULES).filter(line => !open(line) && (MODULES[line].needs || []).every(open));
@@ -4532,39 +4585,6 @@ function relativeOf(state: any, book: any) {
   return round((book.firstWeek || 0) / Math.max(1, middle));
 }
 
-// The market moves on to the next category once the studio has a feel for this one: its last two titles
-// held their own against the market, someone who knows the next category joined, the studio has watched
-// enough titles of it, or six titles have passed regardless.
-function checkLens(state: any) {
-  const lens = lensOf(state);
-  if (lens === null || !state.company) return;
-  const from = state.lensFrom || 0;
-  const books = state.catalog.filter((book: any) => !book.parentId && book.released >= from);
-  if (!books.length) return;
-  const axis = LENS_ORDER[LENS_ORDER.indexOf(lens) + 1] || null;
-  const rated = books.filter((book: any) => book.relative !== undefined).slice(0, 2);
-  let who = '';
-  let how = '';
-  if (rated.length >= 2 && sum(rated.map((book: any) => book.relative)) / 2 >= 1) {
-    who = state.staff[0]?.name || '创始人';
-    how = `最近两作在同体量里都站住了，${AXES[lens].name}算是摸清了`;
-  } else if (books.length >= LENS_FALLBACK) {
-    who = state.staff[0]?.name || '创始人';
-    how = `做了这么多作，${AXES[lens].name}的门道也看得差不多了`;
-  } else if (axis) {
-    const expert = state.staff.find((person: any) => !person.founder && person.abilities[LENS_ABILITY[axis]] >= LENS_EXPERT);
-    const seen = (state.works || []).filter((work: any) => work.tier <= (state.focus || 0) && work.released >= from && work.released <= state.day && (work.tags || []).some((tag: string) => TAG_AXIS[tag] === axis)).length;
-    if (expert) { who = expert.name; how = `一眼就看出玩家开始在意${AXES[axis].name}了`; }
-    else if (seen >= LENS_OBSERVE) { who = state.staff[0]?.name || '创始人'; how = `看了这么多新作，发现大家开始比拼${AXES[axis].name}了`; }
-  }
-  if (!how) return;
-  state.lens = axis;
-  state.lensFrom = state.day;
-  const text = axis ? `${how}。接下来新闻、榜单和评价会多聊${AXES[axis].name}。` : `${how}。各类口味都心里有数了。`;
-  announce(state, { kind: 'unlock', title: who, text, axis: axis || lens, amount: 0 });
-  studioLog(state, axis ? `开始关注${AXES[axis].name}` : '摸清了市场', `${who}：${text}`);
-}
-
 function validStudio(state: any) {
   const number = (value: any) => typeof value === 'number' && Number.isFinite(value);
   const nonnegative = (value: any) => number(value) && value >= 0;
@@ -4575,6 +4595,13 @@ function validStudio(state: any) {
   const person = (value: any) => value && text(value.name) && has(ROLES, value.role) && abilities(value.abilities) && number(value.speed) && value.speed > 0 && value.speed <= 200 && number(value.wage) && value.wage >= 0 && Array.isArray(value.stressTags) && tags(value.tags);
   const work = (value: any) => object(value) && DIM_KEYS.every(key => value[key] && nonnegative(value[key].total) && nonnegative(value[key].done) && nonnegative(value[key].value));
   if (!state || state.version !== 9 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || !object(state.modules) || !object(state.tags)) return false;
+  const cycle = state.marketCycle;
+  if (cycle && (!Number.isInteger(cycle.scale) || cycle.scale < 0 || cycle.scale >= SCALES.length
+    || !Number.isInteger(cycle.index) || cycle.index < 0 || cycle.index >= LENS_ORDER.length
+    || !number(cycle.from) || cycle.from > state.day || state.day - cycle.from > rotationSpan(cycle.scale).total
+    || !object(cycle.hot) || !object(cycle.last) || typeof cycle.reported !== 'boolean'
+    || !Array.isArray(cycle.seen) || !cycle.seen.includes(LENS_ORDER[cycle.index]) || !cycle.seen.every((axis: string) => LENS_ORDER.includes(axis))
+    || Object.entries(cycle.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_AXIS[tag] !== LENS_ORDER[cycle.index]))) return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
