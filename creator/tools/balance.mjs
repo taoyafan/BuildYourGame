@@ -1,15 +1,14 @@
 // 数值验算脚本。node creator/tools/balance.mjs [体量]
 // 公式与参数与 数值设计.md 一一对应：改参数先改这里，再同步文档。
+import { readFileSync } from 'node:fs';
+// Planning.ts intentionally contains plain JS and no imports; share the runtime source on Node 18+.
+const planning = await import('data:text/javascript;base64,' + readFileSync(new URL('../assets/scripts/core/Planning.ts', import.meta.url)).toString('base64'));
+const { PLANNING_SCALES, PLANNING_OFFICES, STANDARD_SPEED, ROTATION_PARAMETERS } = planning;
 
 export const P = {
   // 体量：w 市场系数，W 总人日（含测试与修复），pc 单价系数，S 水准线（= 保本线）
   // rent = 该档常用办公室的房租摊销（元/人日）= 月租 / (工位数 × 30)，按满员工位摊
-  scales: {
-    小:   { w: 1,  W: 47,   pc: 1,    S: 48, off: '起步小屋' },
-    中:   { w: 5,  W: 235,  pc: 1.26, S: 60, off: '正式办公室' },
-    大:   { w: 20, W: 940,  pc: 2.05, S: 70, off: '独立工作室' },
-    超大: { w: 90, W: 4230, pc: 3.01, S: 78, off: '写字楼整层' }
-  },
+  scales: Object.fromEntries(PLANNING_SCALES.map(({ name, office, ...values }) => [name, { ...values, off: PLANNING_OFFICES[office].name }])),
   // 市场与口碑
   pool: 6000, poolExp: 0.93, scoreExp: 1.3,
   target: 72.5,            // 相对分基准：Q = S 时 Qe = 72.5，即保本点
@@ -18,13 +17,7 @@ export const P = {
   kSlope: 3.6, kOffset: 1.9,
   half: 21, natural: 0.0004, platform: 0.10,
   fanCarry: 0.7, valuationDays: 540,
-  // 按标准团队估算日历工期；岗位不均衡只计入排期，不重复增加人日成本。
-  rotation: {
-    crew: [3, 6, 10, 24], utilization: 0.75, roundDays: 15,
-    rise: 0.5, hold: 2, fall: 0.5,
-    amplitude: 0.20, quiet: 0.05, crowd: 0.04, crowdWeight: 0.20,
-    otherWeight: 0.20
-  },
+  rotation: ROTATION_PARAMETERS,
   // 宣发：关注单价 = 单价 × (基础 + 斜率 × 付费覆盖)，越买越贵
   unitBase: 0.47, unitSlope: 0.35,
   // 成本（元/人日）：工资 = 标准日薪 × (能力/60)^溢价比，人日成本与工资同口径
@@ -34,40 +27,26 @@ export const P = {
 };
 
 // peak = 该阶段建议编制的平均能力，用来算月固定工资
-export const offices = [
-  { name: '自家', seats: 1, rent: 0, cost: 0, crew: 1, peak: 45 },
-  { name: '起步小屋', seats: 4, rent: 1.5, cost: 0, crew: 3, peak: 48 },
-  { name: '正式办公室', seats: 10, rent: 3, cost: 8, crew: 6, peak: 60 },
-  { name: '独立工作室', seats: 16, rent: 5, cost: 26, crew: 10, peak: 70 },
-  { name: '写字楼整层', seats: 40, rent: 12, cost: 64, crew: 24, peak: 85 },
-  { name: '园区大楼', seats: 100, rent: 30, cost: 160, crew: 60, peak: 93 }
-];
+export const offices = PLANNING_OFFICES;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 export function rotationSpan(s) {
-  const r = P.rotation;
-  const crew = r.crew[Object.keys(P.scales).indexOf(s)];
-  const work = P.scales[s].W;
-  const production = Math.ceil(work / (crew * r.utilization) / r.roundDays) * r.roundDays;
-  const rise = Math.ceil(production * r.rise);
-  const hold = Math.ceil(production * r.hold);
-  const fall = Math.ceil(production * r.fall);
-  return { production, rise, hold, fall, total: rise + hold + fall };
+  return planning.cycleSpan(Object.keys(P.scales).indexOf(s));
 }
 
 // age 是本轮已过的游戏天数，边界连续，退潮回到中性。
 export function rotationPhase(s, age) {
-  const span = rotationSpan(s);
-  if (age < span.rise) return { phase: '升温', strength: clamp(age / span.rise, 0, 1) };
-  if (age < span.rise + span.hold) return { phase: '持续', strength: 1 };
-  return { phase: '退潮', strength: clamp((span.total - age) / span.fall, 0, 1) };
+  return planning.cyclePhase(Object.keys(P.scales).indexOf(s), age);
 }
 
 function rotationBlock(s) {
   const t = rotationSpan(s);
   const launch = t.rise + t.production;
-  console.log(`${s}  标准工期 ${t.production}天  升温/持续/退潮 ${t.rise}/${t.hold}/${t.fall}天  单类周期 ${t.total}天  升温结束开工→第${launch}天上市，持续期还剩 ${t.rise + t.hold - launch}天`);
+  const index = Object.keys(P.scales).indexOf(s);
+  const office = offices.find(o => o.name === P.scales[s].off);
+  console.log(`${s}  ${P.scales[s].W}人日 / ${office.crew}人 / 速度${STANDARD_SPEED} → ${t.production}天  升温/持续/退潮 ${t.rise}/${t.hold}/${t.fall}天  单类周期 ${t.total}天  升温结束开工→第${launch}天上市，持续期还剩 ${t.rise + t.hold - launch}天`);
+  console.log(`  同参数敏感性：满员工位${office.seats}人→${planning.referenceProduction(index, office.seats)}天；标准人数速度80/120→${planning.referenceProduction(index, office.crew, 80)}/${planning.referenceProduction(index, office.crew, 120)}天。`);
 }
 
 export const relativeScore = (s, q) => clamp(P.target + q - P.scales[s].S, 0, 100);
@@ -77,8 +56,8 @@ export const marketOf = (s, qe) =>
 export const priceOf = s => P.priceBase * P.scales[s].pc;
 export const conversion = qe => P.convBase + P.convGain * Math.pow(quality(qe), P.convExp);
 export const spread = qe => clamp(P.kSlope * quality(qe) - P.kOffset, -1, 2);
-export const monthlyWage = (peak, speed = 100) =>
-  1.2 * (peak <= P.standardQ ? peak / P.standardQ : Math.pow(peak / P.standardQ, P.wageExp)) * (speed / 100);  // 万元 / 月
+export const monthlyWage = (peak, speed = STANDARD_SPEED) =>
+  1.2 * (peak <= P.standardQ ? peak / P.standardQ : Math.pow(peak / P.standardQ, P.wageExp)) * (speed / STANDARD_SPEED);  // 万元 / 月
 // 60 分以下线性（新人便宜但要能活），60 分以上按指数涨价（高手稀缺）
 const wageFactor = q => {
   const r = q / P.standardQ;
