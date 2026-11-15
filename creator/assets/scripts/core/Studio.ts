@@ -2,13 +2,13 @@
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, SLOTS, AXES, ORIGINS } from './Modules';
-import { ROTATION, rotationSpan, rotationPhase, extendedAge } from './MarketCycle';
+import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, SLOTS, AXES, ORIGINS };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.13';
+export const VERSION = '0.4.14';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -852,7 +852,7 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 11, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 12, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -4489,8 +4489,15 @@ export function restoreStudio(saved: any) {
   }
   if (next.event?.id === 'deadline') next.event = null;
   if (next.rulesRevision < 10) next.rulesRevision = 10;
+  const hadMarketCycle = !!next.marketCycle;
   ensureMarketCycle(next);
-  if (next.rulesRevision < 11) next.rulesRevision = 11;
+  if (next.rulesRevision < 12) {
+    if (hadMarketCycle) {
+      const cycle = next.marketCycle;
+      cycle.from = next.day - retimedAge(legacyRotationSpan(cycle.scale), rotationSpan(cycle.scale), next.day - cycle.from);
+    }
+    next.rulesRevision = 12;
+  }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
 }
@@ -4598,7 +4605,7 @@ function validStudio(state: any) {
   const cycle = state.marketCycle;
   if (cycle && (!Number.isInteger(cycle.scale) || cycle.scale < 0 || cycle.scale >= SCALES.length
     || !Number.isInteger(cycle.index) || cycle.index < 0 || cycle.index >= LENS_ORDER.length
-    || !number(cycle.from) || cycle.from > state.day || state.day - cycle.from > rotationSpan(cycle.scale).total
+    || !number(cycle.from) || cycle.from > state.day || state.day - cycle.from > ((state.rulesRevision || 0) < 12 ? legacyRotationSpan(cycle.scale) : rotationSpan(cycle.scale)).total
     || !object(cycle.hot) || !object(cycle.last) || typeof cycle.reported !== 'boolean'
     || !Array.isArray(cycle.seen) || !cycle.seen.includes(LENS_ORDER[cycle.index]) || !cycle.seen.every((axis: string) => LENS_ORDER.includes(axis))
     || Object.entries(cycle.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_AXIS[tag] !== LENS_ORDER[cycle.index]))) return false;

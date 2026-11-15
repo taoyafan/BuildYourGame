@@ -47,6 +47,7 @@ function rotationBlock(s) {
   const office = offices.find(o => o.name === P.scales[s].off);
   console.log(`${s}  ${P.scales[s].W}人日 / ${office.crew}人 / 速度${STANDARD_SPEED} → ${t.production}天  升温/持续/退潮 ${t.rise}/${t.hold}/${t.fall}天  单类周期 ${t.total}天  升温结束开工→第${launch}天上市，持续期还剩 ${t.rise + t.hold - launch}天`);
   console.log(`  同参数敏感性：满员工位${office.seats}人→${planning.referenceProduction(index, office.seats)}天；标准人数速度80/120→${planning.referenceProduction(index, office.crew, 80)}/${planning.referenceProduction(index, office.crew, 120)}天。`);
+  console.log('  后续扩员（同体量、速度100）：' + offices.slice(PLANNING_SCALES[index].office + 1).map(o => `${o.name}${o.crew}人→${planning.referenceProduction(index, o.crew)}天`).join('；'));
 }
 
 export const relativeScore = (s, q) => clamp(P.target + q - P.scales[s].S, 0, 100);

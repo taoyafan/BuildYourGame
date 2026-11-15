@@ -32,7 +32,7 @@ npx --yes http-server@14.1.1 creator/build/web-mobile -a 127.0.0.1 -p 8802 -c-1
 
 ## 源码与界面
 
-- [assets/scripts/core/MarketCycle.ts](assets/scripts/core/MarketCycle.ts) 维护市场轮换的标准工期、阶段比例与需求幅度；参数与 `tools/balance.mjs` 的 `P.rotation` 同步。运行 `node creator/tools/balance.mjs --market`（仓库根目录）查看四体量周期与需求情境对照。游戏按日历循环关注类别，首次进入更大完整游戏体量只延长当前阶段；周期与方向随存档保存，旧档保留已学习的模块和行情类别。
+- [assets/scripts/core/Planning.ts](assets/scripts/core/Planning.ts) 是基础经济模型与轮换排期共用的工作量、办公室编制、标准速度及阶段公式入口；[MarketCycle.ts](assets/scripts/core/MarketCycle.ts) 负责体量切换与旧时钟迁移。运行 `node creator/tools/balance.mjs --market`（仓库根目录）查看输入、工期、四体量周期及人数/速度敏感性。0.4.13 的轮换存档按原阶段完成比例迁移，保留当前方向，不从头抽取；游戏周期不随实时人员增减或复用跳变。
 
 - [assets/scripts/core/Studio.ts](assets/scripts/core/Studio.ts) 是经营规则，不依赖引擎，可在 Node 中用临时脚本模拟数值；[assets/scripts/core/Content.ts](assets/scripts/core/Content.ts) 生成菜单、下一步建议与首作教程步骤。
 - [assets/scripts/StudioApp.ts](assets/scripts/StudioApp.ts) 使用原生节点、滚动、输入与 Tween 展示并操作这些数据，包括教程高亮、发售与回本特效。教程按界面登记的锚点计算高亮位置，不写死坐标。
