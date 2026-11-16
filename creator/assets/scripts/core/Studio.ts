@@ -1,16 +1,16 @@
 // Pure business rules without engine imports, so they can also run in Node for balance checks.
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
-import { MODULES, SLOTS, AXES, ORIGINS } from './Modules';
+import { MODULES, SLOTS, AXES, ORIGINS, SECOND_MECHANIC } from './Modules';
 import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, relativeScore, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
+import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, SLOTS, AXES, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.17';
+export const VERSION = '0.4.18';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -52,15 +52,15 @@ export const ABILITIES: any[] = [
 ];
 export const ABILITY_KEYS = ABILITIES.map(ability => ability.key);
 
-// Four settings of scale decide how much work there is and how big its market is. `work` is the
-// multiplier on every line's and the title's own work, calibrated so that a title with the default lines
-// (gameplay, engine, art, audio, platform) all new, testing and fitting-in included, totals the person-days
-// in Planning.ts. Re-measure when module work changes. Price, market and quality thresholds are Planning's.
+// Four levels of a line. `work` is the multiplier on every line's and the title's own work at that level,
+// calibrated so that a title with the default lines (genre, theme, engine, art, audio) all new at one
+// level, testing and fitting-in included, totals the person-days of that scale in Planning.ts. The title's
+// scale is read back from the person-days its picked levels add up to. Re-measure when module work changes.
 export const SCALES = [
-  { name: '小型', work: 0.68 },
-  { name: '中型', work: 3.65 },
-  { name: '大型', work: 14.8 },
-  { name: '超大型', work: 66.7 }
+  { name: '小型', work: 0.726 },
+  { name: '中型', work: 3.631 },
+  { name: '大型', work: 14.523 },
+  { name: '超大型', work: 65.355 }
 ];
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
@@ -274,13 +274,14 @@ export function random(state: any) {
 
 // The market leans by tags. Each tag has a demand around 1: every release carrying it (the player's or a
 // rival's) crowds it a little, and on quiet days it drifts back. The genre's own tag reads as the trend.
-export const TYPE_TAG: any = { action: '动作', story: '叙事', think: '策略' };
 export const ALL_TAGS: string[] = Array.from(new Set(Object.values(MODULES).flatMap((module: any) => module.tags || [])));
-// Which tags compete with each other: genres, gameplay variants, and each other slot on its own.
+// Which tags compete with each other: genres, mechanics, themes, and each other slot on its own.
 const TAG_GROUP: any = {};
-for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_GROUP[tag]) TAG_GROUP[tag] = module.slot === 'core' ? ((module.needs || []).length && tag !== TYPE_TAG[module.type] ? 'variant' : 'genre') : module.slot;
+for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_GROUP[tag]) TAG_GROUP[tag] = module.slot === 'core' ? 'genre' : module.slot;
 const TAG_RELEASE = 0.07;
-// The category of each tag: genres and variants are gameplay, styles are art, and so on.
+// The tag a title's genre reads as; old saves without a genre line fall back to the audience.
+export const genreTag = (project: any) => MODULES[(project?.slots?.core || [])[0]]?.tags?.[0] || ({ action: '动作', story: '叙事', think: '策略' } as any)[project?.type] || '';
+// The category of each tag: genres, mechanics and themes are gameplay, styles are art, and so on.
 export const TAG_AXIS: any = {};
 for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_AXIS[tag]) TAG_AXIS[tag] = module.axis;
 
@@ -397,8 +398,8 @@ function marketCycleDay(state: any) {
 export function tagHeat(value: number) {
   return value >= 1.12 ? { label: '热门', tone: 'up' } : value <= 0.88 ? { label: '拥挤', tone: 'down' } : { label: '平稳', tone: 'flat' };
 }
-export function market(state: any, type: string) {
-  const value = tagDemand(state, TYPE_TAG[type]);
+export function market(state: any, tag: string) {
+  const value = tagDemand(state, tag);
   const heat = tagHeat(value);
   const text: any = {
     热门: { label: '关注上升', description: '近期同类作品少、话题多，但热度不一定持续到发售。' },
@@ -490,14 +491,17 @@ export function partOf(id: string) {
   if (!module || !Number.isInteger(level) || level < 1 || level > lineTiers(line)) return null;
   const work: any = {};
   for (const [key, base] of Object.entries(module.work) as any) work[key] = base * (tierWork(level) - tierWork(level - 1));
-  const needs = [...(level > 1 ? [partId(line, level - 1)] : []), ...(module.needs || []).map((need: string) => partId(need, Math.min(level, lineTiers(need))))];
+  const needs = level > 1 ? [partId(line, level - 1)] : [];
   return { id, line, level, work, needs };
 }
-// The tier a title needs from a line: its scale, or the line's top tier when the line stops lower.
+// The level a scale stands for: small is level 1, or the line's top level when the line stops lower.
 export const tierFor = (line: string, scale: number) => Math.min((scale || 0) + 1, lineTiers(line));
+// The level a plan takes a line to: picked per line, otherwise every line at the plan's scale.
+export const levelFor = (plan: any, line: string) => Math.min(lineTiers(line), Math.max(1, Math.round(plan?.lineLevels?.[line] ?? tierFor(line, plan?.scale || 0))));
+export const levelOpen = (state: any, level: number) => level <= 1 || scaleOpen(state, level - 1);
 
-// Every module a plan pulls in, shared ones once: each chosen line at the title's tier and all below it.
-export function expandModules(lines: string[], scale: number) {
+// Every module a plan pulls in, shared ones once: each chosen line at its level and all below it.
+export function expandModules(plan: any) {
   const out: string[] = [];
   const add = (id: string) => {
     const part = partOf(id);
@@ -505,10 +509,18 @@ export function expandModules(lines: string[], scale: number) {
     for (const need of part.needs) add(need);
     out.push(id);
   };
-  for (const line of lines) if (MODULES[line]) add(partId(line, tierFor(line, scale)));
+  for (const line of planLines(plan)) if (MODULES[line]) add(partId(line, levelFor(plan, line)));
   return out;
 }
 export const planLines = (plan: any): string[] => plan.only ? [...plan.only] : SLOTS.flatMap(slot => (plan.slots && plan.slots[slot.key]) || []);
+// Person-days the plan stands for if nothing were reused, testing included: it decides the title's scale.
+export function nominalWork(plan: any) {
+  const modules = sum(expandModules(plan).map(id => sum(Object.values(partOf(id).work) as number[])));
+  return (sum(Object.values(contentWork(plan)) as number[]) + modules) * (1 + TEST_SHARE);
+}
+export const planScale = (plan: any) => scaleOfWork(nominalWork(plan));
+// Every line's level written out, so a started plan no longer leans on a scale for it.
+export const fixLevels = (plan: any) => Object.fromEntries(planLines(plan).map(line => [line, levelFor(plan, line)]));
 
 // A module's progress belongs to the company, not to a title: any project working on it moves the same
 // record, and an unfinished one keeps what was done for the next.
@@ -585,6 +597,7 @@ export function moduleMetrics(state: any, id: string) {
 // Slots and lines open up with released titles, so the first game only shows a few choices.
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
 export const slotOpen = (state: any, slot: any) => !!slot && releases(state) >= (slot.unlock || 0);
+export const slotMax = (state: any, slot: any) => slot.key === 'mechanic' && releases(state) < SECOND_MECHANIC ? 1 : slot.max;
 // The first title's gameplay is fixed by the founder, so the other basic gameplay is not a choice yet.
 // Showing it in the library with no unlock ever shown to the player reads as a stray, unusable option;
 // it becomes a proper unlock the moment the first title ships.
@@ -616,7 +629,7 @@ export function recommendPlan(state: any) {
     const score = (line: string) => { const info = lineInfo(state, line); return info.level + info.next; };
     slots[slot.key] = slot.key === 'core' && firstGameCore(state) ? [firstGameCore(state)] : [...options].sort((left, right) => score(right) - score(left)).slice(0, slot.min);
   }
-  return { name: '', scale: 0, slots, rent: [] };
+  return { name: '', scale: 0, slots, rent: [], lineLevels: {} };
 }
 export function firstGameCore(state: any) {
   return !releases(state) && ORIGINS[state.founder] ? ORIGINS[state.founder].firstCore : '';
@@ -625,14 +638,14 @@ export function firstGameCore(state: any) {
 // The slots that open with the next release, for the one-line teaser under the form.
 export function nextUnlocks(state: any) {
   const next = releases(state) + 1;
-  return SLOTS.filter(slot => (slot.unlock || 0) === next).map(slot => slot.name);
+  return [...SLOTS.filter(slot => (slot.unlock || 0) === next).map(slot => slot.name), ...(next === SECOND_MECHANIC ? ['第二个机制'] : [])];
 }
 
 // What a plan would build: each module, what the company already has of it (carried over at its own
 // quality) and what is still to do. A rented line is finished at the rent quality and never linked.
 export function planModules(state: any, plan: any) {
   const rented = new Set(plan.rent || []);
-  return expandModules(planLines(plan), plan.scale).map(id => {
+  return expandModules(plan).map(id => {
     const part = partOf(id);
     const record = (state.modules || {})[id];
     const built = partBuilt(state, id);
@@ -648,14 +661,13 @@ export function planModules(state: any, plan: any) {
   });
 }
 
-// The title's own work, never kept: levels, script and portraits. The gameplay decides it, the scale
+// The title's own work, never kept: levels, script and portraits. The genre decides it, the genre's level
 // multiplies it. It is also why no title, however much it reuses, starts at its trial build.
 export function contentWork(plan: any) {
   if (plan.only) return {};
-  let line = (plan.slots?.core || [])[0];
-  while (line && MODULES[line] && !MODULES[line].content && (MODULES[line].needs || []).length) line = MODULES[line].needs[0];
+  const line = (plan.slots?.core || [])[0];
   const out: any = {};
-  for (const [key, base] of Object.entries(MODULES[line]?.content || {}) as any) out[key] = base * SCALES[plan.scale || 0].work * (plan.port ? PORT_CONTENT : 1);
+  for (const [key, base] of Object.entries(MODULES[line]?.content || {}) as any) out[key] = base * tierWork(levelFor(plan, line));
   for (const [key, amount] of Object.entries(integrationWork(plan)) as any) out[key] = (out[key] || 0) + amount;
   return out;
 }
@@ -671,13 +683,13 @@ export function lineWork(line: string, level: number) {
 export function integrationWork(plan: any) {
   const out: any = {};
   if (plan.only || plan.rebuild) return out;
-  for (const line of planLines(plan)) for (const [key, amount] of Object.entries(lineWork(line, tierFor(line, plan.scale || 0))) as any) out[key] = (out[key] || 0) + amount * INTEGRATION;
+  for (const line of planLines(plan)) for (const [key, amount] of Object.entries(lineWork(line, levelFor(plan, line))) as any) out[key] = (out[key] || 0) + amount * INTEGRATION;
   return out;
 }
 
-// One rent of a line at the tier this title needs, and what building it would cost instead.
-export function rentPrice(line: string, scale: number) {
-  const work = sum(Object.values(lineWork(line, tierFor(line, scale))) as number[]);
+// One rent of a line at the level this title needs, and what building it would cost instead.
+export function rentPrice(line: string, level: number) {
+  const work = sum(Object.values(lineWork(line, level)) as number[]);
   return { price: round(work * RENT_DAY / RENT_SPLIT), build: round(work * RENT_DAY) };
 }
 export const rentable = (line: string) => !!MODULES[line] && MODULES[line].axis !== 'design';
@@ -685,16 +697,16 @@ export function rentRecord(state: any, line: string) {
   return (state.rentLog || {})[line] || { count: 0, paid: 0 };
 }
 export function planRentCost(state: any, plan: any) {
-  return round(sum(planModules(state, plan).filter(item => item.rented && item.level === tierFor(item.line, plan.scale || 0)).map(item => rentPrice(item.line, plan.scale || 0).price)));
+  return round(sum(planModules(state, plan).filter(item => item.rented && item.level === levelFor(plan, item.line)).map(item => rentPrice(item.line, item.level).price)));
 }
 function payRent(state: any, plan: any, title: string) {
   const cost = planRentCost(state, plan);
   if (!cost) return 0;
   spend(state, cost, `《${title}》租用模块`);
   state.rentLog = state.rentLog || {};
-  for (const item of planModules(state, plan).filter(entry => entry.rented && entry.level === tierFor(entry.line, plan.scale || 0))) {
+  for (const item of planModules(state, plan).filter(entry => entry.rented && entry.level === levelFor(plan, entry.line))) {
     const record = rentRecord(state, item.line);
-    state.rentLog[item.line] = { count: record.count + 1, paid: round(record.paid + rentPrice(item.line, plan.scale || 0).price) };
+    state.rentLog[item.line] = { count: record.count + 1, paid: round(record.paid + rentPrice(item.line, item.level).price) };
   }
   return cost;
 }
@@ -714,9 +726,10 @@ export function planIssue(state: any, plan: any) {
     if (!slotOpen(state, slot)) { if (ids.length) return `${slot.name}还没有开放。`; continue; }
     if (ids.some((id: string) => MODULES[id]?.slot !== slot.key || !moduleOpen(state, id))) return `${slot.name}里有还不能用的模块。`;
     if (ids.length < slot.min) return `请选择${slot.name}。`;
-    if (ids.length > slot.max) return `${slot.name}最多选 ${slot.max} 个。`;
+    if (ids.length > slotMax(state, slot)) return `${slot.name}最多选 ${slotMax(state, slot)} 个。`;
   }
-  if (first && (plan.slots.core || [])[0] !== first) return '首作的玩法由出身决定。';
+  if (first && (plan.slots.core || [])[0] !== first) return '首作的类型由出身决定。';
+  for (const line of planLines(plan)) if (!levelOpen(state, levelFor(plan, line))) return `${MODULES[line].name} ${levelFor(plan, line)} 级还没有开放。`;
   // A title cannot ship with pixel characters over hand-drawn scenery (or the other way round).
   const artStyles = (plan.slots?.art || []).map((line: string) => MODULES[line]?.style).filter(Boolean);
   if (new Set(artStyles).size > 1) return '美术风格要一致。';
@@ -725,7 +738,7 @@ export function planIssue(state: any, plan: any) {
   if ((plan.rent || []).some((line: string) => !rentable(line))) return '玩法不能租用，它就是作品本身。';
   const renting = planModules(state, plan).filter(item => item.rented).map(item => item.line);
   if (new Set(renting).size > rentLimit(state)) return `${releases(state) ? '每作' : '首作'}最多租 ${rentLimit(state)} 个模块。`;
-  return planType(plan) ? '' : '请选择玩法。';
+  return planType(plan) ? '' : '请选择类型。';
 }
 
 // New person-days per dimension, what reuse saves, the tags the lines add up to, and what renting costs.
@@ -741,7 +754,6 @@ export function planWork(state: any, plan: any) {
 export function planTags(plan: any) {
   const tags: string[] = [];
   for (const line of planLines(plan)) for (const tag of MODULES[line]?.tags || []) if (!tags.includes(tag)) tags.push(tag);
-  for (const id of expandModules(planLines(plan), plan.scale || 0)) for (const tag of MODULES[partOf(id).line].tags || []) if (!tags.includes(tag)) tags.push(tag);
   return tags;
 }
 
@@ -765,6 +777,7 @@ function blankProject(state: any, id: string, plan: any, day: number) {
   const project: any = {
     id, kind, name: plan.name, type: plan.type || planType(plan), scale: plan.scale || 0, parentId: plan.parentId || null,
     slots: clone(plan.slots || {}), only: plan.only ? [...plan.only] : null, rent: [...(plan.rent || [])], rebuild: plan.rebuild || null,
+    lineLevels: plan.rebuild ? {} : fixLevels(plan),
     parts: items.filter(item => !item.rented).map(item => item.id), own, work, base: {}, progress: 0,
     levels: Object.fromEntries(planLines(plan).map(line => [line, lineInfo(state, line).level])),
     defects: [], found: 0, repairProgress: 0,
@@ -996,7 +1009,7 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 13, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 14, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -1153,7 +1166,7 @@ export function takeJob(state: any, id: string) {
   if (!offer) throw new Error('这份委托已经不在了。');
   if (next.projects.some((project: any) => project.job)) throw new Error('手上还有一份委托没做完。');
   const module = MODULES[offer.line];
-  const project = blankProject(next, `job-${next.day}-${next.seed}`, { name: `委托：${module.name}${lineTiers(offer.line) > 1 ? ` ${offer.level} 档` : ''}`, scale: offer.level - 1, only: [offer.line], type: module.type || 'action' }, next.day);
+  const project = blankProject(next, `job-${next.day}-${next.seed}`, { name: `委托：${module.name}${lineTiers(offer.line) > 1 ? ` ${offer.level} 级` : ''}`, scale: offer.level - 1, only: [offer.line], type: module.type || 'action' }, next.day);
   project.job = { pay: offer.pay, client: offer.client + '想要' + module.name, module: offer.line };
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
@@ -1170,13 +1183,13 @@ export function startModuleProject(state: any, line: string, level: number, rebu
   if (!next.company) throw new Error('请先命名公司。');
   const module = MODULES[line];
   if (!module || !moduleOpen(next, line)) throw new Error('这个模块还不能做。');
-  if (!Number.isInteger(level) || level < 1 || level > lineTiers(line)) throw new Error('档位无效。');
-  if (level - 1 > 0 && !scaleOpen(next, level - 1)) throw new Error(SCALE_LOCKS[level - 1] || '这个档位还没开放。');
+  if (!Number.isInteger(level) || level < 1 || level > lineTiers(line)) throw new Error('等级无效。');
+  if (level - 1 > 0 && !scaleOpen(next, level - 1)) throw new Error(SCALE_LOCKS[level - 1] || '这个等级还没开放。');
   const id = partId(line, level);
   if (next.projects.some((project: any) => !project.released && project.kind === 'module' && (project.rebuild === id || (project.parts || []).includes(id) && (project.only || []).includes(line)))) throw new Error('这个模块已经在做了。');
   if (rebuild && !partBuilt(next, id)) throw new Error('还没做完的模块不能重做。');
-  if (!rebuild && partBuilt(next, id)) throw new Error('这一档已经做好了。');
-  const name = (rebuild ? '重做：' : '研发：') + module.name + (lineTiers(line) > 1 ? ` ${level} 档` : '');
+  if (!rebuild && partBuilt(next, id)) throw new Error('这一级已经做好了。');
+  const name = (rebuild ? '重做：' : '研发：') + module.name + (lineTiers(line) > 1 ? ` ${level} 级` : '');
   const project = blankProject(next, `module-${next.day}-${next.seed}-${next.projects.length}`, rebuild ? { name, scale: level - 1, rebuild: id, type: module.type || 'action' } : { name, scale: level - 1, only: [line], type: module.type || 'action' }, next.day);
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
@@ -1221,7 +1234,7 @@ export function setLicense(state: any, line: string, on: boolean) {
     if (!lineInfo(next, line).level) throw new Error('做好的模块才能授权。');
     next.licenses[line] = next.day;
   } else delete next.licenses[line];
-  studioLog(next, on ? '授权模块' : '收回授权', `${MODULES[line].name}${on ? `授权给其他工作室，每月按档位收 ${moneyText(LICENSE_INCOME)} 起` : '不再授权'}。`);
+  studioLog(next, on ? '授权模块' : '收回授权', `${MODULES[line].name}${on ? `授权给其他工作室，每月按等级收 ${moneyText(LICENSE_INCOME)} 起` : '不再授权'}。`);
   return next;
 }
 
@@ -1964,7 +1977,7 @@ export function projectForecast(state: any, project: any) {
   return { ...pipeline, days, aggregate: round(aggregate), remaining: round(totalRemaining), progress: round(done * 100), metrics, eta: days === null ? null : state.day + days };
 }
 
-export const SCALE_LOCKS = ['', '首作发售后开放中型作品。', '搬进正式办公室后开放大型作品。', '搬进写字楼整层后开放超大型作品。'];
+export const SCALE_LOCKS = ['', '首作发售后开放 2 级模块。', '搬进正式办公室后开放 3 级模块。', '搬进写字楼整层后开放 4 级模块。'];
 export function scaleOpen(state: any, scale: number) {
   return scale === 0 || scale === 1 && state.goals.firstRelease !== null || scale === 2 && state.office >= 2 || scale === 3 && state.office >= 4;
 }
@@ -2206,11 +2219,13 @@ function keepPerson(state: any, id: string) {
   return state;
 }
 
-export function startProject(state: any, plan: any, priority = -1) {
+export function startProject(state: any, draft: any, priority = -1) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
-  if (!plan || !scaleIndex(plan.scale)) throw new Error('请选择作品体量。');
-  if (!scaleOpen(next, plan.scale)) throw new Error(SCALE_LOCKS[plan.scale] || '这个体量还没开放。');
+  if (!draft || !draft.slots) throw new Error('请选择模块。');
+  // Levels are written out first, then the scale is read from the work they add up to.
+  const plan = { ...draft, lineLevels: fixLevels(draft) };
+  plan.scale = planScale(plan);
   const original = plan.sequel ? next.catalog.find((book: any) => book.id === plan.sequel) : null;
   if (plan.sequel && (!original || original.reviewScore < 70)) throw new Error('好评达到 70 分的作品才能开发续作。');
   const issue = planIssue(next, plan);
@@ -2230,9 +2245,8 @@ export function startProject(state: any, plan: any, priority = -1) {
   const rent = planRentCost(next, plan);
   if (rent > next.cash) throw new Error(`租用需要 ${moneyText(rent)}，资金不足。`);
   project.invested = payRent(next, plan, name);
-  // Something new may come up while the title is being made: one or two moments between 30% and 70%.
-  const moments = random(next) < 0.5 ? 1 : 2;
-  project.unlockAt = Array.from({ length: moments }, (_, index) => Math.round(30 + (index + random(next)) * 40 / moments));
+  // Something new may come up while the title is being made: one moment between 30% and 70%.
+  project.unlockAt = [Math.round(30 + random(next) * 40)];
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   if (!project.parentId && !project.port) extendMarketCycle(next, project.scale);
@@ -2688,7 +2702,7 @@ function produceProject(state: any, project: any) {
   if (!project.released && project.kind === 'game') {
     // Checkpoints are read by menu locks and the tutorial; they only ever switch on.
     // Followers arrive when something is actually shown, not on every idle day: a milestone pays once.
-    const mult = market(state, project.type).multiplier;
+    const mult = market(state, genreTag(project)).multiplier;
     if (!project.checkpoints.prototype && project.progress >= PROTO * 100) {
       project.checkpoints.prototype = true;
       project.followers += Math.round(30 * mult);
@@ -2735,7 +2749,7 @@ export function projectScore(project: any) {
   return round(clamp(metrics.overall - project.expectation, 0, 100));
 }
 
-// A sequel-sized side title (DLC, port) sells to a fraction of the market at a fraction of the price.
+// A sequel-sized side title (DLC) sells to a fraction of the market at a fraction of the price.
 const SIDE_MARKET = 0.4;
 const SIDE_PRICE = 0.35;
 
@@ -2747,7 +2761,7 @@ export function expectedScore(state: any, project: any) {
 // The money and reach of each campaign for this title, read at the score it is expected to land on.
 export function promoteOffers(state: any, project: any) {
   const scale = project.scale;
-  const qe = relativeScore(scale, expectedScore(state, project));
+  const qe = marketScore(expectedScore(state, project), state.day);
   const demand = tagFactor(state, planTags(project), scale);
   const share = project.parentId ? SIDE_MARKET : 1;
   const priceShare = project.parentId ? SIDE_PRICE : 1;
@@ -3030,7 +3044,7 @@ export function launchProject(state: any, projectId: string) {
   const metrics = projectMetrics(project);
   // Releasing early means shipping with unfinished dimensions — but it still requires the trial build.
   if (metrics.progress < TRIAL * 100) throw new Error('体验版完成后才能发售；提前发售指带着未完成的维度上市。');
-  const trend = market(next, project.type);
+  const trend = market(next, genreTag(project));
   // One combined factor, shared with rivals; the genre trend is explanatory, not a second multiplier.
   const tags = planTags(project);
   const lean = tagFactor(next, tags, project.scale);
@@ -3045,7 +3059,7 @@ export function launchProject(state: any, projectId: string) {
   // campaign bought, the platform's own push, last title's leftovers and whatever the team earned), and then
   // the daily loop in salesDay. A breakout multiplies the opening audience once.
   const share = project.parentId ? SIDE_MARKET : 1;
-  const qe = relativeScore(project.scale, score);
+  const qe = marketScore(score, next.day);
   const marketSize = marketCapacity(project.scale, qe) * lean * share;
   const price = unitPriceOf(project.scale) * (project.parentId ? SIDE_PRICE : 1) / 10000;
   const platformCover = ECONOMY.platform * (1 + exposure);
@@ -3072,7 +3086,7 @@ export function launchProject(state: any, projectId: string) {
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
   const review = reviewOf(next, project, metrics);
   const book = {
-    id: project.id, name: project.name, type: project.type, scale: project.scale, slots: project.slots,
+    id: project.id, name: project.name, type: project.type, scale: project.scale, slots: project.slots, lineLevels: project.lineLevels,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
     price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: launchFollowers,
     followers: launchFollowers, dailyUnits: units, reviewScore: score,
@@ -3521,7 +3535,7 @@ const fine = (value: number) => Math.round(value * 10000) / 10000;
 // Saves from before the attention model get theirs from what the title was selling.
 function ensureAttention(book: any) {
   if (book.attention !== undefined) return;
-  const qe = relativeScore(book.scale, book.reviewScore);
+  const qe = marketScore(book.reviewScore, book.released);
   const market = marketCapacity(book.scale, qe) * (book.lean ?? 1) * (book.parentId ? SIDE_MARKET : 1);
   book.demand = book.lean ?? 1;
   book.share = book.parentId ? SIDE_MARKET : 1;
@@ -3536,8 +3550,9 @@ function salesDay(state: any) {
     if (book.sale) openSale(state, book);
     const discounted = book.sale && book.saleUntil > state.day;
     const depth = discounted ? DISCOUNTS[0] : 1;
-    // Reception follows the review score, so a patch that lifts it widens the market and the buying rate.
-    const qe = relativeScore(book.scale, book.reviewScore);
+    // Reception follows the review score against the bar of the release year, so a patch that lifts it
+    // widens the market and the buying rate.
+    const qe = marketScore(book.reviewScore, book.released);
     const market = marketCapacity(book.scale, qe) * book.demand * book.share;
     book.capacity = market;
     book.left = Math.max(0, market - book.units);
@@ -3593,7 +3608,7 @@ export function makeDLC(state: any, id: string) {
   if (book.parentId) throw new Error('请从原作立项资料片。');
   const siblings = next.projects.filter((item: any) => item.parentId === id);
   if (siblings.length >= 2) throw new Error('每部原作最多立项两部资料片。');
-  const plan = { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, slots: book.slots, rent: book.rent || [] };
+  const plan = { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, slots: book.slots, rent: book.rent || [], lineLevels: book.lineLevels };
   const project = blankProject(next, `${next.day}-${next.seed}-${next.projects.length}`, plan, next.day);
   project.parentId = id;
   project.followers = Math.round(book.units * 0.3 + book.followers * 0.2);
@@ -3604,30 +3619,6 @@ export function makeDLC(state: any, id: string) {
   project.invested = round(cost + payRent(next, plan, project.name));
   next.projects.push(project);
   studioLog(next, `《${project.name}》立项`, '作为关联原作的新项目独立安排人手、排期、核算和发售，未发售前不产生销售收益。');
-  return next;
-}
-
-// A title ships on one platform. Bringing it to another is a related project, like a DLC: the same
-// modules, the new platform's adaptation, and only a small share of the title's own content to redo.
-export const PORT_CONTENT = 0.25;
-export function makePort(state: any, id: string, platform: string) {
-  const next = studioAction(state);
-  const book = next.catalog.find((item: any) => item.id === id);
-  if (!book || next.day - book.released > 540) throw new Error('该作品已结束销售。');
-  if (book.parentId) throw new Error('请从原作移植。');
-  if (MODULES[platform]?.slot !== 'platform' || !moduleOpen(next, platform)) throw new Error('这个平台还不能用。');
-  if ((book.slots?.platform || []).includes(platform)) throw new Error('原作已经在这个平台上。');
-  if (next.projects.some((item: any) => item.parentId === id && item.port === platform)) throw new Error('这个平台的移植已经在做或做完了。');
-  const plan = { name: `${book.name} · ${MODULES[platform].name.replace('适配', '')}版`, scale: book.scale, slots: { ...book.slots, platform: [platform] }, rent: book.rent || [], port: true };
-  if (planRentCost(next, plan) > next.cash) throw new Error('当前资金不足以支付租金。');
-  const project = blankProject(next, `${next.day}-${next.seed}-${next.projects.length}`, plan, next.day);
-  project.parentId = id;
-  project.port = platform;
-  project.followers = Math.round(book.units * 0.2 + book.followers * 0.2);
-  project.invested = payRent(next, plan, project.name);
-  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
-  next.projects.push(project);
-  studioLog(next, `《${project.name}》立项`, '移植作为关联原作的新项目：沿用原作的模块，只做新平台的适配和少量本作内容，独立发售与核算。');
   return next;
 }
 
@@ -3650,11 +3641,12 @@ export function setSale(state: any, id: string, enabled: boolean, floor?: number
 // ---- Industry: one market, three levels ----
 // Local studios are the founder's neighbours, national ones the big domestic names, global ones the
 // giants. Every title sells into the same market; the level only says which chart, expo and award a
-// title belongs to, and how much of it the player is shown.
+// title belongs to, and how much of it the player is shown. `score` is a typical title's score in the first
+// year and `cover` the campaign such a studio usually runs; both feed the same sales model as the player's.
 export const TIERS = [
-  { key: 'local', name: '城市', expo: '城市独立游戏展', expoDays: [90, 270], fee: 1, entrants: 6, sales: 320, score: 50, media: '《城市游戏圈》', awards: ['年度作品'], fans: [150], weight: 3 },
-  { key: 'national', name: '全国', expo: '全国游戏展', expoDays: [150], fee: 4, entrants: 10, sales: 1000, score: 62, media: '《独立游戏观察》', awards: ['年度作品', '创意奖', '表现奖'], fans: [800, 400, 400], weight: 10 },
-  { key: 'global', name: '国际', expo: '国际游戏展', expoDays: [300], fee: 12, entrants: 12, sales: 6000, score: 74, media: '《Global Game Weekly》', awards: ['年度作品'], fans: [3000], weight: 30 }
+  { key: 'local', name: '城市', expo: '城市独立游戏展', expoDays: [90, 270], fee: 1, entrants: 6, score: 50, cover: 0.409, media: '《城市游戏圈》', awards: ['年度作品'], fans: [150], weight: 3 },
+  { key: 'national', name: '全国', expo: '全国游戏展', expoDays: [150], fee: 4, entrants: 10, score: 62, cover: 0.517, media: '《独立游戏观察》', awards: ['年度作品', '创意奖', '表现奖'], fans: [800, 400, 400], weight: 10 },
+  { key: 'global', name: '国际', expo: '国际游戏展', expoDays: [300], fee: 12, entrants: 12, score: 74, cover: 0.626, media: '《Global Game Weekly》', awards: ['年度作品'], fans: [3000], weight: 30 }
 ];
 // Followers an expo brings by rank: 1st, 2nd, 3rd, top ten, the rest. A small game at a big show drowns.
 const EXPO_REWARD = [[600, 450, 350, 80, 80], [3000, 2200, 1600, 300, 30], [9000, 6500, 4500, 900, 20]];
@@ -3673,7 +3665,8 @@ const TITLE_TAIL = ['物语', '远征', '之城', '计划', '纪元', '回廊', 
 
 const gauss = (state: any) => (random(state) + random(state) + random(state) - 1.5) * 1.15;
 const pick = (state: any, list: any[]) => list[Math.floor(random(state) * list.length)];
-const scaleSales = [0.6, 1, 1.8, 3.2];
+// What a typical title of this level and scale sells in its first week: the yardstick for a studio's form.
+const typicalFirstWeek = (tier: number, scale: number) => firstWeekOf(scale, TIERS[tier].score, TIERS[tier].cover);
 
 function newStudio(state: any, tier: number, day: number) {
   const used = new Set(state.rivals.map((studio: any) => studio.name));
@@ -3688,9 +3681,9 @@ function rivalWork(state: any, tier: number, studio: any, released: number) {
   const roll = random(state);
   const scale = tier === 2 ? (roll < 0.15 ? 3 : roll < 0.6 ? 2 : 1) : tier === 1 ? (roll < 0.03 ? 3 : roll < 0.3 ? 2 : roll < 0.65 ? 1 : 0) : (roll < 0.2 ? 1 : 0);
   const power = studio ? studio.power : 0.7 + random(state) * 0.6;
-  const quality = clamp(TIERS[tier].score + gauss(state) * 10 + (power - 1) * 20, 25, 97);
-  const growth = 1 + Math.floor(released / 360) * 0.04;
-  const firstWeek = Math.max(20, Math.round(TIERS[tier].sales * scaleSales[scale] * power * growth * Math.exp(gauss(state) * 0.25) * (0.6 + quality / 125)));
+  // Rivals get better every year like the industry bar, so the market score of a typical title holds.
+  const quality = clamp(TIERS[tier].score + industryShift(released) + gauss(state) * 10 + (power - 1) * 20, 25, 97);
+  const firstWeek = Math.max(20, Math.round(firstWeekOf(scale, marketScore(quality, released), TIERS[tier].cover, power) * Math.exp(gauss(state) * 0.25)));
   state.workSeq = (state.workSeq || 0) + 1;
   const type = studio ? studio.type : pick(state, Object.keys(TYPES));
   return {
@@ -3701,16 +3694,17 @@ function rivalWork(state: any, tier: number, studio: any, released: number) {
   };
 }
 
-// A rival title carries tags like the player's: its genre, a style, and sometimes music or a variant.
+// A rival title carries tags like the player's: a genre of its kind, a theme, an engine, a style, and
+// sometimes a mechanic or music.
 function rivalTags(state: any, type: string) {
   const lines = Object.values(MODULES) as any[];
   const from = (filter: (module: any) => boolean) => lines.filter(module => filter(module) && (module.tags || []).length);
-  const tags = [TYPE_TAG[type]];
-  const variant = from(module => module.slot === 'core' && module.type === type && (module.needs || []).length);
-  if (variant.length && random(state) < 0.35) tags.push(...pick(state, variant).tags);
+  const tags = [...pick(state, from(module => module.slot === 'core' && module.type === type)).tags];
+  if (random(state) < 0.35) tags.push(...pick(state, from(module => module.slot === 'mechanic')).tags);
+  tags.push(...pick(state, from(module => module.slot === 'theme')).tags);
+  tags.push(...pick(state, from(module => module.slot === 'engine')).tags);
   tags.push(...pick(state, from(module => module.axis === 'art')).tags);
   if (random(state) < 0.6) tags.push(...pick(state, from(module => module.axis === 'audio')).tags);
-  tags.push(...pick(state, from(module => module.slot === 'platform')).tags);
   return Array.from(new Set(tags));
 }
 
@@ -3819,7 +3813,7 @@ export function rivalProfile(state: any, id: string) {
   const works = state.works.filter((work: any) => work.studio === id && (work.released <= state.day || work.announced !== null)).sort((left: any, right: any) => right.released - left.released);
   const ranks = works.filter((work: any) => work.released <= state.day - 7).map((work: any) => ({ work, rank: firstWeekRanks(state, work.firstWeek, work.released, '')[work.tier] }));
   const clashes = works.flatMap((work: any) => state.catalog.filter((book: any) => Math.abs(book.released - work.released) <= 7).map((book: any) => ({ work, book })));
-  const recent = ranks.slice(0, 3).map((item: any) => item.work.firstWeek / (TIERS[item.work.tier].sales * scaleSales[item.work.scale]));
+  const recent = ranks.slice(0, 3).map((item: any) => item.work.firstWeek / typicalFirstWeek(item.work.tier, item.work.scale));
   const trend = recent.length < 2 ? '平稳' : recent[0] > recent[recent.length - 1] * 1.15 ? '上升' : recent[0] < recent[recent.length - 1] * 0.85 ? '下滑' : '平稳';
   return { studio, works, ranks, clashes, trend };
 }
@@ -3830,7 +3824,7 @@ function finishRivalWork(state: any, work: any, quiet: boolean) {
   if (!studio) return;
   studio.pending = null;
   studio.next = work.released + Math.round(STUDIO_CADENCE[studio.tier] * (0.7 + random(state) * 0.6));
-  const expected = TIERS[studio.tier].sales * scaleSales[work.scale] * (1 + Math.floor(work.released / 360) * 0.04);
+  const expected = typicalFirstWeek(studio.tier, work.scale);
   studio.power = round(clamp(studio.power * (0.85 + 0.15 * work.firstWeek / expected), 0.3, 2.5));
   if (studio.tier < 2 && studio.power >= 1.6) {
     studio.tier += 1;
@@ -4488,6 +4482,14 @@ export function restoreStudio(saved: any) {
   }
   // Lines learned during the opening job stay learned across saves.
   if (next && next.openingLearned) next.unlocked = { ...(next.unlocked || {}), ...next.openingLearned };
+  // Tags can move between groups or disappear when the catalog changes; drop the stale market picks.
+  const cleanClock = (clock: any) => {
+    for (const key of ['hot', 'last']) {
+      if (!clock || !clock[key] || typeof clock[key] !== 'object') continue;
+      for (const [group, tag] of Object.entries(clock[key]) as any) if (TAG_GROUP[tag] !== group || (key === 'hot' && TAG_AXIS[tag] !== LENS_ORDER[clock.index])) delete clock[key][group];
+    }
+  };
+  if (next?.marketCycle) { cleanClock(next.marketCycle); for (const clock of next.marketCycle.clocks || []) cleanClock(clock); }
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
   if ((next.rulesRevision || 0) < 1) {
     for (const project of next.projects) {
@@ -4673,6 +4675,24 @@ export function restoreStudio(saved: any) {
     next.rulesRevision = 12;
   }
   if (next.rulesRevision < 13) next.rulesRevision = 13;
+  if (next.rulesRevision < 14) {
+    // 0.4.18: platforms are gone, the old gameplay variants are mechanics on their base genre, and every
+    // title has a theme. Built modules and sales stay as they were.
+    const base: any = { roguelikeAction: 'actionCombat', ensembleStory: 'branchingStory', growthTactics: 'turnTactics' };
+    for (const item of [...next.projects, ...next.catalog]) {
+      if (!item.slots) continue;
+      delete item.slots.platform;
+      const core = (item.slots.core || [])[0];
+      if (base[core]) { item.slots.core = [base[core]]; item.slots.mechanic = [core]; }
+      if (item.slots.core && !(item.slots.theme || []).length) item.slots.theme = ['fantasy'];
+    }
+    for (const project of next.projects) {
+      project.parts = (project.parts || []).filter((id: string) => partOf(id));
+      for (const id of Object.keys(project.moduleUpdates || {})) if (!partOf(id)) delete project.moduleUpdates[id];
+    }
+    for (const clock of cycleClocks(next.marketCycle)) chooseDirections(next, clock);
+    next.rulesRevision = 14;
+  }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   return next;
@@ -4709,9 +4729,11 @@ function keepModules(state: any, project: any) {
 // is about right now; now and then one from another category slips in. Each one is a short moment with a
 // person, a reason and what it opens.
 const SIDE_EVERY = [4, 5];
+// Only lines whose batch has come (titles out ≥ unlock − 1) and whose slot is already open can be learned.
 function lockedReady(state: any) {
   const open = (line: string) => !MODULES[line].unlock || !!(state.unlocked || {})[line];
-  return Object.keys(MODULES).filter(line => !open(line) && (MODULES[line].needs || []).every(open));
+  const out = releases(state);
+  return Object.keys(MODULES).filter(line => !open(line) && MODULES[line].unlock <= out + 1 && slotOpen(state, SLOTS.find(slot => slot.key === MODULES[line].slot)));
 }
 
 function nextLesson(state: any) {
@@ -4764,7 +4786,7 @@ function learnLine(state: any, project: any) {
 function relativeOf(state: any, book: any) {
   const tier = state.focus || 0;
   const peers = (state.works || []).filter((work: any) => work.tier === tier && work.scale === book.scale && work.released > book.released - 360 && work.released <= book.released + 6).map((work: any) => work.firstWeek).sort((left: number, right: number) => left - right);
-  const middle = peers.length >= 3 ? peers[Math.floor(peers.length / 2)] : TIERS[tier].sales * scaleSales[book.scale];
+  const middle = peers.length >= 3 ? peers[Math.floor(peers.length / 2)] : typicalFirstWeek(tier, book.scale);
   return round((book.firstWeek || 0) / Math.max(1, middle));
 }
 

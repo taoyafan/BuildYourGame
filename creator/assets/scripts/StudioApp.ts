@@ -1403,12 +1403,12 @@ export class StudioApp extends Component {
     const open = this.draft.open || (this.draft.open = {});
     const rent: string[] = this.draft.rent || (this.draft.rent = []);
     const statusOf = (key: string) => {
-      const need = core.tierFor(key, this.draft.scale || 0);
+      const need = core.levelFor(this.draft, key);
       const info = core.lineInfo(state, key);
       if (info.level >= need) return { need, text: '已有', tone: colors.green, brick: 'have', progress: 1 };
       if (rent.includes(key)) return { need, text: '租用', tone: colors.blue, brick: 'have', progress: 1 };
-      // Tiers already built count as done shares of what this title needs, so the brick fills that much.
-      if (info.level > 0 || info.next > 0) return { need, text: '补到 ' + need + ' 档', tone: colors.amber, brick: 'partial', progress: Math.max(0, Math.min(1, (info.level + info.next) / Math.max(1, need))) };
+      // Levels already built count as done shares of what this title needs, so the brick fills that much.
+      if (info.level > 0 || info.next > 0) return { need, text: '补到 ' + need + ' 级', tone: colors.amber, brick: 'partial', progress: Math.max(0, Math.min(1, (info.level + info.next) / Math.max(1, need))) };
       return { need, text: '新做', tone: colors.amber, brick: 'missing', progress: 0 };
     };
     for (const slot of core.SLOTS) {
@@ -1451,27 +1451,39 @@ export class StudioApp extends Component {
         new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
         drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, blocked ? colors.line : color, module.glyph, status.need, blocked ? 'missing' : status.brick, false, blocked ? 0 : status.progress);
         this.text(node, module.name, 4, 46, cell - 8, 18, 11, blocked ? colors.muted : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-        this.text(node, blocked || '需 ' + status.need + ' 档 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
+        this.text(node, blocked || '选 ' + status.need + ' 级 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.clickable(node, () => {
           // A line that needs something on another axis cannot go in; say why instead of doing nothing.
           if (blocked && !on) { this.notify(module.name + blocked + '。'); return; }
           const list = (this.draft.slots[slot.key] || []).slice();
+          const max = core.slotMax(state, slot);
           if (on) { if (list.length > slot.min) list.splice(list.indexOf(key), 1); }
-          else if (slot.max === 1) list.splice(0, list.length, key);
-          else if (list.length < slot.max) list.push(key);
+          else if (max === 1) list.splice(0, list.length, key);
+          else if (list.length < max) list.push(key);
           this.draft.slots = { ...this.draft.slots, [slot.key]: list };
           this.draft.rent = rent.filter(line => core.planLines(this.draft).includes(line));
           this.render();
         });
       });
       cursor += Math.max(1, Math.ceil(options.length / 3)) * 92 + 4;
+      // Each chosen line takes its own level; a locked level stays grey until the company gets there.
+      for (const key of chosen.filter(line => core.lineTiers(line) > 1)) {
+        const levels = Array.from({ length: core.lineTiers(key) }, (_, index) => index + 1);
+        this.text(body, core.MODULES[key].name, 0, cursor + 8, 96, 22, 11, colors.ink, true);
+        const cell = (inner - 100 - 6 * (levels.length - 1)) / levels.length;
+        levels.forEach((level, index) => this.button(body, level + ' 级', 100 + index * (cell + 6), cursor, cell, 36, () => {
+          this.draft.lineLevels = { ...core.fixLevels(this.draft), [key]: level };
+          this.render();
+        }, core.levelFor(this.draft, key) === level, !core.levelOpen(state, level) || !!fixed));
+        cursor += 42;
+      }
       // A line the company does not have can be rented instead of built: no work, capped quality, paid
       // once now. Gameplay never; the first title one line, later titles two. It never joins the library.
       const renting = new Set(core.planModules(state, this.draft).filter((item: any) => item.rented).map((item: any) => item.line));
-      for (const key of chosen.filter(line => core.rentable(line) && core.lineInfo(state, line).level < core.tierFor(line, this.draft.scale || 0))) {
+      for (const key of chosen.filter(line => core.rentable(line) && core.lineInfo(state, line).level < core.levelFor(this.draft, line))) {
         const on = rent.includes(key);
         const full = !on && renting.size >= core.rentLimit(state);
-        const price = core.rentPrice(key, this.draft.scale || 0);
+        const price = core.rentPrice(key, core.levelFor(this.draft, key));
         this.button(body, (on ? '改为自己做：' : '租用：') + core.MODULES[key].name + (on ? '' : full ? '（' + (core.releases(state) ? '每作' : '首作') + '最多租 ' + core.rentLimit(state) + ' 个）' : '（质量 ' + core.RENT_QUALITY + '，' + content.money(price.price) + '）'), 0, cursor, inner, 38, () => {
           this.draft.rent = on ? rent.filter(line => line !== key) : [...rent, key];
           this.render();
@@ -1480,16 +1492,25 @@ export class StudioApp extends Component {
       }
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, formTop, inner, cursor - formTop - 8));
-    const openScales = core.SCALES.map((_scale: any, index: number) => index).filter((index: number) => core.scaleOpen(state, index));
-    if (openScales.length > 1) {
-      this.text(body, '体量', 0, cursor, inner, 24, 15, colors.ink, true);
+    // One press sets every line to the same level; each slot can still change its own lines above.
+    const openLevels = core.SCALES.map((_scale: any, index: number) => index + 1).filter((level: number) => core.levelOpen(state, level));
+    if (openLevels.length > 1 && !this.draft.sequel) {
+      this.text(body, '全部模块设为', 0, cursor, inner, 24, 15, colors.ink, true);
       cursor += 30;
-      openScales.forEach((index: number, position: number) => {
-        const cell = (inner - 8 * (openScales.length - 1)) / openScales.length;
-        this.button(body, core.SCALES[index].name, position * (cell + 8), cursor, cell, 42, () => { this.draft.scale = index; this.render(); }, this.draft.scale === index);
+      const lines = core.planLines(this.draft);
+      openLevels.forEach((level: number, position: number) => {
+        const cell = (inner - 8 * (openLevels.length - 1)) / openLevels.length;
+        const all = lines.length > 0 && lines.every((line: string) => core.levelFor(this.draft, line) === Math.min(level, core.lineTiers(line)));
+        this.button(body, level + ' 级', position * (cell + 8), cursor, cell, 42, () => { this.draft.scale = level - 1; this.draft.lineLevels = {}; this.render(); }, all);
       });
       cursor += 54;
     }
+    if (!core.planIssue(state, this.draft)) {
+      const nominal = core.nominalWork(this.draft);
+      cursor += this.paragraph(body, '预估体量：' + core.SCALES[core.planScale(this.draft)].name + '（全部新做约 ' + Math.round(nominal) + ' 人日）。售价、市场与行情周期都按它算。', cursor, false, 0, inner, 13);
+    }
+    this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.openMenu('industry', 'market'));
+    cursor += 46;
     // Show the shape of the work before the days-and-cost line: testing is the sixth spoke.
     if (!core.planIssue(state, this.draft)) {
       const plan = core.planWork(state, this.draft);
@@ -1505,7 +1526,7 @@ export class StudioApp extends Component {
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
     const coming = core.nextUnlocks(state);
     if (coming.length) cursor += this.paragraph(body, '下一作发售后开放：' + coming.join('、'), cursor, true, 0, inner, 12);
-    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!core.planIssue(state, this.draft) || !core.scaleOpen(state, this.draft.scale));
+    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!core.planIssue(state, this.draft));
     return cursor + 66;
   }
 
@@ -2526,7 +2547,7 @@ export class StudioApp extends Component {
           const book = this.state.catalog.find((item: any) => item.id === data.id);
           if (!book) throw new Error('原作不存在。');
           this.openMenu('new-project');
-          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, slots: JSON.parse(JSON.stringify(book.slots)), rent: [...(book.rent || [])], sequel: book.id };
+          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, slots: JSON.parse(JSON.stringify(book.slots)), rent: [...(book.rent || [])], lineLevels: { ...(book.lineLevels || {}) }, sequel: book.id };
           this.render();
           break;
         }
@@ -2552,14 +2573,6 @@ export class StudioApp extends Component {
           this.watching = project.id;
           this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];
           this.apply(next, '资料片已作为新项目立项，请安排人手。');
-          break;
-        }
-        case 'port': {
-          const next = core.makePort(this.state, data.id, data.platform);
-          const project = next.projects[next.projects.length - 1];
-          this.watching = project.id;
-          this.routes = [{ menu: 'project', id: project.id }, { menu: 'assign', id: project.id }];
-          this.apply(next, '移植已立项，请安排人手。');
           break;
         }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;

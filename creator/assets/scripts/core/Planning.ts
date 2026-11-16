@@ -34,12 +34,19 @@ export const PLANNING_OFFICES = [
   { name: '写字楼整层', seats: 40, rent: 12, cost: 64, crew: 24, peak: 85 },
   { name: '园区大楼', seats: 100, rent: 30, cost: 160, crew: 60, peak: 93 }
 ];
+// `price` is the unit price that makes a title scored at the break-even line pay back exactly.
 export const PLANNING_SCALES = [
-  { name: '小', w: 1, W: 47, pc: 1, S: 48, office: 1 },
-  { name: '中', w: 5, W: 235, pc: 1.26, S: 60, office: 2 },
-  { name: '大', w: 20, W: 940, pc: 2.05, S: 70, office: 3 },
-  { name: '超大', w: 90, W: 4230, pc: 3.01, S: 78, office: 4 }
+  { name: '小', w: 1, W: 47, price: 66.5, office: 1 },
+  { name: '中', w: 5, W: 235, price: 70.2, office: 2 },
+  { name: '大', w: 20, W: 940, price: 78.2, office: 3 },
+  { name: '超大', w: 90, W: 4230, price: 86.0, office: 4 }
 ];
+// A title's scale is read from its nominal person-days: the geometric middles between the W above.
+export const SCALE_BOUNDS = [105, 470, 2000];
+export function scaleOfWork(work) {
+  const index = SCALE_BOUNDS.findIndex(bound => work < bound);
+  return index < 0 ? SCALE_BOUNDS.length : index;
+}
 
 // The phase ratios are design choices; work and productivity above are model inputs.
 export const ROTATION_PARAMETERS = {
@@ -75,37 +82,40 @@ export function cyclePhase(scale, age) {
 // ---- Single-title economy ----
 // The formulas of 数值设计.md §四–§六, used by the running game and by throwaway checks. Nothing here
 // knows about save files; callers pass plain numbers.
+// Fitted so the best campaign moves none → full → none at scores 50 / 70 / 85 / 95 for every scale.
 export const ECONOMY = {
-  pool: 6000, poolExp: 0.93, scoreExp: 1.3,
-  target: 72.5,
-  priceBase: 66.7,
-  convBase: 0.05, convGain: 0.55, convExp: 2, forget: 0.15,
-  kSlope: 3.6, kOffset: 1.9,
-  half: 21, natural: 0.0004, platform: 0.10,
+  pool: 6000, poolExp: 0.93, scoreExp: 1.1474,
+  breakEven: 48, receptFrom: 36.207,
+  convBase: 0.0799, convGain: 0.343, convExp: 1.2124, forget: 0.1441,
+  kSlope: 4.5803, kOffset: 2.3364, kMax: 1.9676,
+  half: 21, natural: 0.002, platform: 0.30,
   fanCarry: 0.7, valuationDays: 540,
-  unitBase: 0.47, unitSlope: 0.35
+  unitBase: 0.289, unitSlope: 0.4387,
+  drift: 1, driftCap: 10
 };
 // Total launch attention as a share of the market, and what each paid step buys. The first row is no
 // campaign at all: only the platform's own recommendation.
-export const PROMOTION_TIERS = [['不投', 0.10], ['试水', 0.25], ['常规', 0.45], ['力推', 0.65], ['全力', 0.85]];
+export const PROMOTION_TIERS = [['不投', 0.30], ['试水', 0.409], ['常规', 0.517], ['力推', 0.626], ['全力', 0.735]];
 
 const bound = (v, a, b) => Math.min(b, Math.max(a, v));
 export function monthlyWage(quality, speed = STANDARD_SPEED) {
   return LABOR_PARAMETERS.wageDay * 30 / 10000 * salaryFactor(quality) * (speed / STANDARD_SPEED);
 }
-export function relativeScore(scale, q) {
-  return bound(ECONOMY.target + q - PLANNING_SCALES[scale].S, 0, 100);
+// The industry bar rises a point a year (capped): every curve reads the score minus this shift.
+export function industryShift(day) {
+  return Math.min(ECONOMY.driftCap, Math.floor(Math.max(0, day - 1) / 360) * ECONOMY.drift);
 }
-export function receptionOf(qe) { return bound((qe - 40) / 60, 0, 1); }
-export function marketCapacity(scale, qe) {
-  return ECONOMY.pool * Math.pow(PLANNING_SCALES[scale].w, ECONOMY.poolExp) * Math.pow(qe / 100, ECONOMY.scoreExp);
+export function marketScore(q, day) { return bound(q - industryShift(day), 0, 100); }
+export function receptionOf(q) { return bound((q - ECONOMY.receptFrom) / (100 - ECONOMY.receptFrom), 0, 1); }
+export function marketCapacity(scale, q) {
+  return ECONOMY.pool * Math.pow(PLANNING_SCALES[scale].w, ECONOMY.poolExp) * Math.pow(q / 100, ECONOMY.scoreExp);
 }
-export function unitPriceOf(scale) { return ECONOMY.priceBase * PLANNING_SCALES[scale].pc; }
-export function conversionRate(qe) {
-  return ECONOMY.convBase + ECONOMY.convGain * Math.pow(receptionOf(qe), ECONOMY.convExp);
+export function unitPriceOf(scale) { return PLANNING_SCALES[scale].price; }
+export function conversionRate(q) {
+  return ECONOMY.convBase + ECONOMY.convGain * Math.pow(receptionOf(q), ECONOMY.convExp);
 }
-export function spreadRate(qe) {
-  return bound(ECONOMY.kSlope * receptionOf(qe) - ECONOMY.kOffset, -1, 2);
+export function spreadRate(q) {
+  return bound(ECONOMY.kSlope * receptionOf(q) - ECONOMY.kOffset, -1, ECONOMY.kMax);
 }
 export function attentionPrice(scale, cover) {
   return unitPriceOf(scale) * (ECONOMY.unitBase + ECONOMY.unitSlope * Math.max(0, cover - ECONOMY.platform));
@@ -142,4 +152,18 @@ export function simulateTitle(scale, qe, cover, stock = 0, demand = 1, share = 1
     sold += step.units;
   }
   return { market, conv, spread, sold };
+}
+// Units sold in the first week; rivals use it too, so their charts and the player's share one model.
+export function firstWeekOf(scale, q, cover, demand = 1) {
+  const market = marketCapacity(scale, q) * demand;
+  const conv = conversionRate(q);
+  const spread = spreadRate(q);
+  let attention = launchAttention(market, cover);
+  let sold = 0;
+  for (let day = 1; day <= 7; day++) {
+    const step = salesStep(attention, sold, market, conv, spread, day);
+    attention = step.attention;
+    sold += step.units;
+  }
+  return sold;
 }

@@ -243,7 +243,7 @@ export function planPreview(state: any, draft: any) {
   const cost = workload / 30 * wage + core.OFFICES[state.office].rent * (days || 30) / 30 + rentCost;
   const rentLines = Array.from(new Set(items.filter((item: any) => item.rented).map((item: any) => item.line))).map((line: any) => {
     const record = core.rentRecord(state, line);
-    const price = core.rentPrice(line, draft.scale || 0);
+    const price = core.rentPrice(line, core.levelFor(draft, line));
     return '\n' + core.MODULES[line].name + '：这条线累计租了 ' + record.count + ' 次，已付约 ' + money(record.paid) + '，自己做约需 ' + money(price.build);
   }).join('');
   return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines + '\n测试也要安排人做，六项都做完才到 100%。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
@@ -254,7 +254,7 @@ function gainedBlocks(state: any, event: any) {
   const blocks: any[] = [];
   if (event.gained?.length) {
     blocks.push({ type: 'section', title: '模块库新增' });
-    blocks.push({ type: 'bricks', items: event.gained.map((item: any) => brickOf(state, item.id, { level: item.level, status: 'have', detail: item.from ? '升到 ' + item.level + ' 档' : '新获得 · ' + item.level + ' 档' })) });
+    blocks.push({ type: 'bricks', items: event.gained.map((item: any) => brickOf(state, item.id, { level: item.level, status: 'have', detail: item.from ? '升到 ' + item.level + ' 级' : '新获得 · ' + item.level + ' 级' })) });
   }
   if (event.unlocked?.length) blocks.push({ type: 'note', icon: 'Sparkles', text: '立项新开放：' + event.unlocked.join('、') });
   return blocks;
@@ -304,7 +304,7 @@ function projectMenu(state: any, id?: string) {
   // With no running title the page is a choice, not a form: take a commission or start a title.
   if (!project) return { title: '项目', blocks: [{ type: 'actions', anchor: 'new-project', items: [
     ...jobAction(state),
-    { text: '新项目', detail: '选类型与体量，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-game-0' }
+    { text: '新项目', detail: '选类型、题材与模块等级，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-game-0' }
   ] }] };
   if (project.released) return patchProjectMenu(state, project);
   if (project.kind === 'module') {
@@ -319,7 +319,7 @@ function projectMenu(state: any, id?: string) {
     return {
       title: project.job ? '委托' : '模块项目',
       blocks: [
-        { type: 'text', text: project.job ? project.job.client + '。做完就能拿到 ' + money(project.job.pay) + '，这块模块也会留在你手里。' : project.rebuild ? '从头重做这一档，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
+        { type: 'text', text: project.job ? project.job.client + '。做完就能拿到 ' + money(project.job.pay) + '，这块模块也会留在你手里。' : project.rebuild ? '从头重做这一级，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
         { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
         { type: 'lines', items: [['完成度', metrics.progress.toFixed(0) + '%'], ['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
@@ -457,7 +457,7 @@ function jobsMenu(state: any) {
   const offers = core.jobBoard(state);
   return { title: '接委托', blocks: [
     { type: 'text', text: '给别人做一块模块，报酬固定，做完到账；模块也留在你的模块库里。每月换一批。点开可以先看详情。', muted: true },
-    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 档' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 点开看详情', action: 'menu', data: { menu: 'job', id: offer.id } })) }
+    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 点开看详情', action: 'menu', data: { menu: 'job', id: offer.id } })) }
   ] };
 }
 
@@ -491,7 +491,7 @@ function jobDetailMenu(state: any, id: string) {
     blocks: [
       { type: 'text', text: offer.client + '。' + (module.desc || '') },
       { type: 'lines', items: [
-        ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 档' : '')],
+        ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 级' : '')],
         ['报酬', money(offer.pay) + '（交付时一次到账）'],
         ['工作量', crewDays(state, work)]
       ] },
@@ -829,7 +829,6 @@ function bookMenu(state: any, id: string) {
           : { text: '开补丁', detail: (project ? project.defects.filter((defect: any) => defect.found && !defect.fixed).length : 0) + ' 项玩家报告的缺陷待修；也可以返工某一项做更新。', icon: 'Hammer', action: 'menu', data: { menu: 'patch', id }, disabled: !project, anchor: 'patch-book' },
         { text: book.sale ? '关闭促销' : '开启促销', detail: '统一 ' + (core.DISCOUNTS[0] * 10) + ' 折；开启后系统按剩余需求决定何时开始，关闭立即恢复原价。', icon: 'Coins', action: 'sale', data: { id, enabled: !book.sale }, disabled: state.day - book.released > 540, anchor: 'sale-toggle', tag: book.sale ? '促销中' : '' },
         ...(!book.parentId ? [{ text: '资料片（DLC）· ' + money(4 + book.scale * 2), detail: '作为新项目立项，独立开发、核算与发售。', icon: 'Gift', action: 'dlc', data: { id }, disabled: dlcs.length >= 2 || state.cash < 4 + book.scale * 2 || state.day - book.released > 540 }] : []),
-        ...(!book.parentId ? Object.keys(core.MODULES).filter(line => core.MODULES[line].slot === 'platform' && core.moduleOpen(state, line) && !(book.slots?.platform || []).includes(line)).map(line => ({ text: '移植：' + core.MODULES[line].name.replace('适配', ''), detail: '沿用原作的模块，只做新平台适配和少量本作内容；作为关联项目独立发售。', icon: 'Rocket', action: 'port', data: { id, platform: line }, disabled: state.projects.some((item: any) => item.parentId === id && item.port === line) || state.day - book.released > 540 })) : []),
         { text: '开发续作', detail: book.reviewScore >= 70 ? '继承部分关注，玩家期待更高。' : '好评达到 70 分才能开发续作。', icon: 'Sparkles', action: 'sequel', data: { id }, disabled: book.reviewScore < 70 }
       ] },
       ...(contributions.length ? [{ type: 'lines', title: '参与的人', items: contributions.map((item: any) => [item.name, core.ROLES[item.role].name + ' · 贡献约 ' + Math.round(item.share * 100) + '%']) }] : [])
@@ -1101,7 +1100,7 @@ function brickOf(state: any, line: string, extra: any = {}) {
   const locked = !core.moduleOpen(state, line);
   const tiers = info.top > 1;
   const detail = locked ? '还没学会，做游戏的过程中会解锁'
-    : info.level ? (tiers ? info.level + ' 档 · ' : '') + '用过 ' + info.uses + ' 次 · 质量 ' + Math.round(info.quality) + (info.next > 0 ? ' · 下一档做了 ' + Math.round(info.next * 100) + '%' : '')
+    : info.level ? (tiers ? info.level + ' 级 · ' : '') + '用过 ' + info.uses + ' 次 · 质量 ' + Math.round(info.quality) + (info.next > 0 ? ' · 下一级做了 ' + Math.round(info.next * 100) + '%' : '')
     : info.next > 0 ? '做了 ' + Math.round(info.next * 100) + '%' : '还没有';
   return {
     module: line, name: module.name, axis: module.axis, glyph: module.glyph,
@@ -1119,7 +1118,7 @@ function lineActions(state: any, line: string, info: any) {
   if (!core.moduleOpen(state, line)) return [];
   const out: any[] = [];
   const next = info.level + 1;
-  if (next <= info.top && core.scaleOpen(state, next - 1)) out.push({ text: '研发' + (info.top > 1 ? ' ' + next + ' 档' : ''), action: 'module-build', data: { line, level: next } });
+  if (next <= info.top && core.scaleOpen(state, next - 1)) out.push({ text: '研发' + (info.top > 1 ? ' ' + next + ' 级' : ''), action: 'module-build', data: { line, level: next } });
   if (info.level && (state.office >= core.LICENSE_OFFICE || info.licensed)) out.push({ text: info.licensed ? '收回授权' : '授权', action: 'license', data: { line, on: !info.licensed } });
   return out;
 }
@@ -1141,7 +1140,7 @@ function libraryMenu(state: any, id?: string) {
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];
-  blocks.push({ type: 'text', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一档' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按档位收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
+  blocks.push({ type: 'text', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一级' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按等级收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
   return { title: '模块库', blocks };
 }
 
@@ -1153,11 +1152,11 @@ function composeMenu(state: any, id = '') {
   const project = state.projects.find((item: any) => item.id === (kind === 'project' ? rest : projectId)) || null;
   const inProject = (key: string, extra: any = {}) => {
     if (!project) return brickOf(state, key, extra);
-    const level = core.tierFor(key, project.scale);
+    const level = core.levelFor(project, key);
     const rented = (project.rent || []).includes(key) && !(project.parts || []).includes(core.partId(key, level));
     const progress = rented ? 1 : core.partProgress(state, core.partId(key, level));
     const before = project.levels?.[key] || 0;
-    const detail = rented ? '租用 · 质量 ' + core.RENT_QUALITY : '需 ' + level + ' 档 · ' + (before >= level ? '已有' : progress >= 0.999 ? '做好了' : progress > 0.001 ? '做了 ' + Math.round(progress * 100) + '%' : '新做');
+    const detail = rented ? '租用 · 质量 ' + core.RENT_QUALITY : '需 ' + level + ' 级 · ' + (before >= level ? '已有' : progress >= 0.999 ? '做好了' : progress > 0.001 ? '做了 ' + Math.round(progress * 100) + '%' : '新做');
     return brickOf(state, key, { level, status: progress >= 0.999 ? 'have' : progress > 0.001 ? 'partial' : 'missing', progress, detail, route: { menu: 'compose', id: 'module:' + key + '@' + project.id }, actions: [], ...extra });
   };
   if (kind === 'project' && project) {
@@ -1170,16 +1169,16 @@ function composeMenu(state: any, id = '') {
   const module = core.MODULES[line];
   if (!module) return { title: '合成图', blocks: [{ type: 'text', text: '没有找到这个模块。' }] };
   const root = project ? inProject(line, { route: null }) : editableBrick(state, line, { route: null });
-  const children = (module.needs || []).map((key: string) => project ? inProject(key) : editableBrick(state, key));
+  const children: any[] = [];
   const blocks: any[] = [{ type: 'compose', root, children }];
-  if (!children.length) blocks.push({ type: 'text', text: '这是最底层的模块；高一档是在它上面再做一层。', muted: true });
+  if (!children.length) blocks.push({ type: 'text', text: '高一级是在它上面再做一层。', muted: true });
   const info = core.lineInfo(state, line);
   // The module's own card comes before the numbers: a finished module has its six scores, and a
   // half-built one shows both the quality already reached and where the current crew would take it.
-  const tier = project ? core.tierFor(line, project.scale) : Math.max(1, info.level + (info.next > 0 ? 1 : 0));
+  const tier = project ? core.levelFor(project, line) : Math.max(1, info.level + (info.next > 0 ? 1 : 0));
   const metrics = core.moduleMetrics(state, core.partId(line, Math.min(core.lineTiers(line), tier)));
   if (info.level || info.next > 0) blocks.push({ type: 'radar', metrics, genre: module.type || '', projectId: null, expected: metrics.expected });
-  if (info.level || info.next > 0) blocks.push({ type: 'lines', items: [['档位', info.level + ' / ' + info.top + ' 档' + (info.next > 0 ? '（下一档 ' + Math.round(info.next * 100) + '%）' : '')], ['质量', String(Math.round(info.quality))], ['首次来自', info.first ? '《' + info.first + '》' : '—'], ['用过', info.uses + ' 次'], ['未修缺陷', info.defects + ' 项'], ['标签', (module.tags || []).join('、') || '—']] });
+  if (info.level || info.next > 0) blocks.push({ type: 'lines', items: [['等级', info.level + ' / ' + info.top + ' 级' + (info.next > 0 ? '（下一级 ' + Math.round(info.next * 100) + '%）' : '')], ['质量', String(Math.round(info.quality))], ['首次来自', info.first ? '《' + info.first + '》' : '—'], ['用过', info.uses + ' 次'], ['未修缺陷', info.defects + ' 项'], ['标签', (module.tags || []).join('、') || '—']] });
   return { title: module.name, blocks };
 }
 
@@ -1561,7 +1560,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     case 'project':
       // With no running title the page is a choice. Force the tap onto 新项目 so the tutorial leads
       // into the setup form instead of stopping at the page it just opened.
-      if (!project) return !state.catalog.length && !seen.newGame ? { anchor: 'new-game-0', text: '点「新项目」，选类型和体量，开始第一款游戏。', tap: 'newGame', tapGroup: 'new-game' } : null;
+      if (!project) return !state.catalog.length && !seen.newGame ? { anchor: 'new-game-0', text: '点「新项目」，选类型和题材，开始第一款游戏。', tap: 'newGame', tapGroup: 'new-game' } : null;
       if (project.kind !== 'game') return null;
       // Before sending the player to the assignment page, show what the six rows are for. Stay with
       // what is on screen — work left and the estimated day — instead of systems taught later.
