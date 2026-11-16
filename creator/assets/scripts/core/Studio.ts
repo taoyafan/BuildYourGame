@@ -3,13 +3,14 @@
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, SLOTS, AXES, ORIGINS } from './Modules';
 import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand } from './Planning';
+import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, relativeScore, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, SLOTS, AXES, ORIGINS };
+export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.15';
+export const VERSION = '0.4.16';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -51,21 +52,16 @@ export const ABILITIES: any[] = [
 ];
 export const ABILITY_KEYS = ABILITIES.map(ability => ability.key);
 
-// Four settings of scale decide how much work there is, what it may sell for and how big its market is.
-// Work is set by team and time: small is two people for a month, medium five for two months, large ten
-// for four months, extra-large thirty for half a year. Price and reach grow so that a well-made title
-// earns about the same multiple of its cost at every size, and a poor big one loses more.
+// Four settings of scale decide how much work there is and how big its market is. `work` is the
+// multiplier on every line's and the title's own work, calibrated so that a title with the default lines
+// (gameplay, engine, art, audio, platform) all new, testing and fitting-in included, totals the person-days
+// in Planning.ts. Re-measure when module work changes. Price, market and quality thresholds are Planning's.
 export const SCALES = [
-  { name: '小型', work: 1, price: 1, reach: 1 },
-  { name: '中型', work: 5, price: 1.4, reach: 3.5 },
-  { name: '大型', work: 20, price: 1.8, reach: 12 },
-  { name: '超大型', work: 90, price: 2.4, reach: 45 }
+  { name: '小型', work: 0.68 },
+  { name: '中型', work: 3.65 },
+  { name: '大型', work: 14.8 },
+  { name: '超大型', work: 66.7 }
 ];
-
-// Pace trial: both the workload and the money a title brings in are two thirds of the old values.
-// A game takes about a third less calendar time while the risk/reward ratio stays the same. Change
-// this one constant to roll the whole trial back.
-export const PACE = 2 / 3;
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
 // how much the audience cares about each dimension. Genres never cap a dimension.
@@ -74,17 +70,17 @@ export const PACE = 2 / 3;
 // One person alone still needs roughly twice that, which is what makes the first hire feel worthwhile.
 export const TYPES: any = {
   action: {
-    name: '操作型', audience: '动作玩家', work: 60, price: 0.01,
+    name: '操作型', audience: '动作玩家', work: 60,
     share: { creativity: 0.1, depth: 0.12, fluidity: 0.3, picture: 0.22, sound: 0.1, stability: 0.16 },
     weights: { creativity: 0.1, depth: 0.15, fluidity: 0.35, picture: 0.2, sound: 0.08, stability: 0.12 }
   },
   think: {
-    name: '思考型', audience: '策略玩家', work: 70, price: 0.008,
+    name: '思考型', audience: '策略玩家', work: 70,
     share: { creativity: 0.2, depth: 0.34, fluidity: 0.06, picture: 0.16, sound: 0.1, stability: 0.14 },
     weights: { creativity: 0.15, depth: 0.4, fluidity: 0.05, picture: 0.15, sound: 0.1, stability: 0.15 }
   },
   story: {
-    name: '叙事型', audience: '叙事玩家', work: 55, price: 0.007,
+    name: '叙事型', audience: '叙事玩家', work: 55,
     share: { creativity: 0.2, depth: 0.16, fluidity: 0.08, picture: 0.24, sound: 0.2, stability: 0.12 },
     weights: { creativity: 0.28, depth: 0.12, fluidity: 0.05, picture: 0.2, sound: 0.25, stability: 0.1 }
   }
@@ -221,32 +217,24 @@ export function primaryAbility(person: any) {
   return ABILITY_KEYS.reduce((best, key) => person.abilities[key] > person.abilities[best] ? key : best, ABILITY_KEYS[0]);
 }
 
+// Channels differ in the fee, the ability band they draw from and how often they hold a high scorer.
+// Wages follow ability and speed only (Planning.monthlyWage): the same person asks the same price from
+// any channel.
 export const CHANNELS: any = {
-  friends: { name: '熟人介绍', fee: 0.1, text: '朋友和同学推荐，花费少，能力参差，工资较低。', skill: [25, 55], speed: [60, 95], wage: [0.4, 0.01, 0.005, 0.2] },
-  web: { name: '招聘网站', fee: 0.8, text: '公开招聘，候选人更有经验，工资也更高。', skill: [45, 78], speed: [70, 105], wage: [1.6, 0.03, 0.015, 0.6], lock: '完成首作后开放' },
-  headhunt: { name: '行业推荐', fee: 3, text: '同行推荐的成熟开发者，能力强、要价高，推荐费也贵。', skill: [68, 93], speed: [85, 120], wage: [2.5, 0.035, 0.02, 0.8], lock: '搬进正式办公室后开放' }
+  friends: { name: '熟人介绍', fee: 0.1, text: '朋友和同学推荐，花费少，能力参差，工资较低。', skill: [25, 55], speed: [60, 95] },
+  web: { name: '招聘网站', fee: 0.8, text: '公开招聘，候选人更有经验，工资也更高。', skill: [45, 78], speed: [70, 105], lock: '完成首作后开放' },
+  headhunt: { name: '行业推荐', fee: 3, text: '同行推荐的成熟开发者，能力强、要价高，推荐费也贵。', skill: [68, 93], speed: [85, 120], lock: '搬进正式办公室后开放' }
 };
 // The studio starts at the founder's home: one desk, no rent. Delivering the opening job rents the hut
-// by itself; every move after that is the player's call.
-export const OFFICES = [
-  { name: '自家', seats: 1, rent: 0 },
-  { name: '起步小屋', seats: 4, rent: 1.5 },
-  { name: '正式办公室', seats: 10, rent: 3, cost: 8 },
-  { name: '独立工作室', seats: 16, rent: 5, cost: 30 },
-  { name: '写字楼整层', seats: 40, rent: 12, cost: 120 },
-  { name: '园区大楼', seats: 100, rent: 30, cost: 500 }
-];
-// Promotion is one campaign per title, picked once after the trial build. Tiers differ by orders of
-// magnitude and each yuan buys fewer followers as the budget grows, so the right tier depends on what
-// one follower is worth for this title (price, trial reception) and how far its launch can reach.
-export const PROMOTE_TIERS = [0.5, 3, 15, 60, 200];
-const PROMOTE_SCALE = 400;
+// by itself; every move after that is the player's call. Seats, rent and moving costs are Planning's.
+export const OFFICES = PLANNING_OFFICES.map(({ name, seats, rent, cost }: any) => cost ? { name, seats, rent, cost } : { name, seats, rent });
+// Promotion is one campaign per title, picked once after the trial build. Each tier fixes the share of the
+// market that knows the title at launch; the money follows from the market it is aimed at.
+export const PROMOTE_TIERS: any[] = PROMOTION_TIERS.slice(1).map(([name, cover]: any) => ({ name, cover }));
 // Minimum discount a title may go to. The system decides when to run a sale and how deep within the floor.
 export const DISCOUNTS = [0.75];
 
-export const UNIT_MARKS = [1000, 5000, 10000, 50000];
-export const MARKET_SIZE = 5000;
-// One work unit is one person-day of a newcomer. A dimension never stops at a cap; rework replaces the
+export const UNIT_MARKS = [1000, 5000, 10000, 50000];// One work unit is one person-day of a newcomer. A dimension never stops at a cap; rework replaces the
 // weakest finished part, so pushing a score up costs full wages for what the new hand can reach.
 // Defects left per person-day of content at ability 0; a full-ability hand leaves none.
 const DEFECT_RATE = 0.5;
@@ -479,7 +467,7 @@ export const TEST_SHARE = 0.18;
 // upgraded or reworked). It is paid once at the start of the title: a quarter of what building it would
 // cost in a newcomer's wages, so renting the same line four times costs about as much as building it.
 export const RENT_QUALITY = 55;
-export const RENT_DAY = 0.045;
+export const RENT_DAY = LABOR_PARAMETERS.wageDay / 10000;
 export const RENT_SPLIT = 4;
 // Gameplay is what the title is; it can never be rented. The first title may rent one line, later two.
 export const rentLimit = (state: any) => releases(state) ? 2 : 1;
@@ -1325,11 +1313,10 @@ function rollTags(state: any, channel = 'friends') {
   return tags;
 }
 
-// The monthly wage the market would ask today for someone this good, priced on their best ability.
+// The monthly wage the market asks for someone this good, priced on their best ability and their speed.
 export function marketWage(person: any) {
   const peak = Math.max(...ABILITY_KEYS.map(key => person.abilities[key]));
-  const source = CHANNELS[peak >= 64 ? 'headhunt' : peak >= 54 ? 'web' : 'friends'];
-  return round(source.wage[0] + peak * source.wage[1] + Math.max(0, person.speed - source.speed[0]) * source.wage[2] + source.wage[3] / 2);
+  return round(monthlyWage(peak, person.speed));
 }
 
 // Notes on a person's own record: joining, releases, mentoring, labels and the events they lived through.
@@ -1350,16 +1337,15 @@ export function recruitFee(state: any, channel: string) {
   return round(CHANNELS[channel].fee * (1 + Math.min(1, layoffs * 0.25)));
 }
 
-// What this channel's shortlist typically asks per month. It is the same formula publishRecruitment
-// uses, read at the bottom and the top of the channel's ability and speed bands, so the quote under
-// the channel tabs never drifts from the wages on the cards.
+// What this channel's shortlist typically asks per month: the wage formula read at the bottom and the
+// top of the channel's ability and speed bands, so the quote under the channel tabs never drifts from the
+// wages on the cards.
 export function channelWageRange(channel: string) {
   const source = CHANNELS[channel];
   if (!source) return { low: 0, high: 0 };
   const [lowPeak, highPeak] = CHANNEL_PEAK[channel] || CHANNEL_PEAK.friends;
   const [lowSpeed, highSpeed] = source.speed;
-  const wage = (peak: number, speed: number) => source.wage[0] + peak * source.wage[1] + (speed - lowSpeed) * source.wage[2];
-  return { low: round(wage(lowPeak, lowSpeed)), high: round(wage(highPeak, highSpeed) + source.wage[3]) };
+  return { low: round(monthlyWage(lowPeak, lowSpeed)), high: round(monthlyWage(highPeak, highSpeed)) };
 }
 
 // A star is a specialist at the top of one trade, not good at everything.
@@ -1388,7 +1374,7 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     const speed = Math.round(source.speed[0] + random(next) * (source.speed[1] - source.speed[0]));
     const strongest = ABILITY_KEYS.reduce((best, item) => abilities[item] > abilities[best] ? item : best, ABILITY_KEYS[0]);
     const name = FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)];
-    const wage = round(source.wage[0] + abilities[strongest] * source.wage[1] + (speed - source.speed[0]) * source.wage[2] + random(next) * source.wage[3]);
+    const wage = round(monthlyWage(abilities[strongest], speed));
     return freshPerson(next, { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, abilities, speed, tags, wage, hired: false, potential: potentialFor(next, abilities, channel) });
   });
   // Three candidates, three independent rolls. Odds are per person and scale with star level and
@@ -2749,49 +2735,53 @@ export function projectScore(project: any) {
   return round(clamp(metrics.overall - project.expectation, 0, 100));
 }
 
-export function promoteBuyers(cost: number) {
-  return Math.round(PROMOTE_SCALE * Math.pow(Math.max(0, cost), 0.8));
+// A sequel-sized side title (DLC, port) sells to a fraction of the market at a fraction of the price.
+const SIDE_MARKET = 0.4;
+const SIDE_PRICE = 0.35;
+
+// Where the team would land if it finished as planned: the dashed line of the radar, as one score.
+export function expectedScore(state: any, project: any) {
+  return round(clamp(overallOf(project.type, expectedDimensions(state, project)) - (project.expectation || 0), 0, 100));
 }
 
-export function promoteRange(state: any, project: any, cost: number) {
-  if (!project) return null;
-  const value = promoteBuyers(cost);
-  return { low: Math.round(value * 0.88), high: Math.round(value * 1.12), cost };
+// The money and reach of each campaign for this title, read at the score it is expected to land on.
+export function promoteOffers(state: any, project: any) {
+  const scale = project.scale;
+  const qe = relativeScore(scale, expectedScore(state, project));
+  const demand = tagFactor(state, planTags(project), scale);
+  const share = project.parentId ? SIDE_MARKET : 1;
+  const priceShare = project.parentId ? SIDE_PRICE : 1;
+  const market = marketCapacity(scale, qe) * demand * share;
+  const conv = conversionRate(qe);
+  return PROMOTE_TIERS.map((tier, index) => ({
+    index, name: tier.name, cover: tier.cover,
+    cost: round(promotionCost(scale, qe, tier.cover, demand, share) * priceShare),
+    paid: Math.round(Math.max(0, tier.cover - ECONOMY.platform) * market),
+    total: Math.round(Math.min(market, tier.cover * market)),
+    unit: attentionPrice(scale, tier.cover) * priceShare,
+    price: unitPriceOf(scale) * priceShare,
+    buyRate: conv / (conv + ECONOMY.forget)
+  }));
 }
 
-// What one follower is worth at launch for this title, and how many followers its launch can absorb
-// before the scale's market ceiling stops extra buyers. Uses the latest trial score when there is one.
-export function followerValue(state: any, project: any) {
-  const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : 0.5;
-  const conversion = 0.2 + fit * 0.5;
-  const price = TYPES[project.type].price * SCALES[project.scale].price * PACE * (project.parentId ? 0.35 : 1);
-  const ceiling = MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1) * 0.6;
-  const last = state.catalog.find((book: any) => !book.parentId && book.openingFollowers > 0);
-  return {
-    yuan: Math.round(price * conversion * 10000), tested: !!project.test, ceiling: Math.round(ceiling / conversion),
-    last: last ? { name: last.name, yuan: Math.round(last.openingReceipt * 10000 / last.openingFollowers) } : null
-  };
-}
-
-export function promote(state: any, projectId: string, cost: number) {
-  const value = Number(cost);
-  if (!PROMOTE_TIERS.includes(value)) throw new Error('推广档位无效。');
+export function promote(state: any, projectId: string, tier: number) {
+  const index = Number(tier);
+  if (!Number.isInteger(index) || !PROMOTE_TIERS[index]) throw new Error('推广档位无效。');
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后才能推广。');
-  if (project.promoted > 0) throw new Error('每部作品只能推广一次。');
-  const range = promoteRange(next, project, value);
-  spend(next, value, '推广预算');
-  const buyers = Math.round((range.low + range.high) / 2 * (0.94 + random(next) * 0.12));
-  project.followers += buyers;
-  project.promoted = value;
-  project.promoFollowers = buyers;
-  project.invested = round(project.invested + value);
-  studioLog(next, '推广结果', `《${project.name}》投放 ${moneyText(value)}，新增 ${buyers} 位关注者；关注不等于购买。`);
+  if (project.promoCover > 0 || project.promoted > 0) throw new Error('每部作品只能推广一次。');
+  const offer = promoteOffers(next, project)[index];
+  spend(next, offer.cost, '推广预算');
+  project.promoted = offer.cost;
+  project.promoTier = index;
+  project.promoCover = offer.cover;
+  project.promoFollowers = offer.paid;
+  project.invested = round(project.invested + offer.cost);
+  studioLog(next, '推广结果', `《${project.name}》投放「${offer.name}」${moneyText(offer.cost)}，发售时预计 ${Math.round(offer.cover * 100)}% 的市场知道它；知道不等于购买。`);
   return next;
 }
-
 // One playtest round per press, sized and priced by scale. The less is still uncovered, the smaller each
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
 export const PLAYTESTS = [{ players: 30, cost: 0.8 }, { players: 100, cost: 2.5 }, { players: 300, cost: 7 }, { players: 1000, cost: 20 }];
@@ -2862,14 +2852,6 @@ export function testDemo(state: any, projectId: string) {
 export function audienceFocus(type: string) {
   const weights = TYPES[type].weights;
   return [...DIM_KEYS].sort((left, right) => weights[right] - weights[left]).map(key => DIMENSIONS.find(item => item.key === key)?.name).join(' > ');
-}
-
-function openingSales(project: any, multiplier: number, score: number) {
-  const fit = project.test ? clamp(project.test.score / 100, 0.15, 0.95) : clamp(score / 100 * 0.85, 0.15, 0.95);
-  const ceiling = MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1);
-  const units = Math.max(1, Math.round(Math.min(ceiling * 0.6, project.followers * (0.2 + fit * 0.5) * multiplier)));
-  const price = TYPES[project.type].price * SCALES[project.scale].price * PACE * (project.parentId ? 0.35 : 1);
-  return { units, price, receipt: round(units * price) };
 }
 
 // Player quotes live in the book's archive only — no inbox, no customer service. Launch quotes point
@@ -3048,7 +3030,7 @@ export function launchChecklist(state: any, project: any) {
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
     { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
     { label: '综合评分', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
-    { label: '关注人数', ok: project.followers >= 1500, text: `${Math.round(project.followers)} 人${project.followers >= 1500 ? '' : '，推广能扩大首发'}` }
+    { label: '推广', ok: project.promoCover > 0, text: project.promoCover > 0 ? `「${PROMOTE_TIERS[project.promoTier]?.name || ''}」，发售时 ${Math.round(project.promoCover * 100)}% 的市场知道它` : `没有投放，只有平台推荐的 ${Math.round(ECONOMY.platform * 100)}%；评分不高时可以不投` }
   ];
 }
 
@@ -3070,22 +3052,42 @@ export function launchProject(state: any, projectId: string) {
   // opening audience once; it is not a permanent multiplier on the whole tail.
   const breakoutChance = clamp((metrics.dimensions.creativity - 55) / 100 * 0.45, 0, 0.32);
   const breakout = breakoutChance > 0 && random(next) < breakoutChance;
-  if (breakout) project.followers = Math.round(project.followers * (1.6 + random(next) * 0.9));
   const exposure = MEDIA_BONUS[next.stars || 0];
-  if (exposure) project.followers = Math.round(project.followers * (1 + exposure));
-  const clash = clashOf(next, next.day, project.followers);
-  const { units, price, receipt } = openingSales(project, lean * clash.factor, score);
-  // The campaign's share of the launch, counted in its share of the launch audience.
-  const promo = project.promoted > 0 ? { cost: project.promoted, followers: project.promoFollowers || 0, receipt: round(receipt * clamp((project.promoFollowers || 0) / Math.max(1, project.followers), 0, 1)) } : null;
+  // The economy: how big the market is for this score, how many people know the title on day one (what the
+  // campaign bought, the platform's own push, last title's leftovers and whatever the team earned), and then
+  // the daily loop in salesDay. A breakout multiplies the opening audience once.
+  const share = project.parentId ? SIDE_MARKET : 1;
+  const qe = relativeScore(project.scale, score);
+  const marketSize = marketCapacity(project.scale, qe) * lean * share;
+  const price = unitPriceOf(project.scale) * (project.parentId ? SIDE_PRICE : 1) / 10000;
+  const platformCover = ECONOMY.platform * (1 + exposure);
+  const cover = (project.promoCover > 0 ? project.promoCover : ECONOMY.platform) * (1 + exposure);
+  const stock = next.catalog.find((item: any) => !item.parentId)?.attention || 0;
+  let attention = launchAttention(marketSize, cover, stock, project.followers);
+  if (breakout) attention = Math.min(marketSize, attention * (1.6 + random(next) * 0.9));
+  const launchFollowers = Math.round(attention);
+  const clash = clashOf(next, next.day, attention);
+  const conv = conversionRate(qe);
+  const spread = spreadRate(qe);
+  const full = salesStep(attention, 0, marketSize, conv, spread, 1).units;
+  const day = salesStep(attention, 0, marketSize, conv, spread, 1, clash.factor);
+  const units = day.units;
+  const receipt = round(units * price);
+  attention = day.attention;
+  // What the campaign was worth over the valuation window, against only the platform's own push.
+  const promo = project.promoCover > 0 ? (() => {
+    const bare = simulateTitle(project.scale, qe, platformCover, stock, lean * share);
+    const paid = simulateTitle(project.scale, qe, cover, stock, lean * share);
+    return { cost: project.promoted, tier: project.promoTier, name: PROMOTE_TIERS[project.promoTier]?.name || '', cover: project.promoCover, followers: project.promoFollowers || 0, extraUnits: Math.round(Math.max(0, paid.sold - bare.sold)), receipt: round(Math.max(0, paid.sold - bare.sold) * price) };
+  })() : null;
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
-  const capacity = Math.round(MARKET_SIZE * SCALES[project.scale].reach * (project.parentId ? 0.4 : 1) * (1 + Math.max(0, score - 70) / 25 * 4) * 0.5 * lean);
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
   const review = reviewOf(next, project, metrics);
   const book = {
     id: project.id, name: project.name, type: project.type, scale: project.scale, slots: project.slots,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
-    price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: Math.round(project.followers),
-    followers: Math.round(project.followers), dailyUnits: units / 15, reviewScore: score,
+    price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: launchFollowers,
+    followers: launchFollowers, dailyUnits: units, reviewScore: score,
     reviewCount: Math.max(1, Math.round(units * 0.12)), tested: project.tests > 0,
     testScore: project.test ? project.test.score : null, testCount: project.testCount, trend: trend.label,
     lastGrowth: 0, lastDayUnits: units, team: next.staff.filter((person: any) => (project.contributions[person.id] || 0) > 0).map((person: any) => ({ id: person.id, name: person.name, role: person.role })),
@@ -3093,7 +3095,7 @@ export function launchProject(state: any, projectId: string) {
     weekly: [receipt], paidBack: receipt >= project.invested, marks: 0, record: next.catalog.length > 0 && receipt > best,
     tutorial: next.catalog.length === 0, review,
     sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [], flawless: metrics.defects === 0, clash: clash.works.length,
-    capacity, left: capacity, sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0,
+    attention, demand: lean, share, capacity: marketSize, left: Math.max(0, marketSize - units), sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0,
     tags, lean, royalty: 0, rent: [...(project.rent || [])],
     marketAxes: activeMarketAxes(next), marketParallel: next.marketCycle?.parallel || 1
   };
@@ -3105,7 +3107,7 @@ export function launchProject(state: any, projectId: string) {
   // Whatever this title was going to learn and has not yet, it learns now.
   while ((project.unlockAt || []).length) { project.unlockAt.shift(); learnLine(next, project); }
   project.synced = moduleQuality(next, project);
-  noteClash(book, clash, Math.round(units / clash.factor) - units);
+  noteClash(book, clash, Math.round(full - units));
   next.lastRelease = book.id;
   // The project stays on the books after launch: the same people can keep fixing defects and reworking
   // dimensions, which is the patch and update loop. It just cannot be launched a second time.
@@ -3137,7 +3139,7 @@ export function launchProject(state: any, projectId: string) {
     }
   }
   if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
-  announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首发售出 ${units} 份`, amount: receipt, book: book.id });
+  announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首日售出 ${Math.round(units)} 份`, amount: receipt, book: book.id });
   if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${moneyText(best)}`, amount: receipt });
   checkMarks(next, book);
   const clashText = clash.works.length ? `${clash.works.map((work: any) => `《${work.name}》`).join('、')}刚发售不久，首发被分流约 ${Math.round((1 - clash.factor) * 100)}%。` : '';
@@ -3145,8 +3147,8 @@ export function launchProject(state: any, projectId: string) {
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
-  const promoText = promo ? `推广 ${moneyText(promo.cost)}带来 ${promo.followers} 位关注，按本作转化约折合首发 ${moneyText(promo.receipt)}。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首发售出 ${units} 份，到账 ${moneyText(receipt)}。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  const promoText = promo ? `推广「${promo.name}」${moneyText(promo.cost)}，首发覆盖 ${Math.round(promo.cover * 100)}% 的市场，按本作转化相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -3264,7 +3266,7 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'dream', group: 'hidden', title: '屏幕外的人', text: '创始人过劳后被托梦救回。', check: (s: any) => flag(s, 'dream') },
   { key: 'flawless', group: 'hidden', title: '零缺陷', text: '一部作品发售时没有任何未修缺陷。', check: (s: any) => ownBooks(s).some((book: any) => book.flawless) },
   { key: 'clashWin', group: 'hidden', title: '硬碰硬', text: '和两部以上对手作品同周发售，仍拿到全国首周第一。', check: (s: any) => ownBooks(s).some((book: any) => (book.clash || 0) >= 2 && book.firstRanks && book.firstRanks[1] === 1) },
-  { key: 'smallPromo', group: 'hidden', title: '小钱办大事', text: '只投最小一档推广的作品进入全国首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.promo && book.promo.cost === PROMOTE_TIERS[0] && book.firstRanks && book.firstRanks[1] <= 10) },
+  { key: 'smallPromo', group: 'hidden', title: '小钱办大事', text: '只投最小一档推广的作品进入全国首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.promo && book.promo.tier === 0 && book.firstRanks && book.firstRanks[1] <= 10) },
   { key: 'familiar', group: 'hidden', title: '新闻里的那个人', text: '录用一位曾在新闻里出现过的名人。', check: (s: any) => s.staff.some((person: any) => person.story) },
   { key: 'sideHustle', group: 'hidden', title: '不务正业', text: '把一位员工的非本职能力练到超过他本职的最强一项。', check: (s: any) => sideSkillWins(s) },
   // Three ladders: scale of a shipped title, how many abilities one employee has at 90+, and how
@@ -3523,31 +3525,46 @@ function openSale(state: any, book: any) {
   announce(state, { kind: 'notice', title: `《${book.name}》开始促销`, text: `系统按剩余需求打折：${depth * 10} 折，持续一周。`, amount: 0 });
 }
 
+// Money is kept to a hundredth of a 万 for what people see, but a day's takings late in a title's life
+// can be worth less than that, so sales are booked finer to keep the tail from rounding away.
+const fine = (value: number) => Math.round(value * 10000) / 10000;
+
+// A title is its market, the share of it that knows the title (attention) and how much has been sold.
+// Saves from before the attention model get theirs from what the title was selling.
+function ensureAttention(book: any) {
+  if (book.attention !== undefined) return;
+  const qe = relativeScore(book.scale, book.reviewScore);
+  const market = marketCapacity(book.scale, qe) * (book.lean ?? 1) * (book.parentId ? SIDE_MARKET : 1);
+  book.demand = book.lean ?? 1;
+  book.share = book.parentId ? SIDE_MARKET : 1;
+  book.attention = Math.min(market, (book.lastDayUnits || 0) / Math.max(0.02, conversionRate(qe)));
+}
+
 function salesDay(state: any) {
   for (const book of state.catalog) {
     const age = state.day - book.released;
-    if (age <= 0 || age > 540) { book.lastDayUnits = 0; continue; }
+    if (age <= 0 || age > ECONOMY.valuationDays) { book.lastDayUnits = 0; continue; }
+    ensureAttention(book);
     if (book.sale) openSale(state, book);
     const discounted = book.sale && book.saleUntil > state.day;
     const depth = discounted ? DISCOUNTS[0] : 1;
-    const growth = clamp(0.955 + (book.reviewScore - 55) * 0.0025, 0.9, 1.03);
-    const reputationReach = 1 + Math.max(0, book.reviewScore - 70) / 25 * 4;
-    const saturation = Math.max(0.05, 1 - book.units / (MARKET_SIZE * SCALES[book.scale].reach * reputationReach));
-    book.dailyUnits = Math.max(0, book.dailyUnits * growth * (0.97 + saturation * 0.03) * Math.min(1, saturation * 4));
-    const full = Math.max(0, Math.round(Math.min(book.dailyUnits * (discounted ? 1 + saleReach(state, book, depth) : 1), book.left)));
+    // Reception follows the review score, so a patch that lifts it widens the market and the buying rate.
+    const qe = relativeScore(book.scale, book.reviewScore);
+    const market = marketCapacity(book.scale, qe) * book.demand * book.share;
+    book.capacity = market;
+    book.left = Math.max(0, market - book.units);
+    const lift = discounted ? 1 + saleReach(state, book, depth) : 1;
     const clash = clashOf(state, state.day, book.followers, book.released);
-    const units = Math.round(full * clash.factor);
-    if (age <= 6) noteClash(book, clash, full - units);
-    if (discounted) {
-      const remaining = Math.max(0, Math.min(1, book.left / Math.max(1, book.capacity)));
-      book.dailyUnits *= 1 - (1 - depth) * 0.02;
-      book.left = Math.max(0, book.left - units * remaining * (1 - depth) * 0.9);
-    }
-    const income = round(units * book.price * depth * (1 - (book.royalty || 0)));
-    book.left = Math.max(0, book.left - units);
-    book.lastDayUnits = units;
+    const open = salesStep(book.attention, book.units, market, conversionRate(qe), spreadRate(qe), age + 1, lift);
+    const real = clash.factor < 1 ? salesStep(book.attention, book.units, market, conversionRate(qe), spreadRate(qe), age + 1, lift * clash.factor) : open;
+    const units = real.units;
+    if (age <= 6) noteClash(book, clash, open.units - units);
+    book.attention = real.attention;
+    const income = fine(units * book.price * depth * (1 - (book.royalty || 0)));
+    book.lastGrowth = book.dailyUnits > 0 ? round((units / book.dailyUnits - 1) * 100) : 0;
+    book.dailyUnits = units;
+    book.lastDayUnits = Math.round(units);
     if (age <= 6) book.firstWeek = (book.firstWeek || 0) + units;
-    book.lastGrowth = round((growth - 1) * 100);
     book.units += units;
     const reviews = Math.round(units * 0.12);
     if (reviews) {
@@ -3564,20 +3581,19 @@ function salesDay(state: any) {
     const fans = Math.max(0, units * (book.reviewScore - 50) / 100 * 0.3);
     book.followers += Math.round(fans);
     state.fans = round(state.fans + fans);
-    book.received = round(book.received + income);
+    book.received = fine(book.received + income);
     const week = Math.floor(age / 7);
     while (book.weekly.length <= week) book.weekly.push(0);
-    book.weekly[week] = round(book.weekly[week] + income);
+    book.weekly[week] = fine(book.weekly[week] + income);
     // Remember which weeks ran a sale, so the archive chart can show the difference against full price.
     if (!Array.isArray(book.saleFlags)) book.saleFlags = [];
     book.saleFlags[week] = book.saleFlags[week] || (discounted ? 1 : 0);
     if (discounted) book.saleWeeks = (book.saleWeeks || 0) + 1;
-    state.cash = round(state.cash + income);
-    state.ledger.income = round(state.ledger.income + income);
+    state.cash = fine(state.cash + income);
+    state.ledger.income = fine(state.ledger.income + income);
     checkMarks(state, book);
   }
 }
-
 export function operateBook(state: any, id: string, kind: string) {
   throw new Error('补丁与更新由作品分工中的实际修复和返工交付，不再单独购买。');
 }
@@ -4141,7 +4157,7 @@ function expoDay(state: any) {
     const gap = rank === 1 ? '没有明显差距，体验领先。' : `第一名 ${lead.name} 领先 ${(lead.score - score).toFixed(1)} 分，差距主要在创意与表现。`;
     entry.result = { rank, score, followers, media: tier.media, ranking, gap };
     if (project) project.followers += followers;
-    if (book) { book.followers += followers; book.dailyUnits += followers / 40; }
+    if (book) { book.followers += followers; ensureAttention(book); book.attention = Math.min(book.capacity || Infinity, book.attention + followers); }
     state.fans += Math.round(followers * 0.1);
     news(state, level, false, `${tier.expo}：《${entry.name}》第 ${rank} 名`, `获得 ${followers} 人关注。`, null, true);
     announce(state, { kind: 'record', title: `${tier.expo}第 ${rank} 名`, text: `《${entry.name}》获得 ${followers} 人关注`, amount: 0 });
@@ -4434,7 +4450,7 @@ function applyEffects(state: any, effects: any, ctx: any) {
   if (effects.schedule) state.schedule = [...(state.schedule || []), { day: state.day + effects.schedule.days, amount: effects.schedule.amount, title: effects.schedule.title }];
   if (effects.fame) state.notices.fameNext = true;
   const book = ctx.book ? state.catalog.find((item: any) => item.id === ctx.book) : null;
-  if (book && effects.boost) book.dailyUnits *= effects.boost;
+  if (book && effects.boost) { ensureAttention(book); book.attention = Math.min(book.capacity || Infinity, book.attention * effects.boost); }
 }
 
 function resolveRandomEvent(state: any, event: any, choice: string) {

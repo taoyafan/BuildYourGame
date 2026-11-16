@@ -71,3 +71,75 @@ export function cyclePhase(scale, age) {
   if (age < t.rise + t.hold) return { phase: '持续', strength: 1 };
   return { phase: '退潮', strength: Math.max(0, Math.min(1, (t.total - age) / t.fall)) };
 }
+
+// ---- Single-title economy ----
+// The formulas of 数值设计.md §四–§六, shared by the balance CLI and the running game. Nothing here
+// knows about save files; callers pass plain numbers.
+export const ECONOMY = {
+  pool: 6000, poolExp: 0.93, scoreExp: 1.3,
+  target: 72.5,
+  priceBase: 66.7,
+  convBase: 0.05, convGain: 0.55, convExp: 2, forget: 0.15,
+  kSlope: 3.6, kOffset: 1.9,
+  half: 21, natural: 0.0004, platform: 0.10,
+  fanCarry: 0.7, valuationDays: 540,
+  unitBase: 0.47, unitSlope: 0.35
+};
+// Total launch attention as a share of the market, and what each paid step buys. The first row is no
+// campaign at all: only the platform's own recommendation.
+export const PROMOTION_TIERS = [['不投', 0.10], ['试水', 0.25], ['常规', 0.45], ['力推', 0.65], ['全力', 0.85]];
+
+const bound = (v, a, b) => Math.min(b, Math.max(a, v));
+export function monthlyWage(quality, speed = STANDARD_SPEED) {
+  return LABOR_PARAMETERS.wageDay * 30 / 10000 * salaryFactor(quality) * (speed / STANDARD_SPEED);
+}
+export function relativeScore(scale, q) {
+  return bound(ECONOMY.target + q - PLANNING_SCALES[scale].S, 0, 100);
+}
+export function receptionOf(qe) { return bound((qe - 40) / 60, 0, 1); }
+export function marketCapacity(scale, qe) {
+  return ECONOMY.pool * Math.pow(PLANNING_SCALES[scale].w, ECONOMY.poolExp) * Math.pow(qe / 100, ECONOMY.scoreExp);
+}
+export function unitPriceOf(scale) { return ECONOMY.priceBase * PLANNING_SCALES[scale].pc; }
+export function conversionRate(qe) {
+  return ECONOMY.convBase + ECONOMY.convGain * Math.pow(receptionOf(qe), ECONOMY.convExp);
+}
+export function spreadRate(qe) {
+  return bound(ECONOMY.kSlope * receptionOf(qe) - ECONOMY.kOffset, -1, 2);
+}
+export function attentionPrice(scale, cover) {
+  return unitPriceOf(scale) * (ECONOMY.unitBase + ECONOMY.unitSlope * Math.max(0, cover - ECONOMY.platform));
+}
+export function promotionCost(scale, qe, cover, demand = 1, share = 1) {
+  const paid = Math.max(0, cover - ECONOMY.platform);
+  return paid * marketCapacity(scale, qe) * share * demand * attentionPrice(scale, cover) / 10000;
+}
+export function launchAttention(market, cover, stock = 0, extra = 0) {
+  return Math.min(market, cover * market + ECONOMY.fanCarry * stock + extra);
+}
+export function heatOf(day) { return Math.pow(0.5, (day - 1) / ECONOMY.half); }
+// One day of sales. `push` scales the day's purchase rate (a sale lifts it, a clashing launch lowers it).
+export function salesStep(attention, sold, market, conv, spread, day, push = 1) {
+  const units = Math.min(conv * push * attention, Math.max(0, market - sold));
+  const room = Math.max(0, 1 - sold / market);
+  const heat = heatOf(day);
+  return {
+    units,
+    attention: Math.max(0, attention * (1 - ECONOMY.forget) - units + units * spread * room * heat + market * ECONOMY.natural * heat)
+  };
+}
+// Sales over the valuation window for a launch at this relative score and coverage.
+export function simulateTitle(scale, qe, cover, stock = 0, demand = 1, share = 1) {
+  const market = marketCapacity(scale, qe) * demand * share;
+  const conv = conversionRate(qe);
+  const spread = spreadRate(qe);
+  let attention = launchAttention(market, cover, stock);
+  let sold = 0;
+  for (let day = 1; day <= ECONOMY.valuationDays; day++) {
+    if (market - sold <= 1e-4) break;
+    const step = salesStep(attention, sold, market, conv, spread, day);
+    attention = step.attention;
+    sold += step.units;
+  }
+  return { market, conv, spread, sold };
+}

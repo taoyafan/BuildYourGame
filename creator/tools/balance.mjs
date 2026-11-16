@@ -3,28 +3,20 @@
 import { readFileSync } from 'node:fs';
 // Planning.ts intentionally contains plain JS and no imports; share the runtime source on Node 18+.
 const planning = await import('data:text/javascript;base64,' + readFileSync(new URL('../assets/scripts/core/Planning.ts', import.meta.url)).toString('base64'));
-const { PLANNING_SCALES, PLANNING_OFFICES, STANDARD_SPEED, ROTATION_PARAMETERS, LABOR_PARAMETERS } = planning;
+const { PLANNING_SCALES, PLANNING_OFFICES, STANDARD_SPEED, ROTATION_PARAMETERS, LABOR_PARAMETERS, ECONOMY, PROMOTION_TIERS } = planning;
 export const { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand } = planning;
 
 export const P = {
   // 体量：w 市场系数，W 总人日（含测试与修复），pc 单价系数，S 水准线（= 保本线）
   // rent = 该档常用办公室的房租摊销（元/人日）= 月租 / (工位数 × 30)，按满员工位摊
   scales: Object.fromEntries(PLANNING_SCALES.map(({ name, office, ...values }) => [name, { ...values, off: PLANNING_OFFICES[office].name }])),
-  // 市场与口碑
-  pool: 6000, poolExp: 0.93, scoreExp: 1.3,
-  target: 72.5,            // 相对分基准：Q = S 时 Qe = 72.5，即保本点
-  priceBase: 66.7,
-  convBase: 0.05, convGain: 0.55, convExp: 2, forget: 0.15,
-  kSlope: 3.6, kOffset: 1.9,
-  half: 21, natural: 0.0004, platform: 0.10,
-  fanCarry: 0.7, valuationDays: 540,
+  // 市场、口碑、宣发的公式与参数都在 Planning.ts（游戏与本脚本同一份）
+  ...ECONOMY,
   rotation: ROTATION_PARAMETERS,
-  // 宣发：关注单价 = 单价 × (基础 + 斜率 × 付费覆盖)，越买越贵
-  unitBase: 0.47, unitSlope: 0.35,
-  // 成本（元/人日）：工资 = 标准日薪 × (能力/60)^溢价比，人日成本与工资同口径
+  // 成本（元/人日）：工资 = 标准日薪 × 能力因子，人日成本与工资同口径
   ...LABOR_PARAMETERS,
   // 宣发五档：首发总关注占市场的比例
-  tiers: [['不投', 0.10], ['试水', 0.25], ['常规', 0.45], ['力推', 0.65], ['全力', 0.85]]
+  tiers: PROMOTION_TIERS
 };
 
 // peak = 该阶段建议编制的平均能力，用来算月固定工资
@@ -51,49 +43,29 @@ function rotationBlock(s) {
   console.log('  后续扩员（同体量、速度100）：' + offices.slice(PLANNING_SCALES[index].office + 1).map(o => `${o.name}${o.crew}人→${planning.referenceProduction(index, o.crew)}天`).join('；'));
 }
 
-export const relativeScore = (s, q) => clamp(P.target + q - P.scales[s].S, 0, 100);
-export const quality = qe => clamp((qe - 40) / 60, 0, 1);
-export const marketOf = (s, qe) =>
-  P.pool * Math.pow(P.scales[s].w, P.poolExp) * Math.pow(qe / 100, P.scoreExp);
-export const priceOf = s => P.priceBase * P.scales[s].pc;
-export const conversion = qe => P.convBase + P.convGain * Math.pow(quality(qe), P.convExp);
-export const spread = qe => clamp(P.kSlope * quality(qe) - P.kOffset, -1, 2);
-export const monthlyWage = (peak, speed = STANDARD_SPEED) =>
-  1.2 * planning.salaryFactor(peak) * (speed / STANDARD_SPEED);  // 万元 / 月
+const index = s => Object.keys(P.scales).indexOf(s);
+export const relativeScore = (s, q) => planning.relativeScore(index(s), q);
+export const quality = planning.receptionOf;
+export const marketOf = (s, qe) => planning.marketCapacity(index(s), qe);
+export const priceOf = s => planning.unitPriceOf(index(s));
+export const conversion = planning.conversionRate;
+export const spread = planning.spreadRate;
+export const monthlyWage = planning.monthlyWage;   // 万元 / 月
 // 60 分以下线性（新人便宜但要能活），60 分以上按指数涨价（高手稀缺）
-const wageFactor = planning.salaryFactor;
-// 房租摊销：月租 / (满员工位 × 30 天)，元/人日
+const wageFactor = planning.salaryFactor;// 房租摊销：月租 / (满员工位 × 30 天)，元/人日
 export const rentDay = s => {
   const o = offices.find(x => x.name === P.scales[s].off) || offices[0];
   return o.rent * 10000 / (o.seats * 30);
 };
 export const dayCost = (q, s) => (P.wageDay * wageFactor(q) + rentDay(s)) / 10000;   // 万 / 人日
-export const unitPrice = (s, cover) =>
-  priceOf(s) * (P.unitBase + P.unitSlope * Math.max(0, cover - P.platform));
-export const promoCost = (s, qe, cover, demand = 1) => {
-  const x = Math.max(0, cover - P.platform);
-  return x * marketOf(s, qe) * demand * unitPrice(s, cover) / 10000;
-};
-
+export const unitPrice = (s, cover) => planning.attentionPrice(index(s), cover);
+export const promoCost = (s, qe, cover, demand = 1) => planning.promotionCost(index(s), qe, cover, demand);
 // 单作结算。q 绝对评分，cover 首发总覆盖，fansStock 上作粉丝存量。
 export function title(s, q, cover, fansStock = 0, demand = 1) {
   if (!Number.isFinite(demand) || demand <= 0) throw new Error('需求系数必须为正数');
   const price = priceOf(s);
   const qe = relativeScore(s, q);
-  const market = marketOf(s, qe) * demand;
-  const conv = conversion(qe);
-  const k = spread(qe);
-  let fans = Math.min(market, cover * market + P.fanCarry * fansStock);
-  let sold = 0;
-  for (let day = 1; day <= P.valuationDays; day++) {
-    if (market - sold <= 1e-4) break;
-    const heat = Math.pow(0.5, (day - 1) / P.half);
-    const units = Math.min(conv * fans, market - sold);
-    const room = Math.max(0, 1 - sold / market);
-    fans = Math.max(0, fans * (1 - P.forget) - units + units * k * room * heat + market * P.natural * heat);
-    sold += units;
-  }
-  const promo = promoCost(s, qe, cover, demand);
+  const { market, conv, spread: k, sold } = planning.simulateTitle(index(s), qe, cover, fansStock, demand);  const promo = promoCost(s, qe, cover, demand);
   const labor = P.scales[s].W * dayCost(q, s);
   const total = labor + promo;
   const revenue = sold * price / 10000;

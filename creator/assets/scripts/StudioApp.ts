@@ -2585,8 +2585,8 @@ export class StudioApp extends Component {
         case 'test': this.apply(core.testDemo(this.state, data.id)); break;
         case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;
         case 'promote': {
-          const next = core.promote(this.state, data.id, Number(data.cost));
-          this.apply(next, '推广带来 ' + content.number(core.activeProject(next, data.id)?.promoFollowers || 0) + ' 位关注。');
+          const next = core.promote(this.state, data.id, Number(data.tier));
+          this.apply(next, '推广已投放，发售时生效。');
           break;
         }
         // Releasing is irreversible. The project-page button only opens a confirmation screen; the

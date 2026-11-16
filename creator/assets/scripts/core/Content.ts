@@ -85,7 +85,6 @@ export function advice(state: any, projectId?: string) {
   if (idle.length) return { title: '《' + project.name + '》有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
   if (project.kind === 'game' && project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
-  if (project.kind === 'game' && project.progress >= 55 && !project.promoted && project.followers < 1500) return { title: '《' + project.name + '》推广体验版', text: '关注 ' + number(project.followers) + ' 人；每部作品只推广一次，先看看每位关注值多少。', menu: 'market', id: project.id };
   if (pipeline.bottlenecks.length) {
     const names = pipeline.bottlenecks.map((key: string) => core.bottleneckName(key));
     const days = Math.max(...pipeline.bottlenecks.map((key: string) => pipeline.rows.find((row: any) => row.key === key)?.days || 0));
@@ -209,7 +208,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
       if (!released) return { title: event.title, blocks: [{ type: 'text', text: event.text }, choices] };
       const blocks: any[] = [
         { type: 'cover', book: released },
-        { type: 'payout', amount: released.openingReceipt, label: '首发到账', note: '首发售出 ' + number(released.openingUnits) + ' 份 · 玩家评价 ' + released.reviewScore.toFixed(1) },
+        { type: 'payout', amount: released.openingReceipt, label: '首日到账', note: '首日售出 ' + number(released.openingUnits) + ' 份 · 玩家评价 ' + released.reviewScore.toFixed(1) },
         ...(released.review?.quotes?.length ? [{ type: 'quotes', items: released.review.quotes }] : []),
         { type: 'text', text: event.text },
         ...gainedBlocks(state, event),
@@ -355,7 +354,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
-    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['关注', number(project.followers) + ' 人']] },
+    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '「' + (core.PROMOTE_TIERS[project.promoTier]?.name || '') + '」覆盖 ' + Math.round(project.promoCover * 100) + '%' : '未推广']] },
     ...(updates.work > 0.001 ? [{ type: 'text', text: '沿用模块自动更新质量：还需约 ' + updates.work.toFixed(1) + ' 人日，已计入分工与预计工期。', muted: true }] : []),
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
@@ -769,26 +768,24 @@ function marketMenu(state: any, id?: string) {
   else blocks.push({ type: 'text', text: '三级展会都可以报名：级别越高报名费越贵、对手越强，作品不够突出时几乎换不来关注。', muted: true });
   if (project && !project.released) {
     blocks.push({ type: 'section', title: '推广《' + project.name + '》' });
-    blocks.push({ type: 'lines', items: [['关注人数', number(project.followers)]] });
-    if (project.promoted > 0) {
-      blocks.push({ type: 'note', icon: 'Megaphone', text: '已推广 ' + money(project.promoted) + (project.promoFollowers ? '，带来 ' + number(project.promoFollowers) + ' 位关注' : '') + '。每部作品只推广一次，发售复盘会写明这笔推广折合多少首发收入。' });
+    if (project.promoCover > 0 || project.promoted > 0) {
+      blocks.push({ type: 'note', icon: 'Megaphone', text: '已推广' + (project.promoCover > 0 ? '「' + (core.PROMOTE_TIERS[project.promoTier]?.name || '') + '」' : ' ') + money(project.promoted) + (project.promoCover > 0 ? '，发售时预计 ' + Math.round(project.promoCover * 100) + '% 的市场知道它' : '') + '。每部作品只推广一次，发售复盘会写明这笔推广多卖了多少。' });
     } else {
-      const value = core.followerValue(state, project);
-      blocks.push({ type: 'text', text: '每部作品只推广一次，投后不能追加。档位之间差几个数量级：每多花一万元换来的关注会变少，值不值取决于一位关注能为这部作品带来多少钱。', muted: true });
+      const offers = core.promoteOffers(state, project);
+      const sample = offers[0];
+      blocks.push({ type: 'text', text: '每部作品只推广一次，投后不能追加。档位写的是发售时有多大比例的市场知道这部作品，不投也有平台推荐的 ' + Math.round(core.ECONOMY.platform * 100) + '%。知道不等于买：买的概率取决于口碑；越往后买的人越难触达，每个新增关注越贵。', muted: true });
       blocks.push({ type: 'lines', items: [
-        ['每位关注约带来', value.yuan + ' 元首发收入'],
-        ...(value.last ? [['上一作《' + value.last.name + '》', '实际 ' + value.last.yuan + ' 元/人']] : []),
-        ['首发能吃下的关注', '约 ' + number(value.ceiling) + ' 人']
+        ['按现在能做到的评分估计', core.expectedScore(state, project).toFixed(0) + ' 分'],
+        ['一位关注最终会买的概率', Math.round(sample.buyRate * 100) + '%'],
+        ['每份售价', Math.round(sample.price) + ' 元'],
+        ['一位关注最终约带来', Math.round(sample.buyRate * sample.price) + ' 元']
       ] });
-      blocks.push({ type: 'text', text: (value.tested ? '按最近一次试玩评分估计。' : '还没试玩，按一般水平估计；试玩后会更准。') + core.SCALES[project.scale].name + '作品首发有上限，关注超过上面的人数后多投也卖不出更多。', muted: true });
-      core.PROMOTE_TIERS.forEach((budget, index) => {
-        const range = core.promoteRange(state, project, budget);
-        const worth = Math.round((range.low + range.high) / 2 * value.yuan / 10000 * 100) / 100;
-        blocks.push({ type: 'card', group: 'promotions', title: ['小范围投放', '常规推广', '大规模宣发', '全面营销', '全网铺量'][index] + ' · ' + money(budget), text: '预计新增关注 ' + number(range.low) + '～' + number(range.high) + ' 人，按上面的估计约折合首发 ' + money(worth) + '。', button: { text: '投放 · ' + money(budget), action: 'promote', data: { id: project.id, cost: budget }, disabled: project.progress < 55 || state.cash < budget, anchor: 'promote-' + index } });
-      });
+      blocks.push({ type: 'text', text: '新增关注花的钱比一位关注带来的钱少才划算；评分变了，这张表也会跟着变。', muted: true });
+      for (const offer of offers) {
+        blocks.push({ type: 'card', group: 'promotions', title: offer.name + ' · ' + money(offer.cost), text: '发售时 ' + Math.round(offer.cover * 100) + '% 的市场知道它（约 ' + number(offer.total) + ' 人），其中花钱买来约 ' + number(offer.paid) + ' 人；每个新增关注 ' + Math.round(offer.unit) + ' 元。', button: { text: '投放 · ' + money(offer.cost), action: 'promote', data: { id: project.id, tier: offer.index }, disabled: project.progress < 55 || state.cash < offer.cost, anchor: 'promote-' + offer.index } });
+      }
     }
-  }
-  return { title: '市场', blocks };
+  }  return { title: '市场', blocks };
 }
 
 function bookMenu(state: any, id: string) {
@@ -813,7 +810,7 @@ function bookMenu(state: any, id: string) {
         ['首发', number(book.openingUnits) + ' 份 · ' + money(book.openingReceipt)],
         ['累计销量', number(book.units) + ' 份'],
         ['最近一日', book.lastDayUnits + ' 份'],
-        ['首发关注', number(book.openingFollowers) + ' 人'],
+        ['发售时知道它的人', number(book.openingFollowers) + ' 人'],
         ['发售售价', price(book.price)],
         ['发售时市场', book.trend],
         ...((book.tags || []).length ? [['标签', book.tags.join('、') + (book.lean ? ' · 反响 ×' + book.lean.toFixed(2) : '')]] : []),
@@ -823,7 +820,7 @@ function bookMenu(state: any, id: string) {
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
       { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['补丁', (book.updates || 0) + ' 次']] },
       ...(book.weekOne?.lost.length ? [{ type: 'lines', title: '首周撞档', items: [...book.weekOne.lost.map((item: any) => ['被《' + item.name + '》分流', '约 ' + number(item.units) + ' 份']), ['不撞档大约能卖', number(book.weekOne.without) + ' 份']] }] : []),
-      ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', money(book.promo.cost)], ['带来关注', number(book.promo.followers) + ' 人'], ['按本作转化约折合首发', money(book.promo.receipt)]] }] : []),
+      ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', (book.promo.name ? '「' + book.promo.name + '」' : '') + money(book.promo.cost)], ['首发覆盖', Math.round((book.promo.cover || 0) * 100) + '% 的市场'], ['比不投多卖', number(book.promo.extraUnits || 0) + ' 份 · 约 ' + money(book.promo.receipt)]] }] : []),
       ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
       { type: 'actions', anchor: 'book-ops', items: [
@@ -1585,7 +1582,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     }
     case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：会碰到一些测试漏掉的缺陷，也会指出这类玩家最在意的评分项。可以试多轮，覆盖越高碰到的越少。', ack: 'testing' };
     case 'market':
-      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '每部作品只推广一次，档位差几个数量级。先看上面每位关注约值多少钱、这部作品首发能吃下多少关注，再决定投哪一档；首作预算有限，可以投最小一档，也可以不投。', ack: 'promotions' };
+      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '每部作品只推广一次，档位差几个数量级。档位写的是发售时有多大比例的市场知道它。先看一位关注最终约带来多少钱、每个新增关注要花多少，再决定投哪一档；评分不高时，不投也是对的。', ack: 'promotions' };
       return null;
     default: return null;
   }
