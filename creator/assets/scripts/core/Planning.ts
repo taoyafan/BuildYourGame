@@ -1,4 +1,4 @@
-// Plain JavaScript syntax: the balance CLI loads this module without a TypeScript compiler.
+// Plain JavaScript syntax, so a throwaway Node script can load this module without a TypeScript compiler.
 // One source for the economic model's work, office staffing, salary speed and market reference time.
 export const STANDARD_SPEED = 100;
 export const LABOR_PARAMETERS = { wageDay: 400, standardQ: 60, wageExp: 3 };
@@ -73,7 +73,7 @@ export function cyclePhase(scale, age) {
 }
 
 // ---- Single-title economy ----
-// The formulas of 数值设计.md §四–§六, shared by the balance CLI and the running game. Nothing here
+// The formulas of 数值设计.md §四–§六, used by the running game and by throwaway checks. Nothing here
 // knows about save files; callers pass plain numbers.
 export const ECONOMY = {
   pool: 6000, poolExp: 0.93, scoreExp: 1.3,

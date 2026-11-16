@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.16';
+export const VERSION = '0.4.17';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -2899,18 +2899,6 @@ function syncReleased(state: any, project: any) {
   if (!book) return;
   book.metrics = projectMetrics(project);
   book.invested = round(project.invested);
-}
-
-// Each stage of the company is limited by a different scarce thing. The stage is read from company
-// state, not from the calendar: it changes when the goal behind it is actually passed.
-export function companyPhase(state: any) {
-  if (state.goals.breakEven === null) {
-    return { key: 'early', name: '前期', scarce: '缺钱', text: '现金决定能撑多久。选择集中在体量、发售时机和花在推广上的钱。' };
-  }
-  if (state.goals.topTen === null || state.goals.award === null) {
-    return { key: 'mid', name: '中期', scarce: '缺人', text: '工位与简历成为上限：钱能买工位，买不到更合适的人。目标是做出能进榜、能拿奖的作品。' };
-  }
-  return { key: 'late', name: '后期', scarce: '缺资格', text: '现金不再是约束。限制你的是日历窗口、由作品挣来的资格，以及公司名望。' };
 }
 
 // ---- Media rating ----
