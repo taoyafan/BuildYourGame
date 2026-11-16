@@ -20,4 +20,6 @@
 
 游戏定位、核心循环、机制与阶段节点只在 [游戏设计.md](游戏设计.md) 维护；参数、公式与内容条目只在程序中维护，调参或小优化无需同步修改设计文档。构建、源码入口、存档与界面约定见 [creator/README.md](creator/README.md)，检验方法见 [决策检验.md](决策检验.md)。近期任务见 [TODO.md](TODO.md)。
 
+美术工作由主美维护 [美术设计.md](美术设计.md)，记录视觉规范、制作阶段与素材交付状态，仅美术工作需要阅读。
+
 图标来自 Lucide v0.468.0，按 ISC 许可使用；授权原文见 [creator/tools/vendor/lucide.LICENSE](creator/tools/vendor/lucide.LICENSE)。办公室、人物与作品画面由本项目代码绘制。
