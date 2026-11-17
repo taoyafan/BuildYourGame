@@ -4,5 +4,5 @@
   "debug": false,
   "orientation": "portrait",
   "startScene": "a0240c65-b333-487a-aa08-51a3cfc778f2",
-  "packages": { "wechatgame": { "appid": "wx6ec12949d6ad0ad8", "orientation": "portrait" } }
+  "packages": { "wechatgame": { "appid": "wx6ec12949d6ad0ad8", "orientation": "portrait", "separateEngine": true } }
 }
