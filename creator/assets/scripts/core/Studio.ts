@@ -3,14 +3,14 @@
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, SLOTS, AXES, ORIGINS, SECOND_MECHANIC } from './Modules';
 import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
+import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, promotionReach, launchAttention, salesStep, simulateTitle } from './Planning';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, SLOTS, AXES, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.19';
+export const VERSION = '0.4.20';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -479,7 +479,7 @@ export function heatSeries(state: any, tag: string) {
 // The tags a player compares against each other, grouped like the market does: genres with genres, styles
 // with styles. Only the categories already learned are shown.
 const HEAT_GROUPS: any[] = [
-  { key: 'genre', name: '类型', axis: 'design' }, { key: 'mechanic', name: '机制', axis: 'design' }, { key: 'theme', name: '题材', axis: 'design' },
+  { key: 'genre', name: '核心玩法', axis: 'design' }, { key: 'mechanic', name: '机制', axis: 'design' }, { key: 'theme', name: '题材', axis: 'design' },
   { key: 'engine', name: '引擎', axis: 'tech' }, { key: 'art', name: '美术', axis: 'art' }, { key: 'audio', name: '音乐', axis: 'audio' }
 ];
 export function heatGroups(state: any) {
@@ -754,7 +754,7 @@ export function planIssue(state: any, plan: any) {
     if (ids.length < slot.min) return `请选择${slot.name}。`;
     if (ids.length > slotMax(state, slot)) return `${slot.name}最多选 ${slotMax(state, slot)} 个。`;
   }
-  if (first && (plan.slots.core || [])[0] !== first) return '首作的类型由出身决定。';
+  if (first && (plan.slots.core || [])[0] !== first) return '首作的玩法由出身决定。';
   for (const line of planLines(plan)) if (!levelOpen(state, levelFor(plan, line))) return `${MODULES[line].name} ${levelFor(plan, line)} 级还没有开放。`;
   // A title cannot ship with pixel characters over hand-drawn scenery (or the other way round).
   const artStyles = (plan.slots?.art || []).map((line: string) => MODULES[line]?.style).filter(Boolean);
@@ -764,7 +764,7 @@ export function planIssue(state: any, plan: any) {
   if ((plan.rent || []).some((line: string) => !rentable(line))) return '玩法不能租用，它就是作品本身。';
   const renting = planModules(state, plan).filter(item => item.rented).map(item => item.line);
   if (new Set(renting).size > rentLimit(state)) return `${releases(state) ? '每作' : '首作'}最多租 ${rentLimit(state)} 个模块。`;
-  return planType(plan) ? '' : '请选择类型。';
+  return planType(plan) ? '' : '请选择玩法。';
 }
 
 // New person-days per dimension, what reuse saves, the tags the lines add up to, and what renting costs.
@@ -2784,43 +2784,61 @@ export function expectedScore(state: any, project: any) {
   return round(clamp(overallOf(project.type, expectedDimensions(state, project)) - (project.expectation || 0), 0, 100));
 }
 
-// The money and reach of each campaign for this title, read at the score it is expected to land on.
-export function promoteOffers(state: any, project: any) {
+// Promotion is bought in instalments until launch: each one raises the share of the market that knows the
+// title, and what it added is only reported a few days later. Steps are multiples of the smallest campaign.
+export const PROMO_DELAY = 3;
+const PROMO_STEPS = [1, 3, 6];
+function promoBasis(state: any, project: any) {
   const scale = project.scale;
   const qe = marketScore(expectedScore(state, project), state.day);
   const demand = tagFactor(state, planTags(project), scale);
   const share = project.parentId ? SIDE_MARKET : 1;
   const priceShare = project.parentId ? SIDE_PRICE : 1;
-  const market = marketCapacity(scale, qe) * demand * share;
-  const conv = conversionRate(qe);
-  return PROMOTE_TIERS.map((tier, index) => ({
-    index, name: tier.name, cover: tier.cover,
-    cost: round(promotionCost(scale, qe, tier.cover, demand, share) * priceShare),
-    paid: Math.round(Math.max(0, tier.cover - ECONOMY.platform) * market),
-    total: Math.round(Math.min(market, tier.cover * market)),
-    unit: attentionPrice(scale, tier.cover) * priceShare,
-    price: unitPriceOf(scale) * priceShare,
-    buyRate: conv / (conv + ECONOMY.forget)
-  }));
+  return { scale, qe, demand, share, priceShare, market: marketCapacity(scale, qe) * demand * share };
+}
+export function promoteSteps(state: any, project: any) {
+  const basis = promoBasis(state, project);
+  const base = promotionCost(basis.scale, basis.qe, PROMOTE_TIERS[0].cover, basis.demand, basis.share) * basis.priceShare;
+  return PROMO_STEPS.map((times, index) => ({ index, cost: Math.max(0.1, Math.round(base * times * 10) / 10) }));
+}
+// What the player may know: money in, attention reported so far, and days until the last report arrives.
+export function promoStatus(state: any, project: any) {
+  const log: any[] = project.promoLog || (project.promoFollowers > 0 ? [{ due: 0, gain: project.promoFollowers }] : []);
+  const waiting = log.filter(item => item.due > state.day);
+  return { spent: project.promoted || 0, gain: sum(log.filter(item => item.due <= state.day).map(item => item.gain)), wait: waiting.length ? Math.max(...waiting.map(item => item.due)) - state.day : 0 };
 }
 
-export function promote(state: any, projectId: string, tier: number) {
-  const index = Number(tier);
-  if (!Number.isInteger(index) || !PROMOTE_TIERS[index]) throw new Error('推广档位无效。');
+export function promote(state: any, projectId: string, step: number) {
+  const index = Number(step);
+  if (!Number.isInteger(index) || !PROMO_STEPS[index]) throw new Error('推广金额无效。');
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后才能推广。');
-  if (project.promoCover > 0 || project.promoted > 0) throw new Error('每部作品只能推广一次。');
-  const offer = promoteOffers(next, project)[index];
-  spend(next, offer.cost, '推广预算');
-  project.promoted = offer.cost;
-  project.promoTier = index;
-  project.promoCover = offer.cover;
-  project.promoFollowers = offer.paid;
-  project.invested = round(project.invested + offer.cost);
-  studioLog(next, '推广结果', `《${project.name}》投放「${offer.name}」${moneyText(offer.cost)}，发售时预计 ${Math.round(offer.cover * 100)}% 的市场知道它；知道不等于购买。`);
+  const cost = promoteSteps(next, project)[index].cost;
+  spend(next, cost, '推广预算');
+  const basis = promoBasis(next, project);
+  const before = Math.max(ECONOMY.platform, project.promoCover || 0);
+  // The cover already bought is priced at today's market, so a changed score never refunds or voids it.
+  const bought = promotionCost(basis.scale, basis.qe, before, basis.demand, basis.share) * basis.priceShare;
+  const cover = Math.max(before, promotionReach(basis.scale, basis.qe, (bought + cost) / basis.priceShare, basis.demand, basis.share));
+  project.promoCover = cover;
+  project.promoted = round((project.promoted || 0) + cost);
+  project.promoFollowers = Math.round((cover - ECONOMY.platform) * basis.market);
+  project.promoPlan = [...(project.promoPlan || []), index];
+  project.promoLog = [...(project.promoLog || []), { due: next.day + PROMO_DELAY, spent: cost, gain: Math.round((cover - before) * basis.market) }];
+  project.invested = round(project.invested + cost);
+  studioLog(next, '推广投入', `《${project.name}》追加推广 ${moneyText(cost)}，共投入 ${moneyText(project.promoted)}；效果几天后反馈。`);
   return next;
+}
+function promoDay(state: any) {
+  for (const project of state.projects) {
+    for (const item of project.promoLog || []) {
+      if (item.reported || item.due > state.day) continue;
+      item.reported = true;
+      announce(state, { kind: 'notice', title: `《${project.name}》推广有反馈`, text: `这一笔 ${moneyText(item.spent)}，关注增加约 ${Math.round(item.gain)} 人。可以追加投入，发售前都来得及。`, amount: 0 });
+    }
+  }
 }
 // One playtest round per press, sized and priced by scale. The less is still uncovered, the smaller each
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
@@ -3058,7 +3076,7 @@ export function launchChecklist(state: any, project: any) {
     { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
     { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
     { label: '综合评分', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
-    { label: '推广', ok: project.promoCover > 0, text: project.promoCover > 0 ? `「${PROMOTE_TIERS[project.promoTier]?.name || ''}」，发售时 ${Math.round(project.promoCover * 100)}% 的市场知道它` : `没有投放，只有平台推荐的 ${Math.round(ECONOMY.platform * 100)}%；评分不高时可以不投` }
+    { label: '推广', ok: project.promoCover > 0, text: project.promoCover > 0 ? `共投入 ${moneyText(project.promoted)}` : '没有投入' }
   ];
 }
 
@@ -3106,7 +3124,7 @@ export function launchProject(state: any, projectId: string) {
   const promo = project.promoCover > 0 ? (() => {
     const bare = simulateTitle(project.scale, qe, platformCover, stock, lean * share);
     const paid = simulateTitle(project.scale, qe, cover, stock, lean * share);
-    return { cost: project.promoted, tier: project.promoTier, name: PROMOTE_TIERS[project.promoTier]?.name || '', cover: project.promoCover, followers: project.promoFollowers || 0, extraUnits: Math.round(Math.max(0, paid.sold - bare.sold)), receipt: round(Math.max(0, paid.sold - bare.sold) * price) };
+    return { cost: project.promoted, tier: (project.promoPlan || []).length === 1 && project.promoPlan[0] === 0 ? 0 : 1, cover: project.promoCover, followers: project.promoFollowers || 0, extraUnits: Math.round(Math.max(0, paid.sold - bare.sold)), receipt: round(Math.max(0, paid.sold - bare.sold) * price) };
   })() : null;
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
@@ -3175,8 +3193,8 @@ export function launchProject(state: any, projectId: string) {
   const lesson = book.tutorial ? '首作是练习，小亏也很正常；看看复盘，下一作照着改。' : '首发到账不等于最终利润，后续销量取决于玩家口碑。';
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
-  const promoText = promo ? `推广「${promo.name}」${moneyText(promo.cost)}，首发覆盖 ${Math.round(promo.cover * 100)}% 的市场，按本作转化相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  const promoText = promo ? `推广共投入 ${moneyText(promo.cost)}，相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时核心玩法市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -3294,7 +3312,7 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'dream', group: 'hidden', title: '屏幕外的人', text: '创始人过劳后被托梦救回。', check: (s: any) => flag(s, 'dream') },
   { key: 'flawless', group: 'hidden', title: '零缺陷', text: '一部作品发售时没有任何未修缺陷。', check: (s: any) => ownBooks(s).some((book: any) => book.flawless) },
   { key: 'clashWin', group: 'hidden', title: '硬碰硬', text: '和两部以上对手作品同周发售，仍拿到全国首周第一。', check: (s: any) => ownBooks(s).some((book: any) => (book.clash || 0) >= 2 && book.firstRanks && book.firstRanks[1] === 1) },
-  { key: 'smallPromo', group: 'hidden', title: '小钱办大事', text: '只投最小一档推广的作品进入全国首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.promo && book.promo.tier === 0 && book.firstRanks && book.firstRanks[1] <= 10) },
+  { key: 'smallPromo', group: 'hidden', title: '小钱办大事', text: '只投最小一笔推广的作品进入全国首周榜前十。', check: (s: any) => ownBooks(s).some((book: any) => book.promo && book.promo.tier === 0 && book.firstRanks && book.firstRanks[1] <= 10) },
   { key: 'familiar', group: 'hidden', title: '新闻里的那个人', text: '录用一位曾在新闻里出现过的名人。', check: (s: any) => s.staff.some((person: any) => person.story) },
   { key: 'sideHustle', group: 'hidden', title: '不务正业', text: '把一位员工的非本职能力练到超过他本职的最强一项。', check: (s: any) => sideSkillWins(s) },
   // Three ladders: scale of a shipped title, how many abilities one employee has at 90+, and how
@@ -3481,6 +3499,7 @@ export function stepDay(state: any) {
   staffDay(next);
   resignOrContinue(next);
   calendarDay(next);
+  promoDay(next);
   industryDay(next);
   scheduledCash(next);
   refreshBoard(next);

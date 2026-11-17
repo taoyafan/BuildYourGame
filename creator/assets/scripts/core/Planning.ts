@@ -126,6 +126,14 @@ export function promotionCost(scale, qe, cover, demand = 1, share = 1) {
   const paid = Math.max(0, cover - ECONOMY.platform);
   return paid * marketCapacity(scale, qe) * share * demand * attentionPrice(scale, cover) / 10000;
 }
+// The inverse of promotionCost: the launch cover a total spend (in 万) reaches, never past the whole market.
+export function promotionReach(scale, qe, spend, demand = 1, share = 1) {
+  const k = marketCapacity(scale, qe) * share * demand * unitPriceOf(scale) / 10000;
+  const b = ECONOMY.unitBase;
+  const s = ECONOMY.unitSlope;
+  const paid = k > 0 && spend > 0 ? (-b + Math.sqrt(b * b + 4 * s * spend / k)) / (2 * s) : 0;
+  return Math.min(1, ECONOMY.platform + paid);
+}
 export function launchAttention(market, cover, stock = 0, extra = 0) {
   return Math.min(market, cover * market + ECONOMY.fanCarry * stock + extra);
 }

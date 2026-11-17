@@ -475,9 +475,10 @@ export class StudioApp extends Component {
     return node;
   }
 
-  private button(parent: Node, title: string, x: number, y: number, width: number, height: number, callback: () => void, primary = false, disabled = false, icon?: string, anchor?: string) {
+  private button(parent: Node, title: string, x: number, y: number, width: number, height: number, callback: () => void, primary = false, disabled = false, icon?: string, anchor?: string, reason?: string) {
     const node = this.box(parent, title, x, y, width, height, disabled ? colors.pale : primary ? colors.green : colors.soft, 8);
-    this.clickable(node, callback, !disabled);
+    // A greyed button with a reason still takes the tap and says why, instead of staying silent.
+    this.clickable(node, disabled && reason ? () => this.notify(reason) : callback, !disabled || !!reason);
     // Grouped buttons all carry an icon so a row never mixes iconed and plain buttons; the icon sits
     // before the centred title.
     if (icon && !title) this.navIcon(node, icon, (width - 20) / 2, (height - 20) / 2, 20, disabled ? colors.muted : primary ? '#ffffff' : colors.green);
@@ -638,7 +639,7 @@ export class StudioApp extends Component {
         this.brickTip = null;
         if (item.route) this.openMenu(item.route.menu, item.route.id);
         else this.dispatch(item.action, item.data);
-      }, index === 0);
+      }, index === 0, !!item.disabled, undefined, undefined, item.reason);
     });
   }
 
@@ -1416,7 +1417,7 @@ export class StudioApp extends Component {
       const fixed = !!this.draft.sequel || (slot.key === 'core' && !!first);
       const expanded = !!open[slot.key];
       const color = core.AXES[slot.axis].color;
-      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）').join('、') || '未选';
+      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）' + (slot.key === 'core' ? ' · ' + core.TYPES[core.MODULES[key].type].name : '')).join('、') || '未选';
       const row = this.box(body, 'Slot', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
       new Pen(this.box(row, 'Rim', 0, 0, inner, 52).addComponent(Graphics)).frame(0, 0, inner, 52, expanded ? colors.green : colors.line, expanded ? 2 : 1, 10);
       chosen.slice(0, 2).forEach((key: string, index: number) => {
@@ -1473,7 +1474,7 @@ export class StudioApp extends Component {
         levels.forEach((level, index) => this.button(body, level + ' 级', 100 + index * (cell + 6), cursor, cell, 36, () => {
           this.draft.lineLevels = { ...core.fixLevels(this.draft), [key]: level };
           this.render();
-        }, core.levelFor(this.draft, key) === level, !core.levelOpen(state, level) || !!fixed));
+        }, core.levelFor(this.draft, key) === level, !core.levelOpen(state, level) || !!fixed, undefined, undefined, !fixed && !core.levelOpen(state, level) ? core.SCALE_LOCKS[level - 1] : undefined));
         cursor += 42;
       }
       // A line the company does not have can be rented instead of built: no work, capped quality, paid
@@ -1633,7 +1634,7 @@ export class StudioApp extends Component {
           const left = column * (cell + gap);
           const row = y + line * 56;
           const icon = item.icon || (item.action === 'priority' ? (String(item.text).includes('提高') ? 'ArrowUp' : 'ArrowDown') : actionIcons[item.action] || 'ChevronRight');
-          this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, icon, item.anchor);
+          this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, icon, item.anchor, item.reason);
           if (item.help) this.button(parent, '', left + cell - 38, row + 4, 38, 38, () => {
             this.helpKey = this.helpKey === item.helpKey ? '' : item.helpKey;
             this.render();
@@ -1671,6 +1672,7 @@ export class StudioApp extends Component {
       case 'tabs': {
         const columns = Math.min(3, block.items.length);
         const cell = (width - (columns - 1) * 6) / columns;
+        if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, y, width, Math.ceil(block.items.length / columns) * 44 - 6));
         block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked));
         return y + Math.ceil(block.items.length / columns) * 44 + 6;
       }
@@ -2569,8 +2571,8 @@ export class StudioApp extends Component {
         case 'test': this.apply(core.testDemo(this.state, data.id)); break;
         case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;
         case 'promote': {
-          const next = core.promote(this.state, data.id, Number(data.tier));
-          this.apply(next, '推广已投放，发售时生效。');
+          const next = core.promote(this.state, data.id, Number(data.step));
+          this.apply(next, '推广已追加，几天后反馈效果。');
           break;
         }
         // Releasing is irreversible. The project-page button only opens a confirmation screen; the

@@ -47,7 +47,7 @@ export function advice(state: any, projectId?: string) {
   if (project?.job) return { title: '完成委托', text: '做完' + core.MODULES[project.job.module].name + '可得 ' + money(project.job.pay) + '，模块留给你。完成度 ' + project.progress.toFixed(0) + '%。', menu: 'project', id: project.id };
   if (project?.kind === 'module' && !state.staff.some((person: any) => core.personWorks(state, project, person).length)) return { title: project.name + '还没有人做', text: '点这里安排人手；一个人同一时间只做一个项目。', menu: 'assign', id: project.id };
   const worker = state.staff[0];
-  if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: 'code:' + bestChannel(state) };
+  if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: weakestRole(state) + ':' + bestChannel(state) };
   // `chosenWorks` only reads explicit assignments and is empty for someone on their default home
   // work, yet production uses `personWorks`. Counting explicit assignments alone said "nobody is
   // fixing the bugs" while the whole crew was busy. Use the same rule the day simulation uses.
@@ -107,7 +107,7 @@ function recruitMenu(state: any, id: string) {
   const roles = Object.keys(core.ROLES).filter((key: string) => core.roleOpen(state, key));
   const channels = Object.keys(core.CHANNELS);
   const blocks: any[] = [
-    { type: 'tabs', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role })) },
+    { type: 'tabs', anchor: 'recruit-roles', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role })) },
     { type: 'text', text: core.ROLES[role].task, muted: true },
     { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
     // Channels differ in who answers and in what they ask for, so each one gets its own line with
@@ -304,7 +304,7 @@ function projectMenu(state: any, id?: string) {
   // With no running title the page is a choice, not a form: take a commission or start a title.
   if (!project) return { title: '项目', blocks: [{ type: 'actions', anchor: 'new-project', items: [
     ...jobAction(state),
-    { text: '新项目', detail: '选类型、题材与模块等级，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-game-0' }
+    { text: '新项目', detail: '选玩法、题材与模块等级，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-game-0' }
   ] }] };
   if (project.released) return patchProjectMenu(state, project);
   if (project.kind === 'module') {
@@ -354,7 +354,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
-    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '「' + (core.PROMOTE_TIERS[project.promoTier]?.name || '') + '」覆盖 ' + Math.round(project.promoCover * 100) + '%' : '未推广']] },
+    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '共投入 ' + money(project.promoted) : '未推广']] },
     ...(updates.work > 0.001 ? [{ type: 'text', text: '沿用模块自动更新质量：还需约 ' + updates.work.toFixed(1) + ' 人日，已计入分工与预计工期。', muted: true }] : []),
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
     ...(order.length > 1 ? [
@@ -369,7 +369,7 @@ function projectMenu(state: any, id?: string) {
       { text: '调整分工', detail: '谁做哪几项工作；做满后自动修复已发现的缺陷。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '合成图', detail: '这一作由哪些模块组成，哪些已有、哪些还在做。', icon: 'Wrench', action: 'menu', data: { menu: 'compose', id: 'project:' + project.id } },
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
-      { text: '市场与推广', detail: demo ? (project.promoted ? '已推广 ' + money(project.promoted) + ' · 报名展会' : '每作推广一次 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
+      { text: '市场与推广', detail: demo ? (project.promoted ? '共投入 ' + money(project.promoted) + ' · 报名展会' : '推广 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
       { text: '再开一个项目', detail: '一个人同一时间只属于一个项目。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
       ...jobAction(state)
     ] },
@@ -768,23 +768,9 @@ function marketMenu(state: any, id?: string) {
   else blocks.push({ type: 'text', text: '三级展会都可以报名：级别越高报名费越贵、对手越强，作品不够突出时几乎换不来关注。', muted: true });
   if (project && !project.released) {
     blocks.push({ type: 'section', title: '推广《' + project.name + '》' });
-    if (project.promoCover > 0 || project.promoted > 0) {
-      blocks.push({ type: 'note', icon: 'Megaphone', text: '已推广' + (project.promoCover > 0 ? '「' + (core.PROMOTE_TIERS[project.promoTier]?.name || '') + '」' : ' ') + money(project.promoted) + (project.promoCover > 0 ? '，发售时预计 ' + Math.round(project.promoCover * 100) + '% 的市场知道它' : '') + '。每部作品只推广一次，发售复盘会写明这笔推广多卖了多少。' });
-    } else {
-      const offers = core.promoteOffers(state, project);
-      const sample = offers[0];
-      blocks.push({ type: 'text', text: '每部作品只推广一次，投后不能追加。档位写的是发售时有多大比例的市场知道这部作品，不投也有平台推荐的 ' + Math.round(core.ECONOMY.platform * 100) + '%。知道不等于买：买的概率取决于口碑；越往后买的人越难触达，每个新增关注越贵。', muted: true });
-      blocks.push({ type: 'lines', items: [
-        ['按现在能做到的评分估计', core.expectedScore(state, project).toFixed(0) + ' 分'],
-        ['一位关注最终会买的概率', Math.round(sample.buyRate * 100) + '%'],
-        ['每份售价', Math.round(sample.price) + ' 元'],
-        ['一位关注最终约带来', Math.round(sample.buyRate * sample.price) + ' 元']
-      ] });
-      blocks.push({ type: 'text', text: '新增关注花的钱比一位关注带来的钱少才划算；评分变了，这张表也会跟着变。', muted: true });
-      for (const offer of offers) {
-        blocks.push({ type: 'card', group: 'promotions', title: offer.name + ' · ' + money(offer.cost), text: '发售时 ' + Math.round(offer.cover * 100) + '% 的市场知道它（约 ' + number(offer.total) + ' 人），其中花钱买来约 ' + number(offer.paid) + ' 人；每个新增关注 ' + Math.round(offer.unit) + ' 元。', button: { text: '投放 · ' + money(offer.cost), action: 'promote', data: { id: project.id, tier: offer.index }, disabled: project.progress < 55 || state.cash < offer.cost, anchor: 'promote-' + offer.index } });
-      }
-    }
+    const status = core.promoStatus(state, project);
+    blocks.push({ type: 'lines', items: [['共投入', money(status.spent)], ['已获得关注', status.gain ? '约 ' + number(status.gain) + ' 人' : '—'], ...(status.wait ? [['最近一笔', status.wait + ' 天后反馈']] : [])] });
+    blocks.push({ type: 'buttons', anchor: 'promotions', columns: 3, items: core.promoteSteps(state, project).map((step: any) => ({ text: '追加 ' + money(step.cost), action: 'promote', data: { id: project.id, step: step.index }, disabled: project.progress < 55 || state.cash < step.cost, reason: project.progress < 55 ? '体验版完成后才能推广' : '资金不足', anchor: 'promote-' + step.index })) });
   }  return { title: '市场', blocks };
 }
 
@@ -819,9 +805,9 @@ function bookMenu(state: any, id: string) {
         ...(book.rent || []).map((line: string) => { const record = core.rentRecord(state, line); return ['租用' + core.MODULES[line].name, '累计 ' + record.count + ' 次 · 已付约 ' + money(record.paid) + ' · 自己做约需 ' + money(core.rentPrice(line, book.scale).build)]; })
       ] },
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
-      { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['系列期待', book.expectation + ' 分评价压力'], ['补丁', (book.updates || 0) + ' 次']] },
+      { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['玩家期待', book.expectation ? '评分 −' + book.expectation : '无'], ['补丁', (book.updates || 0) + ' 次']] },
       ...(book.weekOne?.lost.length ? [{ type: 'lines', title: '首周撞档', items: [...book.weekOne.lost.map((item: any) => ['被《' + item.name + '》分流', '约 ' + number(item.units) + ' 份']), ['不撞档大约能卖', number(book.weekOne.without) + ' 份']] }] : []),
-      ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['投放', (book.promo.name ? '「' + book.promo.name + '」' : '') + money(book.promo.cost)], ['首发覆盖', Math.round((book.promo.cover || 0) * 100) + '% 的市场'], ['比不投多卖', number(book.promo.extraUnits || 0) + ' 份 · 约 ' + money(book.promo.receipt)]] }] : []),
+      ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['共投入', money(book.promo.cost)], ['比不投多卖', number(book.promo.extraUnits || 0) + ' 份 · 约 ' + money(book.promo.receipt)]] }] : []),
       ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
       { type: 'actions', anchor: 'book-ops', items: [
@@ -925,7 +911,7 @@ function teamMenu(state: any, sort = 'joined') {
     title: '团队',
     blocks: [
       { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（整月 · 含房租）', money(core.monthlyCost(state))]] },
-      ...(state.office < 1 ? [{ type: 'text', text: '自家只有一个工位。交付委托、租下' + core.OFFICES[1].name + '后才能招人。', muted: true }] : [{ type: 'buttons', items: [{ text: '招聘', action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: openRoles[0] + ':' + channel }, anchor: 'recruit' }] }]),
+      ...(state.office < 1 ? [{ type: 'text', text: '自家只有一个工位。交付委托、租下' + core.OFFICES[1].name + '后才能招人。', muted: true }] : [{ type: 'buttons', items: [{ text: '招聘', action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: weakestRole(state) + ':' + channel }, anchor: 'recruit' }] }]),
       ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
       ...(state.office >= 2 ? [{ type: 'actions', items: [{ text: '猎头', detail: '向对手的名人开高薪挖人。', icon: 'Briefcase', action: 'menu', data: { menu: 'talents' } }] }] : []),
       ...(state.staff.length > 1 ? [
@@ -1119,7 +1105,10 @@ function lineActions(state: any, line: string, info: any) {
   if (!core.moduleOpen(state, line)) return [];
   const out: any[] = [];
   const next = info.level + 1;
-  if (next <= info.top && core.scaleOpen(state, next - 1)) out.push({ text: '研发' + (info.top > 1 ? ' ' + next + ' 级' : ''), action: 'module-build', data: { line, level: next } });
+  if (next <= info.top) {
+    if (core.scaleOpen(state, next - 1)) out.push({ text: '研发' + (info.top > 1 ? ' ' + next + ' 级' : ''), action: 'module-build', data: { line, level: next } });
+    else out.push({ text: '研发 ' + next + ' 级', disabled: true, reason: core.SCALE_LOCKS[next - 1] });
+  }
   if (info.level && (state.office >= core.LICENSE_OFFICE || info.licensed)) out.push({ text: info.licensed ? '收回授权' : '授权', action: 'license', data: { line, on: !info.licensed } });
   return out;
 }
@@ -1540,7 +1529,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => project?.checkpoints.demo && !seen.testing && !seen.navTesting ? { anchor: 'nav-project', text: '体验版完成：点「项目」，在里面打开「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
       // Optional tip: 市场 stays live under the highlight, 知道了 dismisses it. Keep this an ack step —
       // a forced tap removes the 知道了 button and makes promoting feel compulsory.
-      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投放推广。每部作品只推广一次，只换关注、不保证销量；首作可以投最小一档，也可以不投。') : null,
+      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投推广：可以分几笔追加，几天后会告诉你这一笔带来了多少关注。') : null,
       () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '待修缺陷是测试和玩家发现、还没修的问题。员工负责的工作做满后自动消耗工时修复；没测到的缺陷会在发售后被玩家发现。') : null,
       () => complete && !project.released ? explain('launchBook', 'nav-project', '各评分项都做满了。想发售时在「项目」里正式发售，也可以继续返工提高评分。') : null,
       () => !project && state.catalog.length === 1 && !seen.navReview ? { anchor: 'nav-finance', text: '首作已发售。点「公司」，在作品履历里打开它看看复盘：哪里亏了，下一作怎么改。', tap: 'navReview' } : null
@@ -1554,12 +1543,13 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       if (!project && !state.catalog.length && !seen.moduleLibrary) return { anchor: 'library', text: '这就是模块库：做好的模块会一直留在这里，以后立项直接复用。', tap: 'moduleLibrary' };
       return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
     case 'recruit':
+      if (!state.candidates[route.id] && !hasTeammate && !seen.recruitRole) return { anchor: 'recruit-roles', text: '先选岗位：已替你选好最该补的「' + core.ROLES[String(route.id).split(':')[0]]?.name + '」，也可以点别的看看。', ack: 'recruitRole' };
       return state.candidates[route.id] ? (hasTeammate ? null : { anchor: 'candidates', text: '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。' };
     case 'candidate': return hasTeammate ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
     case 'project':
       // With no running title the page is a choice. Force the tap onto 新项目 so the tutorial leads
       // into the setup form instead of stopping at the page it just opened.
-      if (!project) return !state.catalog.length && !seen.newGame ? { anchor: 'new-game-0', text: '点「新项目」，选类型和题材，开始第一款游戏。', tap: 'newGame', tapGroup: 'new-game' } : null;
+      if (!project) return !state.catalog.length && !seen.newGame ? { anchor: 'new-game-0', text: '点「新项目」，选玩法和题材，开始第一款游戏。', tap: 'newGame', tapGroup: 'new-game' } : null;
       if (project.kind !== 'game') return null;
       // Before sending the player to the assignment page, show what the six rows are for. Stay with
       // what is on screen — work left and the estimated day — instead of systems taught later.
@@ -1580,7 +1570,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     }
     case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：会碰到一些测试漏掉的缺陷，也会指出这类玩家最在意的评分项。可以试多轮，覆盖越高碰到的越少。', ack: 'testing' };
     case 'market':
-      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '每部作品只推广一次，档位差几个数量级。档位写的是发售时有多大比例的市场知道它。先看一位关注最终约带来多少钱、每个新增关注要花多少，再决定投哪一档；评分不高时，不投也是对的。', ack: 'promotions' };
+      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '先投一笔小的，几天后看带来多少关注，再决定要不要追加。不投也可以。', ack: 'promotions' };
       return null;
     default: return null;
   }

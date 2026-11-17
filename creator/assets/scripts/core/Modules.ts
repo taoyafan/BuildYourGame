@@ -66,7 +66,7 @@ export const MODULES: any = {
 // The slots of a title, in the order the form shows them. `min`/`max` bound how many lines a slot takes;
 // `unlock` is how many released titles it waits for. A locked slot does not exist yet for the player.
 export const SLOTS: any[] = [
-  { key: 'core', axis: 'design', name: '类型', min: 1, max: 1, unlock: 0 },
+  { key: 'core', axis: 'design', name: '核心玩法', min: 1, max: 1, unlock: 0 },
   { key: 'mechanic', axis: 'design', name: '机制', min: 0, max: 2, unlock: 2 },
   { key: 'theme', axis: 'design', name: '题材', min: 1, max: 1, unlock: 0 },
   { key: 'engine', axis: 'tech', name: '引擎', min: 1, max: 1, unlock: 0 },
@@ -95,7 +95,7 @@ function checkCatalog() {
     for (const key of Object.keys({ ...module.work, ...(module.content || {}) })) if (!dims.includes(key)) throw new Error(`模块 ${id} 的工作维度 ${key} 无效`);
     if (module.needs) throw new Error(`模块 ${id} 不应有前置：模块是平铺的`);
     for (const need of module.requires || []) if (!MODULES[need] || MODULES[need].axis === module.axis) throw new Error(`模块 ${id} 要求的 ${need} 不存在或在同一条轴上`);
-    if (module.slot === 'core' && (!module.content || !module.type)) throw new Error(`类型 ${id} 缺少本作内容或受众`);
+    if (module.slot === 'core' && (!module.content || !module.type)) throw new Error(`玩法 ${id} 缺少本作内容或受众`);
   }
   for (const [key, origin] of Object.entries(ORIGINS) as any) {
     if (!MODULES[origin.starter] || MODULES[origin.firstCore]?.slot !== 'core') throw new Error(`出身 ${key} 的起步模块或首作玩法无效`);
