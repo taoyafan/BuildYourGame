@@ -66,7 +66,7 @@ export const MODULES: any = {
 // The slots of a title, in the order the form shows them. `min`/`max` bound how many lines a slot takes;
 // `unlock` is how many released titles it waits for. A locked slot does not exist yet for the player.
 export const SLOTS: any[] = [
-  { key: 'core', axis: 'design', name: '核心玩法', min: 1, max: 1, unlock: 0 },
+  { key: 'core', axis: 'design', name: '类型', min: 1, max: 1, unlock: 0 },
   { key: 'mechanic', axis: 'design', name: '机制', min: 0, max: 2, unlock: 2 },
   { key: 'theme', axis: 'design', name: '题材', min: 1, max: 1, unlock: 0 },
   { key: 'engine', axis: 'tech', name: '引擎', min: 1, max: 1, unlock: 0 },

@@ -479,7 +479,7 @@ export function heatSeries(state: any, tag: string) {
 // The tags a player compares against each other, grouped like the market does: genres with genres, styles
 // with styles. Only the categories already learned are shown.
 const HEAT_GROUPS: any[] = [
-  { key: 'genre', name: '核心玩法', axis: 'design' }, { key: 'mechanic', name: '机制', axis: 'design' }, { key: 'theme', name: '题材', axis: 'design' },
+  { key: 'genre', name: '类型', axis: 'design' }, { key: 'mechanic', name: '机制', axis: 'design' }, { key: 'theme', name: '题材', axis: 'design' },
   { key: 'engine', name: '引擎', axis: 'tech' }, { key: 'art', name: '美术', axis: 'art' }, { key: 'audio', name: '音乐', axis: 'audio' }
 ];
 export function heatGroups(state: any) {
@@ -3194,7 +3194,7 @@ export function launchProject(state: any, projectId: string) {
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广共投入 ${moneyText(promo.cost)}，相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时核心玩法市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
