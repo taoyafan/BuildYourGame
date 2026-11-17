@@ -141,7 +141,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'assign': return assignMenu(state, route.id);
     case 'testing': return testingMenu(state, route.id);
     case 'library': return libraryMenu(state, route.id);
-    case 'compose': return composeMenu(state, route.id);
+    case 'module': return moduleMenu(state, route.id);
     case 'market': return marketMenu(state, route.id);
     case 'book': return bookMenu(state, route.id);
     case 'rankings':
@@ -357,7 +357,6 @@ function projectMenu(state: any, id?: string) {
     ] : []),
     { type: 'actions', items: [
       { text: '调整分工', detail: '谁做哪几项工作', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-      { text: '合成图', detail: '这一作的模块组成', icon: 'Wrench', action: 'menu', data: { menu: 'compose', id: 'project:' + project.id } },
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '共投入 ' + money(project.promoted) + ' · 报名展会' : '推广 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
       { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
@@ -1076,7 +1075,7 @@ function brickOf(state: any, line: string, extra: any = {}) {
     level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : info.next > 0.001 ? 'partial' : 'missing',
     // How much of this tier is done, so a half-built module reads as half coloured and half grey.
     progress: info.level ? 1 : info.next,
-    detail, note: module.desc, route: { menu: 'compose', id: 'module:' + line }, actions: [], ...extra
+    detail, note: module.desc, route: { menu: 'module', id: line }, actions: [], ...extra
   };
 }
 
@@ -1095,7 +1094,7 @@ function lineActions(state: any, line: string, info: any) {
   return out;
 }
 
-// Only the library and the compose view let a module be changed; every other brick is read-only.
+// Only the library lets a module be changed from its brick; every other brick is read-only.
 const editableBrick = (state: any, line: string, extra: any = {}) => brickOf(state, line, { actions: lineActions(state, line, core.lineInfo(state, line)), ...extra });
 
 // The module library, one page per axis, one brick per learned line. Grouping shelves into a second
@@ -1118,41 +1117,20 @@ function libraryMenu(state: any, id?: string) {
   return { title: '模块库', blocks };
 }
 
-// One layer of a recipe: the title or module on top, what it is made of underneath. Tapping a brick shows
-// its card; from there the next layer opens. A module's own work is part of the module, never listed.
-function composeMenu(state: any, id = '') {
-  const [kind, rest] = String(id).split(':');
-  const [line, projectId] = String(rest || '').split('@');
-  const project = state.projects.find((item: any) => item.id === (kind === 'project' ? rest : projectId)) || null;
-  const inProject = (key: string, extra: any = {}) => {
-    if (!project) return brickOf(state, key, extra);
-    const level = core.levelFor(project, key);
-    const rented = (project.rent || []).includes(key) && !(project.parts || []).includes(core.partId(key, level));
-    const progress = rented ? 1 : core.partProgress(state, core.partId(key, level));
-    const before = project.levels?.[key] || 0;
-    const detail = rented ? '租用 · 质量 ' + core.RENT_QUALITY : '需 ' + level + ' 级 · ' + (before >= level ? '已有' : progress >= 0.999 ? '做好了' : progress > 0.001 ? '做了 ' + Math.round(progress * 100) + '%' : '新做');
-    return brickOf(state, key, { level, status: progress >= 0.999 ? 'have' : progress > 0.001 ? 'partial' : 'missing', progress, detail, route: { menu: 'compose', id: 'module:' + key + '@' + project.id }, actions: [], ...extra });
-  };
-  if (kind === 'project' && project) {
-    const picked = project.rebuild ? [core.partOf(project.rebuild).line] : project.kind === 'module' ? core.projectLines(project).filter((key: string) => (project.only || []).includes(key)) : core.planLines(project);
-    const root = { name: '《' + project.name + '》', glyph: 'star', level: project.scale + 1, status: project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing', progress: project.progress / 100, detail: (project.kind === 'module' ? '模块项目' : core.SCALES[project.scale].name + ' · ' + core.TYPES[project.type].name) + ' · 完成度 ' + project.progress.toFixed(0) + '%', note: '', game: true, route: { menu: 'project', id: project.id } };
-    const blocks: any[] = [{ type: 'compose', root, children: picked.map((key: string) => inProject(key)) }];
-    if (project.kind === 'game') blocks.push({ type: 'text', text: '另有本作内容（关卡、剧情、立绘等）只属于这一作，不进模块库。', muted: true });
-    return { title: '合成图', blocks };
-  }
+// One module line: what it is, the scores it has reached, and what can be done with it.
+function moduleMenu(state: any, line = '') {
   const module = core.MODULES[line];
-  if (!module) return { title: '合成图', blocks: [{ type: 'text', text: '没有找到这个模块。' }] };
-  const root = project ? inProject(line, { route: null }) : editableBrick(state, line, { route: null });
-  const children: any[] = [];
-  const blocks: any[] = [{ type: 'compose', root, children }];
-  if (!children.length) blocks.push({ type: 'text', text: '高一级是在它上面再做一层。', muted: true });
+  if (!module) return { title: '模块', blocks: [{ type: 'text', text: '没有找到这个模块。' }] };
   const info = core.lineInfo(state, line);
-  // The module's own card comes before the numbers: a finished module has its six scores, and a
-  // half-built one shows both the quality already reached and where the current crew would take it.
-  const tier = project ? core.levelFor(project, line) : Math.max(1, info.level + (info.next > 0 ? 1 : 0));
+  const blocks: any[] = [{ type: 'text', text: module.desc, muted: true }];
+  if (!core.moduleOpen(state, line)) blocks.push({ type: 'text', text: '还没学会，做游戏的过程中会解锁。' });
+  // A half-built module shows both the quality already reached and where the current crew would take it.
+  const tier = Math.max(1, info.level + (info.next > 0 ? 1 : 0));
   const metrics = core.moduleMetrics(state, core.partId(line, Math.min(core.lineTiers(line), tier)));
   if (info.level || info.next > 0) blocks.push({ type: 'radar', metrics, genre: module.type || '', projectId: null, expected: metrics.expected });
   if (info.level || info.next > 0) blocks.push({ type: 'lines', items: [['等级', info.level + ' / ' + info.top + ' 级' + (info.next > 0 ? '（下一级 ' + Math.round(info.next * 100) + '%）' : '')], ['质量', String(Math.round(info.quality))], ['首次来自', info.first ? '《' + info.first + '》' : '—'], ['用过', info.uses + ' 次'], ['未修缺陷', info.defects + ' 项'], ['标签', (module.tags || []).join('、') || '—']] });
+  const actions = lineActions(state, line, info);
+  if (actions.length) blocks.push({ type: 'buttons', columns: 2, items: actions });
   return { title: module.name, blocks };
 }
 

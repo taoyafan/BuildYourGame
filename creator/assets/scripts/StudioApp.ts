@@ -1738,38 +1738,6 @@ export class StudioApp extends Component {
         const labels = core.ABILITIES.map(ability => ability.name);
         return y + this.radar(parent, y, { dimensions: values, labels }, '', undefined, 0, false) + 6;
       }
-      case 'compose': {
-        // One layer of a recipe as a workbench: the whole stands on top, its parts sit on the table below.
-        const top = 72;
-        const size = 50;
-        const columns = Math.max(1, Math.min(4, Math.floor((width + 12) / (size + 26))));
-        const rows = Math.max(1, Math.ceil(block.children.length / columns));
-        const height = Math.max(top + 34 + rows * (size + 22), this.tipLayout('Compose')?.bottom || 0);
-        const { node, pen } = this.canvasNode(parent, 'Compose', 0, y, width, height);
-        pen.rect(0, 0, width, height, '#f1e7d6', 10);
-        pen.rect(0, top + 18, width, height - top - 18, '#dcc6a3', 10);
-        pen.rect(0, top + 14, width, 8, '#b48a5a', 3);
-        const rootSize = 60;
-        const pitch = width / columns;
-        const spots = block.children.map((_child: any, index: number) => ({ x: pitch * (index % columns) + (pitch - size) / 2, y: top + 34 + Math.floor(index / columns) * (size + 22) }));
-        for (const spot of spots) pen.line(width / 2, 8 + rootSize, spot.x + size / 2, spot.y + 2, '#b48a5a', 1.5);
-        const color = (item: any) => core.AXES[item.axis]?.color || colors.green;
-        drawBrick(pen, (width - rootSize) / 2, 6, rootSize, color(block.root), block.root.glyph || 'star', block.root.level || 1, block.root.status, block.root.oneOff, block.root.progress ?? 1);
-        this.brickSpot(node, (width - rootSize) / 2, 6, rootSize, block.root, 6);
-        block.children.forEach((child: any, index: number) => {
-          drawBrick(pen, spots[index].x, spots[index].y, size, color(child), child.glyph, child.level || 1, child.status, child.oneOff, child.progress ?? 1);
-          this.brickSpot(node, spots[index].x, spots[index].y, size, child, 24);
-          // A light plate under each name keeps it readable on the wooden table.
-          pen.rect(spots[index].x - (pitch - size) / 2 + 4, spots[index].y + size + 2, pitch - 8, 18, '#fffaf0', 6, 235);
-          this.text(node, child.name, spots[index].x - (pitch - size) / 2 + 4, spots[index].y + size + 2, pitch - 8, 18, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
-        });
-        const rootLeft = (width + rootSize) / 2 + 8;
-        const rootWidth = Math.max(40, width - rootLeft - 4);
-        pen.rect(rootLeft, 6 + rootSize / 2 - 11, rootWidth, 22, '#fffaf0', 6, 235);
-        this.text(node, block.root.name, rootLeft + 4, 6 + rootSize / 2 - 10, rootWidth - 8, 20, 12, colors.ink, true);
-        this.brickTipCard(node, width, height);
-        return y + height + 8;
-      }
       case 'bricks': {
         // A shelf of bricks with short names; tapping one opens its card.
         const size = 52;
