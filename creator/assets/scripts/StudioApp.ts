@@ -8,11 +8,12 @@ import * as core from './core/Studio';
 import * as content from './core/Content';
 import { Pen, drawRoom, drawDesk, drawAvatar, drawBrick, drawWork, seatLayout, roomProps, SKINS, HAIRS, HAIR_STYLES, FACES, GLASSES } from './ui/Art';
 import { platform } from './Platform';
+import { OfficeArt } from './ui/OfficeArt';
 
 const { ccclass } = _decorator;
 const colors = {
-  bg: '#f3f6f2', paper: '#ffffff', ink: '#243c34', muted: '#76877d',
-  green: '#1b6651', soft: '#e5eee7', line: '#d7e2d9', amber: '#a57024',
+  bg: '#faf6ec', paper: '#fffdf7', ink: '#243c34', muted: '#76877d',
+  green: '#1b6651', soft: '#eeecdf', line: '#ded8c7', amber: '#a57024',
   blue: '#497899', danger: '#a7463c', pale: '#edf2ee', gold: '#e0a526', night: '#14231d'
 };
 const navigation = [
@@ -104,6 +105,7 @@ export class StudioApp extends Component {
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
   private officeSwiped = false;
+  private officeArt = new OfficeArt();
   private brickTip: any = null;
   private activeTouches = new Set<number>();
   private renderPending = false;
@@ -148,6 +150,7 @@ export class StudioApp extends Component {
     this.stage = this.box(this.canvas, 'Interface', 0, 0, 390, 844);
     this.effects = this.box(this.canvas, 'Effects', 0, 0, 390, 844);
     this.state = this.load();
+    this.officeArt.load(() => { if (this.isValid) this.render(); });
     this.audio = this.canvas.addComponent(AudioSource);
     for (const name of ['click', 'income', 'launch', 'breakeven']) resources.load('sounds/' + name, AudioClip, (error, clip) => {
       if (!error && this.isValid) this.sounds.set(name, clip);
@@ -174,6 +177,7 @@ export class StudioApp extends Component {
   }
 
   onDestroy() {
+    this.officeArt.destroy();
     screen.off('window-resize', this.resize, this);
     engineGame.off(Game.EVENT_HIDE, this.background, this);
     engineGame.off(Game.EVENT_SHOW, this.syncMusic, this);
@@ -235,6 +239,7 @@ export class StudioApp extends Component {
   }
 
   update(delta: number) {
+    this.officeArt.update(delta, this.playing && !this.routes.length && !this.state?.event && !this.state?.over);
     // Real time with the game open, for the founder's dream; not scaled by game speed.
     if (this.state?.company) this.state.playSeconds = (this.state.playSeconds || 0) + Math.min(delta, 1);
     if (this.activeTouches.size || !this.playing || this.routes.length || this.state?.event || this.state?.over) return;
@@ -700,6 +705,7 @@ export class StudioApp extends Component {
   }
 
   private clear() {
+    this.officeArt.clear();
     this.anchors.clear();
     this.groupTops.clear();
     this.shapePen = null;
@@ -909,16 +915,29 @@ export class StudioApp extends Component {
 
   // The office is the main screen's picture and its doors: the big screen shows the current work, the
   // plaque the star rating, the whiteboard opens the calendar, the shelf the achievements and the desks
-  // the team. At most eight desks are drawn; the rest of the team is a "+N" chip.
+  // the team. Up to twenty desks fit one page; larger teams page horizontally.
   private office(body: Node, y: number, height: number, project: any, metrics: any) {
     const state = this.state;
     const inner = this.width - 40;
-    const { node, pen } = this.canvasNode(body, 'Office', 0, y, inner, height);
+    const node = this.box(body, 'Office', 0, y, inner, height);
+    const illustrated = this.officeArt.available(state.office);
+    const props = roomProps(inner, height, state.office);
+    if (illustrated) {
+      const pack = this.officeArt;
+      pack.place(node, 'wall', 0, 0, inner, props.floor);
+      pack.place(node, 'floor', 0, props.floor, inner, height - props.floor);
+      for (const key of ['window', 'plaque', 'board', 'shelf']) {
+        const rect = props[key];
+        pack.place(node, key, rect.x, rect.y, rect.w, rect.h);
+      }
+      const screen = props.screen;
+      pack.place(node, 'monitor', screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 12);
+    }
+    const { pen } = this.canvasNode(node, 'RoomDetails', 0, 0, inner, height);
     const rating = core.ratingOf(state);
     const achievements = core.achievementsOf(state);
-    drawRoom(pen, inner, height, state.office, { cups: Math.min(3, Math.ceil(achievements.count / 6)), books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] });
+    drawRoom(pen, inner, height, state.office, { cups: Math.min(3, Math.ceil(achievements.count / 6)), books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] }, illustrated);
     this.clickable(node, () => { if (!this.officeSwiped) this.openMenu('team'); });
-    const props = roomProps(inner, height, state.office);
     // Big screen with the work the main screen is looking at, or the last release. The work art is drawn
     // at its design height and scaled down to the screen, and the screen clips anything at the edges.
     const screen = props.screen;
@@ -942,6 +961,7 @@ export class StudioApp extends Component {
     const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
     const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
     const sorted = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0));
+    const samplePerson = state.staff.find((person: any) => !person.look)?.id;
     // Up to 20 desks fit one picture; a bigger team pages sideways, the watched project's people first.
     const pages = Math.max(1, Math.ceil(sorted.length / 20));
     const page = Math.min(this.officePage, pages - 1);
@@ -956,11 +976,33 @@ export class StudioApp extends Component {
     const still = this.box(node, 'HeadsStill', 0, 0, inner, height);
     const stillPen = new Pen(still.addComponent(Graphics));
     let anyBobbing = false;
-    layout.forEach((seat, index) => {
+    layout.forEach((layoutSeat, index) => {
+      // Leave room for a complete face above the computer even at the minimum room height.
+      const seat = illustrated ? { ...layoutSeat, scale: Math.min(layoutSeat.scale, (height - props.floor - 8) / 82) } : layoutSeat;
       const person = shown[index];
-      drawDesk(desks, seat.x, seat.y, seat.scale, !!person, person?.role, working && person && person.leaveUntil <= state.day);
+      const assigned = person && core.projectOf(state, person);
+      const active = !!person && working && person.leaveUntil <= state.day && !!assigned && core.personWorks(state, assigned, person).length > 0;
+      if (illustrated) {
+        // Draw each row as complete workstations so a front desk occludes the back row naturally.
+        const station = this.box(node, 'Workstation', seat.x - 32 * seat.scale, seat.y - 62 * seat.scale, 64 * seat.scale, 72 * seat.scale);
+        this.officeArt.place(station, 'chair', 0, 0, 64 * seat.scale, 72 * seat.scale);
+        // One sample character is used for staff without a chosen look. The founder's custom
+        // appearance keeps its Graphics portrait until corresponding artwork is available.
+        if (person && person.id === samplePerson) this.officeArt.person(station, 32 * seat.scale, 50 * seat.scale, seat.scale, active, index % 4);
+        else if (person) {
+          const { pen: portrait } = this.canvasNode(station, 'Portrait', 0, 0, 64 * seat.scale, 72 * seat.scale);
+          portrait.rect(21 * seat.scale, 28 * seat.scale, 22 * seat.scale, 20 * seat.scale, person.role === 'art' ? '#c58a32' : person.role === 'design' ? '#497899' : colors.green, 7 * seat.scale);
+          drawAvatar(portrait, 32 * seat.scale, 20 * seat.scale, 11 * seat.scale, person.id, person.look);
+        }
+        this.officeArt.place(station, 'desk', 0, 0, 64 * seat.scale, 72 * seat.scale);
+        this.officeArt.place(station, 'computer', 0, 0, 64 * seat.scale, 72 * seat.scale);
+        const { pen: status } = this.canvasNode(station, 'Status', 0, 0, 64 * seat.scale, 72 * seat.scale);
+        if (!active) status.rect(19 * seat.scale, 31 * seat.scale, 18 * seat.scale, 12 * seat.scale, '#273c36', seat.scale, 160);
+        if (person?.stressTags.length) status.circle(43 * seat.scale, 7 * seat.scale, 3, colors.danger);
+        return;
+      }
+      drawDesk(desks, seat.x, seat.y, seat.scale, !!person, person?.role, active);
       if (!person) return;
-      const active = working && person.leaveUntil <= state.day;
       const face = active ? bobbingPen : stillPen;
       if (active) anyBobbing = true;
       const cy = seat.y - 42 * seat.scale;

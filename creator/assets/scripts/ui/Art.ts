@@ -97,40 +97,46 @@ function star(pen: Pen, cx: number, cy: number, r: number, hex: string) {
   pen.poly(points, hex);
 }
 
-export function drawRoom(pen: Pen, w: number, h: number, office: number, record: { cups: number; books: number; stars: number; starColor: string } = { cups: 0, books: 0, stars: 1, starColor: '#2f7d63' }) {
+export function drawRoom(pen: Pen, w: number, h: number, office: number, record: { cups: number; books: number; stars: number; starColor: string } = { cups: 0, books: 0, stars: 1, starColor: '#2f7d63' }, detailsOnly = false) {
   const formal = office >= 2;
   const props = roomProps(w, h, office);
-  pen.rect(0, 0, w, h, formal ? '#e6eee9' : '#f1e7d6', 8);
   const floor = props.floor;
-  pen.rect(0, floor, w, h - floor, formal ? '#cdd8d2' : '#dcc6a3', 0);
-  pen.rect(0, h - 8, w, 8, formal ? '#bccac3' : '#c9ae86', 0);
-  const win = props.window;
-  pen.rect(win.x, win.y, win.w, win.h, '#bfe0ee', 3);
-  pen.rect(win.x, win.y + win.h * 0.62, win.w, win.h * 0.38, '#d9ecf3', 0);
-  if (!formal) pen.circle(win.x + win.w * 0.7, win.y + 10, 6, '#ffe6a3');
-  pen.frame(win.x, win.y, win.w, win.h, formal ? '#9fb7bf' : '#9a8466', 2, 3);
-  pen.line(win.x + win.w / 2, win.y, win.x + win.w / 2, win.y + win.h, formal ? '#9fb7bf' : '#9a8466', 2);
-  // Big screen bezel; the work itself is drawn into it by the app.
-  const screen = props.screen;
-  pen.rect(screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 8, '#2b3532', 4);
-  pen.rect(screen.x + screen.w / 2 - 6, screen.y + screen.h + 4, 12, 4, '#2b3532', 0);
+  if (!detailsOnly) {
+    pen.rect(0, 0, w, h, formal ? '#e6eee9' : '#f1e7d6', 8);
+    pen.rect(0, floor, w, h - floor, formal ? '#cdd8d2' : '#dcc6a3', 0);
+    pen.rect(0, h - 8, w, 8, formal ? '#bccac3' : '#c9ae86', 0);
+    const win = props.window;
+    pen.rect(win.x, win.y, win.w, win.h, '#bfe0ee', 3);
+    pen.rect(win.x, win.y + win.h * 0.62, win.w, win.h * 0.38, '#d9ecf3', 0);
+    if (!formal) pen.circle(win.x + win.w * 0.7, win.y + 10, 6, '#ffe6a3');
+    pen.frame(win.x, win.y, win.w, win.h, formal ? '#9fb7bf' : '#9a8466', 2, 3);
+    pen.line(win.x + win.w / 2, win.y, win.x + win.w / 2, win.y + win.h, formal ? '#9fb7bf' : '#9a8466', 2);
+    // Big screen bezel; the work itself is drawn into it by the app.
+    const screen = props.screen;
+    pen.rect(screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 8, '#2b3532', 4);
+    pen.rect(screen.x + screen.w / 2 - 6, screen.y + screen.h + 4, 12, 4, '#2b3532', 0);
+  }
   // Star plaque.
   const plaque = props.plaque;
-  pen.rect(plaque.x, plaque.y, plaque.w, plaque.h, '#8b6a4c', 4);
-  pen.rect(plaque.x + 2, plaque.y + 2, plaque.w - 4, plaque.h - 4, '#f5ead2', 3);
+  if (!detailsOnly) {
+    pen.rect(plaque.x, plaque.y, plaque.w, plaque.h, '#8b6a4c', 4);
+    pen.rect(plaque.x + 2, plaque.y + 2, plaque.w - 4, plaque.h - 4, '#f5ead2', 3);
+  }
   for (let index = 0; index < 5; index++) star(pen, plaque.x + plaque.w / 2 + (index - 2) * 11, plaque.y + plaque.h / 2, 5, index < record.stars ? record.starColor : '#d8cdb5');
   // Whiteboard with a little month grid.
   const board = props.board;
-  pen.rect(board.x, board.y, board.w, board.h, '#fbfbf7', 3);
-  pen.frame(board.x, board.y, board.w, board.h, '#8e9b97', 2, 3);
-  pen.rect(board.x + 4, board.y + 3, board.w - 8, 4, '#d9534f', 1);
-  const cellW = (board.w - 10) / 4;
-  const rows = Math.min(4, Math.max(1, Math.floor((board.h - 22) / 6)));
-  for (let row = 0; row < rows; row++) for (let col = 0; col < 4; col++) pen.rect(board.x + 5 + col * cellW, board.y + 10 + row * 6, cellW - 2, 4, row === 1 && col === 2 ? '#e6a85c' : '#dfe4e2', 1);
+  if (!detailsOnly) {
+    pen.rect(board.x, board.y, board.w, board.h, '#fbfbf7', 3);
+    pen.frame(board.x, board.y, board.w, board.h, '#8e9b97', 2, 3);
+    pen.rect(board.x + 4, board.y + 3, board.w - 8, 4, '#d9534f', 1);
+    const cellW = (board.w - 10) / 4;
+    const rows = Math.min(4, Math.max(1, Math.floor((board.h - 22) / 6)));
+    for (let row = 0; row < rows; row++) for (let col = 0; col < 4; col++) pen.rect(board.x + 5 + col * cellW, board.y + 10 + row * 6, cellW - 2, 4, row === 1 && col === 2 ? '#e6a85c' : '#dfe4e2', 1);
+  }
   // Shelf: one spine per released title, cups grow with unlocked achievements.
   const shelf = props.shelf;
   const plankY = shelf.y + shelf.h - 16;
-  pen.rect(shelf.x, plankY, shelf.w, 4, '#8b6a4c', 1);
+  if (!detailsOnly) pen.rect(shelf.x, plankY, shelf.w, 4, '#8b6a4c', 1);
   const spines = Math.min(5, record.books);
   const spineColors = ['#c8574f', '#497899', '#e0a526', '#2f7d63', '#9b6fb0', '#d9814f'];
   for (let index = 0; index < spines; index++) pen.rect(shelf.x + 3 + index * 5, plankY - 13, 4, 13, spineColors[index % spineColors.length], 1);
