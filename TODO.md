@@ -23,7 +23,7 @@
 
 ### 当前
 
-- 到微信公众平台的「设置 → 第三方设置 → 插件管理」添加 Cocos 引擎插件（provider `wx0446ba2621dda60a`），加完把 `creator/build-configs/wechatgame.json` 的 `packages.wechatgame.separateEngine` 打开重新构建。实测主包可从 3.8MB 降到 2.2MB，未授权时上传报 80082。
+- 给这个小游戏添加 Cocos 引擎插件。小游戏后台没有小程序的「设置 → 第三方设置 → 插件管理」，要打开插件文档页 <https://mp.weixin.qq.com/wxopen/plugindevdoc?appid=wx0446ba2621dda60a&lang=zh_CN> 点「添加插件」；或在开发者工具里打开工程，控制台「插件未授权使用 添加插件」那行点蓝字。加完把 `creator/build-configs/wechatgame.json` 的 `packages.wechatgame.separateEngine` 打开重新构建。实测主包可从 3.8MB 降到 2.2MB，未授权时上传报 80082。
 - 试玩结果里的「本作当下需求」：与行业页的行情部分重复，实玩后看有没有人用，没人看就删。
 
 ## 测试反馈
