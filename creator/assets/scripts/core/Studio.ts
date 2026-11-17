@@ -639,6 +639,8 @@ export const moduleOpen = (state: any, line: string) => !!MODULES[line]
   // The two lines the first title needs start gated and are learned one by one during the opening job.
   && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line])
   && !firstTitleGate(state, line);
+// A slot with nothing to pick yet stays out of the plan form and the library.
+export const slotUsable = (state: any, slot: any) => slotOpen(state, slot) && Object.keys(MODULES).some(line => MODULES[line].slot === slot.key && moduleOpen(state, line));
 // A hard technical requirement across axes: the line cannot go into a title that lacks the other line.
 export function lineBlocked(plan: any, line: string) {
   const missing = (MODULES[line]?.requires || []).filter((need: string) => !planLines(plan).includes(need));
@@ -3194,7 +3196,7 @@ export function launchProject(state: any, projectId: string) {
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广共投入 ${moneyText(promo.cost)}，相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next) && slotUsable(next, slot)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }

@@ -1121,12 +1121,14 @@ const editableBrick = (state: any, line: string, extra: any = {}) => brickOf(sta
 // brick, so every line is shown directly: the name already says the style, and each card keeps its
 // own colour instead of mixing two styles on one card.
 function libraryMenu(state: any, id?: string) {
-  const [tab] = String(id || 'design').split(':');
-  const axis = core.AXES[tab] ? tab : 'design';
-  const tabs = { type: 'tabs', items: Object.keys(core.AXES).map(key => ({ text: core.AXES[key].name, route: { menu: 'library', id: key }, active: key === axis })) };
+  // Tabs are the same slots the plan form lists, so a genre and a theme never share a page.
+  const slots = core.SLOTS.filter((item: any) => core.slotUsable(state, item));
+  const [tab] = String(id || '').split(':');
+  const slot = slots.find((item: any) => item.key === tab) || slots.find((item: any) => item.axis === tab) || slots[0];
+  const tabs = { type: 'tabs', items: slots.map((item: any) => ({ text: item.name, route: { menu: 'library', id: item.key }, active: item === slot })) };
   // Only learned lines appear here: a locked line is not a choice yet, so showing it as a grey brick
   // would be indistinguishable from a learned line that simply has not been built.
-  const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].axis === axis && core.moduleOpen(state, line));
+  const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].slot === slot.key && core.moduleOpen(state, line));
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];

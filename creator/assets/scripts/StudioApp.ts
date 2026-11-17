@@ -1412,7 +1412,7 @@ export class StudioApp extends Component {
       return { need, text: '新做', tone: colors.amber, brick: 'missing', progress: 0 };
     };
     for (const slot of core.SLOTS) {
-      if (!core.slotOpen(state, slot)) continue;
+      if (!core.slotUsable(state, slot)) continue;
       const chosen: string[] = this.draft.slots?.[slot.key] || [];
       const fixed = !!this.draft.sequel || (slot.key === 'core' && !!first);
       const expanded = !!open[slot.key];
