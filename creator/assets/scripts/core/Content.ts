@@ -813,7 +813,8 @@ function bookMenu(state: any, id: string) {
         ['发售时知道它的人', number(book.openingFollowers) + ' 人'],
         ['发售售价', price(book.price)],
         ['发售时市场', book.trend],
-        ...((book.tags || []).length ? [['标签', book.tags.join('、') + (book.lean ? ' · 反响 ×' + book.lean.toFixed(2) : '')]] : []),
+        ...((book.tags || []).length ? [['标签', book.tags.join('、')]] : []),
+        ...(book.lean ? [['赶上的行情', core.tagHeat(book.lean).label + ' · 需求 ' + (book.lean >= 1 ? '+' : '') + Math.round((book.lean - 1) * 100) + '%']] : []),
         ...(book.royalty ? [['租用分成', Math.round(book.royalty * 100) + '%']] : []),
         ...(book.rent || []).map((line: string) => { const record = core.rentRecord(state, line); return ['租用' + core.MODULES[line].name, '累计 ' + record.count + ' 次 · 已付约 ' + money(record.paid) + ' · 自己做约需 ' + money(core.rentPrice(line, book.scale).build)]; })
       ] },
@@ -1383,24 +1384,22 @@ function industryMenu(state: any, id?: string) {
   return { title: '行业', blocks };
 }
 
-// The 行情 tab: last year's titles as points, reception across and first-week sales up. It opens on the
-// studio's own scale and colours points by the options of the category being learned; the legend filters.
-const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0'];
+// The 行情 tab: how hot each option of a category has been over the last year, one line per option, read
+// off the market itself (not the titles), so promotion cannot colour it. The legend filters to one line.
+const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0', '#6b8e3d', '#b5547f', '#3f7f9e', '#a8742f', '#5b6770'];
 function marketBlocks(state: any, id?: string) {
-  const [, scaleText = '', axisText = '', tag = ''] = String(id || '').split(':');
-  const axes = core.marketAxes(state);
-  const scale = scaleText !== '' && core.SCALES[Number(scaleText)] ? Number(scaleText) : core.currentScale(state);
-  const axis = axes.includes(axisText) ? axisText : core.lensOf(state);
-  const options = core.axisOptions(axis);
-  const route = (nextScale: number, nextAxis: string, nextTag: string) => ({ menu: 'industry', id: ['market', nextScale, nextAxis, nextTag].join(':') });
-  const all = core.marketPoints(state).filter((point: any) => point.scale === scale);
-  const shown = tag ? all.filter((point: any) => point.tags.includes(tag)) : all;
-  const color = (point: any) => { const index = options.findIndex((option: string) => point.tags.includes(option)); return index < 0 ? '#b9b2a6' : OPTION_COLORS[index % OPTION_COLORS.length]; };
+  const [, groupText = '', tag = ''] = String(id || '').split(':');
+  const groups = core.heatGroups(state);
+  const group = groups.find((item: any) => item.key === groupText) || groups.find((item: any) => item.axis === core.lensOf(state)) || groups[0];
+  const route = (key: string, nextTag: string) => ({ menu: 'industry', id: ['market', key, nextTag].join(':') });
+  const lines = group.tags.map((name: string, index: number) => {
+    const series = core.heatSeries(state, name);
+    return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.tagHeat(series[series.length - 1].value).label, shown: !tag || tag === name };
+  });
   return [
-    { type: 'tabs', items: core.SCALES.map((item: any, index: number) => ({ text: item.name, route: route(index, axis, ''), active: index === scale })) },
-    ...(axes.length > 1 ? [{ type: 'tabs', items: axes.map((key: string) => ({ text: core.AXES[key].name + (core.activeMarketAxes(state).includes(key) ? ' · 关注' : ''), route: route(scale, key, ''), active: key === axis })) }] : []),
-    { type: 'scatter', points: shown.map((point: any) => ({ ...point, color: color(point) })), few: shown.length < 5, legend: options.map((option: string, index: number) => ({ text: option, color: OPTION_COLORS[index % OPTION_COLORS.length], active: option === tag, route: route(scale, axis, option === tag ? '' : option) })) },
-    { type: 'text', text: '近 12 个月发售的' + core.SCALES[scale].name + '作品：横轴口碑，纵轴首周销量，大圆点是本社的。点圆点看作品，点图例只看这一种。', muted: true }
+    ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name + (core.activeMarketAxes(state).includes(item.axis) ? ' · 关注' : ''), route: route(item.key, ''), active: item.key === group.key })) }] : []),
+    { type: 'heat', lines, start: state.day - 360, end: state.day, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },
+    { type: 'text', text: '近一年各选项的需求冷热，越高越热、越低越拥挤；只回顾，不预告。作品发售后，档案里写着它赶上的行情。', muted: true }
   ];
 }
 

@@ -52,6 +52,8 @@ export function scaleOfWork(work) {
 export const ROTATION_PARAMETERS = {
   rise: 0.5, hold: 2, fall: 0.5,
   amplitude: 0.20, quiet: 0.05, crowd: 0.04, crowdWeight: 0.20,
+  // The most a title's combined demand may move the market, by scale: big bets ride bigger waves.
+  scaleAmplitude: [0.15, 0.25, 0.40, 0.50],
   otherWeight: 0.20
 };
 

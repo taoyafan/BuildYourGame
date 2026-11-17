@@ -100,7 +100,6 @@ export class StudioApp extends Component {
   private overScreenShown = false;
   private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
-  private scatterPick = '';
   private officePage = 0;
   private officeSwiped = false;
   private brickTip: any = null;
@@ -1846,7 +1845,7 @@ export class StudioApp extends Component {
         return y;
       case 'cover': return y + this.cover(parent, y, block.book) + 14;
       case 'chart': return y + this.chart(parent, y, block.book) + 14;
-      case 'scatter': return y + this.scatter(parent, y, block) + 10;
+      case 'heat': return y + this.heat(parent, y, block) + 10;
       case 'quotes':
         for (const quote of block.items) {
           const node = this.box(parent, 'Quote', 0, y, width, 40);
@@ -1999,8 +1998,9 @@ export class StudioApp extends Component {
     return 150;
   }
 
-  // The market page: reception across, first-week sales up, one point per title; tapping one names it.
-  private scatter(parent: Node, y: number, block: any) {
+  // The market page: one line per option over the last year, drawn from the monthly record. Higher is hotter;
+  // the middle line is a flat market. No figures are printed.
+  private heat(parent: Node, y: number, block: any) {
     const width = this.width - 40;
     const origin = y;
     let x = 0;
@@ -2012,62 +2012,33 @@ export class StudioApp extends Component {
       pen.frame(0, 0, cell, 30, item.active ? colors.green : colors.line, item.active ? 2 : 1, 15);
       pen.circle(15, 15, 6, item.color);
       this.text(node, item.text, 26, 0, cell - 30, 30, 12, colors.ink, item.active);
-      this.clickable(node, () => { this.routes[this.routes.length - 1] = item.route; this.scatterPick = ''; this.render(); });
+      this.clickable(node, () => { this.routes[this.routes.length - 1] = item.route; this.render(); });
       x += cell + 6;
     }
     y += block.legend.length ? 40 : 0;
     const height = 230;
-    const left = 46;
-    const right = width - 10;
+    const left = 34;
+    const right = width - 12;
     const top = 10;
     const bottom = height - 26;
-    const points = block.points || [];
-    const xs = points.map((point: any) => point.x);
-    const low = Math.max(0, Math.floor(Math.min(40, ...xs) / 10) * 10);
-    const high = Math.min(100, Math.ceil(Math.max(70, ...xs) / 10) * 10);
-    const peak = Math.max(10, ...points.map((point: any) => point.y)) * 1.1;
-    const px = (value: number) => left + (right - left) * (value - low) / Math.max(1, high - low);
-    const py = (value: number) => bottom - (bottom - top) * value / peak;
-    const { node, pen } = this.canvasNode(parent, 'Scatter', 0, y, width, height);
+    const low = 0.78;
+    const high = 1.22;
+    const px = (day: number) => left + (right - left) * Math.max(0, Math.min(1, (day - block.start) / Math.max(1, block.end - block.start)));
+    const py = (value: number) => bottom - (bottom - top) * (Math.max(low, Math.min(high, value)) - low) / (high - low);
+    const { node, pen } = this.canvasNode(parent, 'Heat', 0, y, width, height);
     pen.rect(left, top, right - left, bottom - top, '#fbf8f1', 4);
-    for (const fraction of [0, 0.5, 1]) {
-      const lineY = py(peak / 1.1 * fraction);
-      pen.line(left, lineY, right, lineY, colors.line, 1);
-      this.text(node, content.number(peak / 1.1 * fraction), 0, lineY - 8, left - 6, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    pen.line(left, py(1), right, py(1), colors.line, 2);
+    for (const [label, value] of [['热', 1.16], ['平', 1], ['冷', 0.84]] as [string, number][]) this.text(node, label, 0, py(value) - 8, left - 6, 16, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    this.text(node, '一年前', left, height - 20, 80, 16, 10, colors.muted);
+    this.text(node, '现在', right - 40, height - 20, 40, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    for (const line of block.lines.filter((item: any) => item.shown)) {
+      const points = line.series;
+      for (let index = 1; index < points.length; index++) pen.line(px(points[index - 1].day), py(points[index - 1].value), px(points[index].day), py(points[index].value), line.color, 3);
+      const last = points[points.length - 1];
+      pen.circle(px(last.day), py(last.value), 4, line.color);
     }
-    this.text(node, '口碑 ' + low, left, height - 20, 80, 16, 10, colors.muted);
-    this.text(node, String(high), right - 40, height - 20, 40, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    const ordered = [...points].sort((a: any, b: any) => Number(a.own) - Number(b.own));
-    for (const point of ordered) {
-      const cx = px(point.x);
-      const cy = py(point.y);
-      if (point.own) pen.circle(cx, cy, 9, colors.night);
-      pen.circle(cx, cy, point.own ? 7 : 5, point.color, point.own ? 255 : 220);
-      if (point.id === this.scatterPick) pen.frame(cx - 10, cy - 10, 20, 20, colors.ink, 2, 10);
-    }
-    let touchStart: Vec2 | null = null;
-    node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { touchStart = event.getUILocation().clone(); });
-    node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-      const location = event.getUILocation();
-      if (!touchStart || Math.hypot(location.x - touchStart.x, location.y - touchStart.y) > 12) return;
-      const local = node.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(location.x, location.y, 0));
-      let best: any = null;
-      let distance = 18;
-      for (const point of points) {
-        const gap = Math.hypot(px(point.x) - local.x, py(point.y) + local.y);
-        if (gap < distance) { distance = gap; best = point; }
-      }
-      this.scatterPick = best ? best.id : '';
-      this.render();
-    });
-    node.on(Node.EventType.TOUCH_CANCEL, () => { touchStart = null; });
-    y += height + 6;
-    if (block.few) y += this.paragraph(parent, '样本太少，看不出什么。', y, true, 0, width, 12);
-    const picked = points.find((point: any) => point.id === this.scatterPick);
-    if (picked) y += this.paragraph(parent, picked.name + ' · ' + picked.studio + '\n口碑 ' + Math.round(picked.x) + ' · 首周 ' + content.number(picked.y) + ' 份' + (picked.tags.length ? ' · ' + picked.tags.join('、') : ''), y, false, 0, width, 13);
-    return y - origin;
+    return y + height + 6 - origin;
   }
-
   private chart(parent: Node, y: number, book: any) {
     const width = this.width - 40;
     const origin = y;

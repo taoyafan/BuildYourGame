@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.18';
+export const VERSION = '0.4.19';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -459,7 +459,33 @@ export function tagFactor(state: any, tags: string[], scale = 0) {
   });
   const main = combinedDemand(strong, weights);
   const background = sum(LENS_ORDER.filter(axis => !active.includes(axis)).map(axis => axes[LENS_ORDER.indexOf(axis)])) * ROTATION.otherWeight;
-  return round(clamp(main + background, 1 - ROTATION.amplitude, 1 + ROTATION.amplitude));
+  const raw = clamp(main + background, 1 - ROTATION.amplitude, 1 + ROTATION.amplitude);
+  // The same hot or cold read moves a big title's market further than a small one's.
+  const limit = ROTATION.scaleAmplitude[scale] ?? ROTATION.amplitude;
+  return round(1 + clamp((raw - 1) * limit / ROTATION.amplitude, -limit, limit));
+}
+
+// Past demand of every tag, one sample a month for a year: what the 行情 chart draws. Only the past is kept.
+const HEAT_MONTHS = 12;
+function recordHeat(state: any) {
+  const sample: any = {};
+  for (const tag of ALL_TAGS) sample[tag] = tagDemand(state, tag);
+  state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_MONTHS);
+}
+export function heatSeries(state: any, tag: string) {
+  const past = (state.heatLog || []).map((item: any) => ({ day: item.day, value: item.v[tag] ?? 1 }));
+  return [...past, { day: state.day, value: tagDemand(state, tag) }];
+}
+// The tags a player compares against each other, grouped like the market does: genres with genres, styles
+// with styles. Only the categories already learned are shown.
+const HEAT_GROUPS: any[] = [
+  { key: 'genre', name: '类型', axis: 'design' }, { key: 'mechanic', name: '机制', axis: 'design' }, { key: 'theme', name: '题材', axis: 'design' },
+  { key: 'engine', name: '引擎', axis: 'tech' }, { key: 'art', name: '美术', axis: 'art' }, { key: 'audio', name: '音乐', axis: 'audio' }
+];
+export function heatGroups(state: any) {
+  const learned = marketAxes(state);
+  return HEAT_GROUPS.map(group => ({ ...group, tags: ALL_TAGS.filter(tag => TAG_GROUP[tag] === group.key) }))
+    .filter(group => learned.includes(group.axis) && group.tags.length > 1);
 }
 
 // Testing is the whole game's work, not a module: a share of all the content, reused parts included.
@@ -3461,6 +3487,7 @@ export function stepDay(state: any) {
   if (!next.event) rollRandomEvent(next);
   checkAchievements(next);
   if (next.day % 30 === 0) {
+    recordHeat(next);
     // Licensed lines pay by their tier every month, and other studios using them crowd their tags.
     for (const line of Object.keys(next.licenses || {})) {
       const level = lineInfo(next, line).level;
@@ -3766,28 +3793,9 @@ function totalRanks(state: any, book: any) {
   });
 }
 
-// The market page: every title released in the last year as a point, its reception against its first-week
-// sales. Looking back only; it shows no demand figures and no trend.
-export function marketPoints(state: any) {
-  const day = state.day;
-  const rivals = (state.works || []).filter((work: any) => work.released <= day - 7 && work.released > day - 367)
-    .map((work: any) => ({ id: work.id, name: `《${work.name}》`, studio: work.studioName, scale: work.scale, x: work.score, y: work.firstWeek, tags: work.tags || [], own: false }));
-  const own = state.catalog.filter((book: any) => !book.parentId && book.firstRanks && book.released > day - 367)
-    .map((book: any) => ({ id: book.id, name: `《${book.name}》`, studio: state.company, scale: book.scale, x: book.reviewScore, y: book.firstWeek || 0, tags: book.tags || [], own: true }));
-  return [...rivals, ...own];
-}
 // The categories the page may sort points by: the ones learned so far and the one being learned.
 export function marketAxes(state: any) {
   return LENS_ORDER.filter(axis => (state.marketCycle?.seen || ['design']).includes(axis));
-}
-// The options of a category a point can carry; gameplay is read by genre.
-export function axisOptions(axis: string) {
-  return ALL_TAGS.filter(tag => TAG_AXIS[tag] === axis && (axis !== 'design' || TAG_GROUP[tag] === 'genre'));
-}
-// The scale the page opens on: the studio's latest or current title.
-export function currentScale(state: any) {
-  const live = projectOpen(state).find((project: any) => project.kind === 'game');
-  return live ? live.scale : state.catalog.find((book: any) => !book.parentId)?.scale || 0;
 }
 
 // The tags worth mentioning right now: those of the category the market is about (all once learned).
