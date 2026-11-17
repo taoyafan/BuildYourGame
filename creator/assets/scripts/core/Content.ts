@@ -1122,7 +1122,7 @@ const editableBrick = (state: any, line: string, extra: any = {}) => brickOf(sta
 // own colour instead of mixing two styles on one card.
 function libraryMenu(state: any, id?: string) {
   // Tabs are the same slots the plan form lists, so a genre and a theme never share a page.
-  const slots = core.SLOTS.filter((item: any) => core.slotUsable(state, item));
+  const slots = core.SLOTS.filter((item: any) => core.slotOpen(state, item));
   const [tab] = String(id || '').split(':');
   const slot = slots.find((item: any) => item.key === tab) || slots.find((item: any) => item.axis === tab) || slots[0];
   const tabs = { type: 'tabs', items: slots.map((item: any) => ({ text: item.name, route: { menu: 'library', id: item.key }, active: item === slot })) };

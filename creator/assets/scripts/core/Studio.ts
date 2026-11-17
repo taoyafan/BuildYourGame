@@ -639,8 +639,20 @@ export const moduleOpen = (state: any, line: string) => !!MODULES[line]
   // The two lines the first title needs start gated and are learned one by one during the opening job.
   && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line])
   && !firstTitleGate(state, line);
-// A slot with nothing to pick yet stays out of the plan form and the library.
-export const slotUsable = (state: any, slot: any) => slotOpen(state, slot) && Object.keys(MODULES).some(line => MODULES[line].slot === slot.key && moduleOpen(state, line));
+// A slot opens together with one line to put in it. Returns the lines handed out.
+function ensureSlotLines(state: any) {
+  const given: string[] = [];
+  for (const slot of SLOTS) {
+    if (!slotOpen(state, slot)) continue;
+    const lines = Object.keys(MODULES).filter(line => MODULES[line].slot === slot.key);
+    if (lines.some(line => moduleOpen(state, line))) continue;
+    const first = [...lines].sort((left, right) => (MODULES[left].unlock || 0) - (MODULES[right].unlock || 0))[0];
+    if (!first) continue;
+    state.unlocked = { ...(state.unlocked || {}), [first]: state.day };
+    given.push(first);
+  }
+  return given;
+}
 // A hard technical requirement across axes: the line cannot go into a title that lacks the other line.
 export function lineBlocked(plan: any, line: string) {
   const missing = (MODULES[line]?.requires || []).filter((need: string) => !planLines(plan).includes(need));
@@ -1037,7 +1049,7 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 14, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 15, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -3187,6 +3199,7 @@ export function launchProject(state: any, projectId: string) {
     }
   }
   if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
+  for (const line of ensureSlotLines(next)) announce(next, { kind: 'unlock', title: `${SLOTS.find(slot => slot.key === MODULES[line].slot).name}开放`, text: `解锁${MODULES[line].name}：下一作可以选了。`, line, amount: 0 });
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首日售出 ${Math.round(units)} 份`, amount: receipt, book: book.id });
   if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${moneyText(best)}`, amount: receipt });
   checkMarks(next, book);
@@ -3196,7 +3209,7 @@ export function launchProject(state: any, projectId: string) {
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广共投入 ${moneyText(promo.cost)}，相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next) && slotUsable(next, slot)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -4721,6 +4734,10 @@ export function restoreStudio(saved: any) {
     }
     for (const clock of cycleClocks(next.marketCycle)) chooseDirections(next, clock);
     next.rulesRevision = 14;
+  }
+  if (next.rulesRevision < 15) {
+    ensureSlotLines(next);
+    next.rulesRevision = 15;
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
