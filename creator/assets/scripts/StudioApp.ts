@@ -97,6 +97,7 @@ export class StudioApp extends Component {
   private menuTapNodes = new Set<Node>();
   private guideAnchor = '';
   private helpKey = '';
+  private tip: { title: string; text: string } | null = null;
   private overScreenShown = false;
   private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
@@ -717,6 +718,7 @@ export class StudioApp extends Component {
       this.scrollBottom = false;
     }
     const key = this.routes.map((route: any) => route.menu + (route.id || '') + (route.dim || '')).join('>');
+    if (key !== this.scrollKey) this.tip = null;
     // Keep the focused EditBox alive: defer redraws of the same page until editing ends. A route
     // change still redraws immediately and clears a stale guard (a few platforms do not dispatch
     // editing-did-ended), so the screen can never stay frozen on an old page.
@@ -760,6 +762,7 @@ export class StudioApp extends Component {
       this.scrollView.scrollToOffset(new Vec2(0, max), 0);
     }
     this.scrollKey = key;
+    if (this.tip) this.renderTip();
     if (this.notice || this.storageIssue) {
       const message = this.notice || this.storageIssue;
       const toast = this.box(this.stage, 'Toast', 20, this.height - this.bottom - 130, this.width - 40, 52, colors.night, 12, 235);
@@ -773,6 +776,26 @@ export class StudioApp extends Component {
       if (this.noticeFresh) { opacity.opacity = 0; tween(opacity).to(0.15, { opacity: 255 }).start(); this.noticeFresh = false; }
       else opacity.opacity = 255;
     }
+  }
+
+  private showTip(title: string, text: string) {
+    this.tip = { title, text };
+    this.render();
+  }
+
+  // A floating card over the page; tapping anywhere closes it.
+  private renderTip() {
+    const tip = this.tip!;
+    const close = () => { this.tip = null; this.render(); };
+    this.clickable(this.box(this.stage, 'TipScrim', 0, 0, this.width, this.height, colors.night, 0, 130), close);
+    const width = this.width - 56;
+    const card = this.box(this.stage, 'TipCard', 28, 0, width, 10);
+    this.text(card, tip.title, 18, 14, width - 70, 26, 16, colors.ink, true);
+    const height = 46 + this.paragraph(card, tip.text, 46, false, 18, width - 36, 14) + 8;
+    card.getComponent(UITransform).setContentSize(width, height);
+    card.setPosition(28, -Math.max(this.top, (this.height - height) / 2));
+    this.box(card, 'TipBg', 0, 0, width, height, colors.paper, 14).setSiblingIndex(0);
+    this.button(card, '', width - 46, 8, 34, 34, close, false, false, 'X');
   }
 
   private renderStudio() {
@@ -1302,8 +1325,11 @@ export class StudioApp extends Component {
     const model = custom ? null : content.menu(this.state, route, slotPage ? this.slotSummaries() : []);
     const title = route.menu === 'setup' ? '成立工作室' : route.menu === 'new-project' ? '新作立项' : route.menu === 'history' ? '经营记录' : model.title;
     const y = this.top;
+    // Page-level explanations live behind one "?" button in the title bar; the text floats over the page.
+    const helps = model ? model.blocks.filter((block: any) => block.type === 'help') : [];
     if (this.routes.length > 1) this.button(this.stage, '', 20, y, 40, 40, () => { this.routes.pop(); this.render(); }, false, false, 'ArrowLeft');
-    this.text(this.stage, title, 70, y, this.width - 140, 40, 19, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+    this.text(this.stage, title, 70, y, this.width - 140 - (helps.length ? 50 : 0), 40, 19, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+    if (helps.length) this.button(this.stage, '', this.width - 108, y, 40, 40, () => this.showTip(helps.length === 1 ? helps[0].title : title, helps.map((block: any) => (helps.length === 1 ? '' : block.title + '\uff1a') + block.text).join('\n\n')), false, false, 'CircleHelp', 'page-help');
     // Event pages used to have no close button at all, so the release screen trapped the player in it.
     // A single-choice event (release, settlement) can be dismissed with ✕; a real decision still must be made.
     const singleChoiceEvent = route.menu === 'event' && (this.state.event?.choices?.length || 0) === 1;
@@ -1551,17 +1577,7 @@ export class StudioApp extends Component {
         return y + 48;
       }
       case 'text': return y + this.paragraph(parent, block.text, y, block.muted, 0, width, block.muted ? 13 : 14);
-      case 'help': {
-        // Long explanations hide behind a small "?" row instead of filling the page by default.
-        const open = this.helpKey === block.key;
-        this.button(parent, (open ? '▾ ' : '▸ ') + block.title, 0, y, width, 38, () => {
-          this.helpKey = open ? '' : block.key;
-          this.render();
-        }, false, false, 'CircleHelp');
-        let next = y + 44;
-        if (open) next += this.paragraph(parent, block.text, next, true, 0, width, 13);
-        return next + 8;
-      }
+      case 'help': return y;
       case 'dropdown': {
         // One control replaces a wall of sort tabs: the label shows the current choice and the list
         // of ways to sort opens in place, exactly where the old tabs used to be.
@@ -1587,7 +1603,8 @@ export class StudioApp extends Component {
         this.text(parent, block.text, 0, y + 10, width, 18, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
         return y + 34;
       case 'section':
-        this.text(parent, block.title, 0, y + 8, width, 26, 16, colors.ink, true);
+        this.text(parent, block.title, 0, y + 8, width - (block.help ? 44 : 0), 26, 16, colors.ink, true);
+        if (block.help) this.button(parent, '', width - 38, y + 4, 34, 34, () => this.showTip(block.title, block.help), false, false, 'CircleHelp');
         return y + 42;
       case 'note': {
         const node = this.box(parent, 'Note', 0, y, width, 40);
@@ -1635,14 +1652,10 @@ export class StudioApp extends Component {
           const row = y + line * 56;
           const icon = item.icon || (item.action === 'priority' ? (String(item.text).includes('提高') ? 'ArrowUp' : 'ArrowDown') : actionIcons[item.action] || 'ChevronRight');
           this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, icon, item.anchor, item.reason);
-          if (item.help) this.button(parent, '', left + cell - 38, row + 4, 38, 38, () => {
-            this.helpKey = this.helpKey === item.helpKey ? '' : item.helpKey;
-            this.render();
-          }, false, false, 'CircleHelp', 'hire-help');
+          if (item.help) this.button(parent, '', left + cell - 38, row + 4, 38, 38, () => this.showTip(item.helpTitle || item.text, item.help), false, false, 'CircleHelp', 'hire-help');
         });
         const rows = Math.ceil(block.items.length / columns);
         y += rows * 56;
-        for (const item of block.items) if (item.help && this.helpKey === item.helpKey) y += this.paragraph(parent, item.help, y, true, 0, width, 13);
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 10));
         return y + 4;
       }

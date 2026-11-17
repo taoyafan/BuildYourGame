@@ -112,7 +112,7 @@ function recruitMenu(state: any, id: string) {
     { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
     // Channels differ in who answers and in what they ask for, so each one gets its own line with
     // the wage band it actually pays instead of one shared note under the whole page.
-    { type: 'text', text: core.CHANNELS[channel].text + '月薪约 ' + core.channelWageRange(channel).low.toFixed(1) + '–' + core.channelWageRange(channel).high.toFixed(1) + ' 万', muted: true }
+    { type: 'text', text: core.CHANNELS[channel].text, muted: true }
   ];
   if ((state.notices.layout || 0) > 0) blocks.push({ type: 'note', icon: 'Users', text: '近期裁员影响了公司的招聘吸引力，招聘费用已上浮。' });
   const lockedRoles = Object.keys(core.ROLES).filter((key: string) => !core.roleOpen(state, key));
@@ -122,7 +122,7 @@ function recruitMenu(state: any, id: string) {
   if (pool) blocks.push({ type: 'candidates', people: pool.people });
   const fresh = !pool || pool.batch !== Math.floor((state.day - 1) / 14);
   if (fresh) blocks.push({ type: 'buttons', items: [{ text: (pool ? '查看新一批简历' : '发布招聘') + ' · ' + money(fee), action: 'recruit', data: { role, channel }, disabled: state.cash < fee, anchor: 'recruit' }] });
-  blocks.push({ type: 'text', text: '工位 ' + state.staff.length + ' / ' + core.seats(state) + (pool ? ' · 名单保持到第 ' + (pool.batch + 1) * 14 + ' 天' : ''), muted: true });
+  blocks.push({ type: 'text', text: '工位 ' + state.staff.length + ' / ' + core.seats(state) + (pool ? ' · 名单保持一阵' : ''), muted: true });
   return { title: '招聘' + core.ROLES[role].name, blocks };
 }
 
@@ -346,7 +346,7 @@ function projectMenu(state: any, id?: string) {
     { type: 'radar', metrics, genre: project.type, projectId: project.id },
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-    { type: 'help', key: 'project-help', title: '怎样算做完', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。做满后参与的人会自动去修已发现的缺陷。' },
+    { type: 'help', key: 'project-help', title: '怎样算做完', text: '六项都做完才算完成，测试也要安排人；测得越满，「稳定」越高。做满后参与的人会自动去修已发现的缺陷。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '共投入 ' + money(project.promoted) : '未推广'], ...(updates.work > 0.001 ? [['模块自动更新', '还需约 ' + updates.work.toFixed(1) + ' 人日']] : []), [core.TYPES[project.type].audience + '最看重', core.audienceFocus(project.type)]] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
     ...(order.length > 1 ? [
@@ -446,7 +446,7 @@ function jobAction(state: any) {
 function jobsMenu(state: any) {
   const offers = core.jobBoard(state);
   return { title: '接委托', blocks: [
-    { type: 'text', text: '报酬固定，模块留在你的模块库；每月换一批。', muted: true },
+    { type: 'help', key: 'jobs-help', title: '委托说明', text: '报酬固定，模块留在你的模块库；每月换一批。' },
     { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client, action: 'menu', data: { menu: 'job', id: offer.id } })) }
   ] };
 }
@@ -609,8 +609,7 @@ function assignMenu(state: any, projectId: string) {
     ] };
   }
   const blocks: any[] = [
-    { type: 'text', text: '每人只属于一个项目，可同时做多项。', muted: false },
-    { type: 'text', text: '手上的活都做完了，人就会空闲，工资照付。', muted: true }
+    { type: 'help', key: 'assign-help', title: '分工说明', text: '每人只属于一个项目，可以同时做多项；手上的活都做完了，人就会空闲，工资照付。' }
   ];
   // Read the remaining work once for the whole page instead of per card, so every box agrees with the
   // production numbers it sits next to.
@@ -847,7 +846,7 @@ function ratingMenu(state: any) {
       ['下次评级', core.dueText(state, rating.next)]
     ] },
     ...(rating.watch ? [{ type: 'note', icon: 'Target', text: core.RATING_MEDIA + '把公司列入了观察名单。下一期评级前发售一部成绩好的作品，可以把分数拉回保星线以上。' }] : []),
-    { type: 'help', key: 'rating-help', title: '评级怎么算', text: core.RATING_MEDIA + '每 ' + core.RATING_PERIOD + ' 天发布一次工作室评级，只看最近三部作品（资料片不算），越新的作品权重越高：每部主要看首周名次（按够得着的最高一级榜单，全国、国际榜分数更高），其次是玩家口碑；获奖只是荣誉，不计分。最新一部发售满两年后，评级每季度下滑一点。名人按每位候选人单独判定，上表给的是单人概率。' },
+    { type: 'help', key: 'rating-help', title: '评级怎么算', text: core.RATING_MEDIA + '定期发布工作室评级，只看最近几部作品（资料片不算），越新的作品权重越高：每部主要看首周名次（按够得着的最高一级榜单，全国、国际榜分数更高），其次是玩家口碑；获奖只是荣誉，不计分。最新一部发售很久后，评级会逐渐下滑。名人按每位候选人单独判定，上表给的是单人概率。' },
     { type: 'section', title: '近三部作品的贡献' }
   ];
   if (!rating.books.length) blocks.push({ type: 'text', text: '还没有首周名次已定的作品。作品发售满一周后计入评级。', muted: true });
@@ -908,8 +907,7 @@ function teamMenu(state: any, sort = 'joined') {
         { text: allOvertime ? '取消全部加班' : '全部加班', action: 'overtime-all', icon: 'Moon', data: { enabled: !allOvertime } }
       ] },
       { type: 'staff', order: staffOrder(state, sort) },
-      { type: 'section', title: '团建' },
-      { type: 'help', key: 'outing-help', title: '团建怎么算', text: '团建是清掉「疲惫」「想走」的唯一办法：全队停工、工资照付，另付费用。天数越长，每个标签越可能被清掉（先清「想走」），但不保证；每人还可能觉醒正面性格或团队增益。团建期间暂停加班，回来后恢复。次数要攒，两次之间有间隔；「合群」的人更容易出效果。加班在员工页按人设置：产出更高，但缺陷更多，也会累积负面标签。' },
+      { type: 'section', title: '团建', help: '团建是清掉「疲惫」「想走」的唯一办法：全队停工、工资照付，另付费用。天数越长，每个标签越可能被清掉（先清「想走」），但不保证；每人还可能觉醒正面性格或团队增益。团建期间暂停加班，回来后恢复。次数要攒，两次之间有间隔；「合群」的人更容易出效果。加班在员工页按人设置：产出更高，但缺陷更多，也会累积负面标签。' },
       { type: 'lines', items: [
         ['可用次数', outing.charges + ' 次' + (outing.next !== null ? ' · ' + Math.max(0, outing.next - state.day) + ' 天后恢复 1 次' : '')],
         ['最早可去', offers[0].offer.earliest > state.day ? '还要 ' + (offers[0].offer.earliest - state.day) + ' 天' : '现在'],
@@ -953,9 +951,8 @@ function personMenu(state: any, id: string) {
       ...(boost ? [{ type: 'note', icon: 'Users', text: '团队增益「' + boost.name + '」' + core.BOOST_GRADES[(person.boostLevel || 1) - 1] + '：' + boost.text + (boostLive ? '当前项目 ' + crew + ' 人受益。' : person.stressTags.length ? '他现在状态不好，增益暂时失效。' : '同一项目已有更高档的同类增益或不在项目中，暂未生效。') + (person.boostLevel < 3 ? '在职越久或团建，可能升档。' : '') }] : []),
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人。' + (state.day - (person.joined || 0) < 30 ? '仍在磨合期，产出打八折。' : '已融入团队。') + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' ' + person.story : '') }] : []),
       ...(person.noOvertime ? [{ type: 'note', icon: 'Star', text: '他答应过屏幕外的你：再也不加班。' }] : []),
-      { type: 'section', title: '带教' },
+      { type: 'section', title: '带教', help: '带人的一方产出下降，被带的一方也会变慢；被带的那一项每天向带人一方靠拢，差得越多涨得越快，追上后自动出师，超过潜力后会明显变慢。两人需在同一个项目。' },
       { type: 'text', text: pair ? '正在由' + pair.mentor.name + '带' + core.ABILITIES.find(item => item.key === pair.ability)?.name + '。' : person.mentor ? '带教暂停：两人不在同一个项目。' : pupils.length ? '正在带' + pupils.map((other: any) => other.name).join('、') + '。' : '可以找能力更强的同事带他。', muted: !pair },
-      { type: 'help', key: 'mentor-help', title: '带教怎么算', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '；被带的那一项每天向带人一方靠拢，差得越多涨得越快，追上后自动出师，超过潜力后速度减半。两人需在同一个项目。' },
       { type: 'buttons', anchor: 'mentor', columns: person.mentor ? 2 : 1, items: [{ text: person.mentor ? '换一位带教' : '找人带他', action: 'menu', icon: 'GraduationCap', data: { menu: 'mentor', id: person.id } }, ...(person.mentor ? [{ text: '结束带教', action: 'mentor', icon: 'X', data: { id: person.id, mentor: null } }] : [])] },
       ...(person.stressTags.includes('leaving') && !person.founder ? [{ type: 'lines', title: '离职风险', items: [['每天提出离职的概率', Math.round(core.resignChance(state, person) * 100) + '%' + (state.overtime[person.id] ? '（加班中翻倍）' : ''), 'red'], ['说明', '停止加班可降到 ' + Math.round(core.RESIGN_CHANCE * 100) + '%。']] }] : []),
       ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', Math.round((person.stressChance || 0) * 100) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
@@ -979,7 +976,7 @@ function mentorMenu(state: any, id: string) {
   if (!person) return { title: '带教', blocks: [{ type: 'text', text: '员工不存在。' }] };
   // Every ability is listed, strongest first, so the player sees why an ability has nobody to learn from.
   const options = core.mentorOptions(state, person).sort((left: any, right: any) => person.abilities[right.ability] - person.abilities[left.ability]);
-  const blocks: any[] = [{ type: 'help', key: 'mentor-pick-help', title: '带教怎么算', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '。被带的那一项每天向带人一方靠拢，差得越多涨得越快、差得越少越慢，追上后自动出师；超过自己潜力后速度减半。带人的一方这一项只要比他高就行，两人需在同一个项目。' }];
+  const blocks: any[] = [{ type: 'help', key: 'mentor-pick-help', title: '带教怎么算', text: '带人的一方产出下降，被带的一方也会变慢。被带的那一项每天向带人一方靠拢，差得越多涨得越快、差得越少越慢，追上后自动出师；超过自己潜力后会明显变慢。带人的一方这一项只要比他高就行，两人需在同一个项目。' }];
   const missing: string[] = [];
   for (const option of options) {
     const name = core.ABILITIES.find(item => item.key === option.ability)?.name;
@@ -1001,7 +998,7 @@ function talentsMenu(state: any) {
   return {
     title: '猎头',
     blocks: [
-      { type: 'help', key: 'talents-help', title: '猎头怎么谈', text: '对手工作室的核心人物，以及正在找新东家的离职名人。猎头费 ' + money(core.POACH_FEE) + ' 不退；出价越高、你的星级比对方越高、对方势头越差，成功率越高。自由身没有东家挽留，三档出价成功率 55% / 70% / 85%，失败后 30 天就能再谈；在职的被拒后半年内不会再谈。离职约 ' + core.TALENT_FREE_DAYS + ' 天没人签就会被别家签走。' },
+      { type: 'help', key: 'talents-help', title: '猎头怎么谈', text: '对手工作室的核心人物，以及正在找新东家的离职名人。猎头费不退；出价越高、你的星级比对方越高、对方势头越差，成功率越高。自由身没有东家挽留，更容易谈成，失败后过一阵就能再谈；在职的被拒后很久不会再谈。离职一段时间没人签就会被别家签走。' },
       { type: 'choices', items: list.map((talent: any) => {
         const offer = core.poachOffer(state, talent.id, 1);
         const ability = core.ABILITIES.find(item => item.key === talent.primary)?.name;
@@ -1046,7 +1043,7 @@ function candidateMenu(state: any, id: string) {
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['潜力', core.potentialBand(person), potentialTone(core.potentialBand(person))], ['月薪', money(person.wage)], ['工作速度', String(person.speed)]] },
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人，入职前 30 天需要磨合。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' 还记得吗？' + person.story : '') }] : []),
       ...(core.personTags(person).length ? [{ type: 'tags', items: core.personTags(person) }] : []),
-      { type: 'buttons', anchor: 'hire', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', icon: 'UserPlus', data: { id: person.id }, disabled: reasons.length > 0, help: reasons.join('\n'), helpKey: 'hire:' + person.id }] }
+      { type: 'buttons', anchor: 'hire', items: [{ text: person.hired ? '已录用' : '录用 · 月薪 ' + money(person.wage), action: 'hire', icon: 'UserPlus', data: { id: person.id }, disabled: reasons.length > 0, help: reasons.join('\n'), helpTitle: '暂时不能录用', helpKey: 'hire:' + person.id }] }
     ]
   };
 }
@@ -1288,7 +1285,7 @@ function rankText(ranks: any) {
 }
 
 function exhibitionsMenu(state: any) {
-  const blocks: any[] = [{ type: 'help', key: 'expo-help', title: '展会怎么报名', text: '城市独立游戏展每年 3 月 30 日与 9 月 30 日，全国游戏展 5 月 30 日，国际游戏展 10 月 30 日，都提前七天截止报名。完成体验版才能报名，名次决定换来的关注。' }];
+  const blocks: any[] = [{ type: 'help', key: 'expo-help', title: '展会怎么报名', text: '城市、全国、国际三级展会按日历固定举行，报名在开幕前截止（市场页有倒计时）。完成体验版才能报名，名次决定换来的关注。' }];
   for (const entry of [...state.exhibitions].reverse()) {
     blocks.push({ type: 'section', title: core.dateText(entry.day) + ' · ' + core.TIERS[entry.tier ?? 0].expo + ' · 《' + entry.name + '》' });
     if (!entry.result) blocks.push({ type: 'text', text: '已报名，等待展会。期间继续完善会影响名次。' });
@@ -1350,7 +1347,7 @@ function industryMenu(state: any, id?: string) {
   } else {
     blocks.push(levelTabs);
     const awards = [...state.awards].reverse().filter((award: any) => (award.tier ?? 1) === level).slice(0, 9);
-    if (!awards.length) blocks.push({ type: 'help', key: 'awards-help', title: '评选怎么算', text: '评选每年两次：6 月 30 日评上半年，12 月 30 日评全年。获奖增加粉丝并上新闻，不计入媒体评级；成就以年度评选为准。' });
+    if (!awards.length) blocks.push({ type: 'help', key: 'awards-help', title: '评选怎么算', text: '评选每年两次：年中评上半年，年末评全年。获奖增加粉丝并上新闻，不计入媒体评级；成就以年度评选为准。' });
     for (const award of awards) {
       blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
       blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
