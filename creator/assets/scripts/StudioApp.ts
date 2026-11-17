@@ -1507,7 +1507,7 @@ export class StudioApp extends Component {
     }
     if (!core.planIssue(state, this.draft)) {
       const nominal = core.nominalWork(this.draft);
-      cursor += this.paragraph(body, '预估体量：' + core.SCALES[core.planScale(this.draft)].name + '（全部新做约 ' + Math.round(nominal) + ' 人日）。售价、市场与行情周期都按它算。', cursor, false, 0, inner, 13);
+      cursor += this.paragraph(body, '预估体量：' + core.SCALES[core.planScale(this.draft)].name + '（全部新做约 ' + Math.round(nominal) + ' 人日）', cursor, false, 0, inner, 13);
     }
     this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.openMenu('industry', 'market'));
     cursor += 46;

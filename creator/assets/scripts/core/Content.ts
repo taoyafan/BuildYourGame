@@ -112,23 +112,17 @@ function recruitMenu(state: any, id: string) {
     { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
     // Channels differ in who answers and in what they ask for, so each one gets its own line with
     // the wage band it actually pays instead of one shared note under the whole page.
-    ...channels.map(key => {
-      const band = core.channelWageRange(key);
-      return { type: 'text', text: core.CHANNELS[key].name + '：' + core.CHANNELS[key].text + '月薪约 ' + band.low.toFixed(1) + '–' + band.high.toFixed(1) + ' 万', muted: true };
-    })
+    { type: 'text', text: core.CHANNELS[channel].text + '月薪约 ' + core.channelWageRange(channel).low.toFixed(1) + '–' + core.channelWageRange(channel).high.toFixed(1) + ' 万', muted: true }
   ];
   if ((state.notices.layout || 0) > 0) blocks.push({ type: 'note', icon: 'Users', text: '近期裁员影响了公司的招聘吸引力，招聘费用已上浮。' });
   const lockedRoles = Object.keys(core.ROLES).filter((key: string) => !core.roleOpen(state, key));
   const lockedChannels = Object.keys(core.CHANNELS).filter((key: string) => !core.channelOpen(state, key));
-  if (lockedRoles.length) blocks.push({ type: 'text', text: lockedRoles.map((key: string) => core.ROLES[key].name).join('、') + '岗位在首作发售后开放。', muted: true });
-  if (lockedChannels.length) blocks.push({ type: 'text', text: lockedChannels.map((key: string) => core.CHANNELS[key].name + core.CHANNELS[key].lock).join('；') + '。', muted: true });
-  if (pool) {
-    blocks.push({ type: 'candidates', people: pool.people });
-    blocks.push({ type: 'text', text: '这批名单保持到第 ' + (pool.batch + 1) * 14 + ' 天，之后可以查看新一批。', muted: true });
-  }
+  const locks = [...(lockedRoles.length ? [lockedRoles.map((key: string) => core.ROLES[key].name).join('、') + '岗位在首作发售后开放。'] : []), ...lockedChannels.map((key: string) => core.CHANNELS[key].name + core.CHANNELS[key].lock + '。')];
+  if (locks.length) blocks.push({ type: 'help', key: 'recruit-locks', title: '未开放的岗位与渠道', text: locks.join('') });
+  if (pool) blocks.push({ type: 'candidates', people: pool.people });
   const fresh = !pool || pool.batch !== Math.floor((state.day - 1) / 14);
   if (fresh) blocks.push({ type: 'buttons', items: [{ text: (pool ? '查看新一批简历' : '发布招聘') + ' · ' + money(fee), action: 'recruit', data: { role, channel }, disabled: state.cash < fee, anchor: 'recruit' }] });
-  blocks.push({ type: 'text', text: '工位 ' + state.staff.length + ' / ' + core.seats(state) + '；工资按在职天数累计，月底结算。', muted: true });
+  blocks.push({ type: 'text', text: '工位 ' + state.staff.length + ' / ' + core.seats(state) + (pool ? ' · 名单保持到第 ' + (pool.batch + 1) * 14 + ' 天' : ''), muted: true });
   return { title: '招聘' + core.ROLES[role].name, blocks };
 }
 
@@ -246,7 +240,7 @@ export function planPreview(state: any, draft: any) {
     const price = core.rentPrice(line, core.levelFor(draft, line));
     return '\n' + core.MODULES[line].name + '：这条线累计租了 ' + record.count + ' 次，已付约 ' + money(record.paid) + '，自己做约需 ' + money(price.build);
   }).join('');
-  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines + '\n测试也要安排人做，六项都做完才到 100%。' + (draft.sequel ? '\n续作继承部分关注，但玩家期待更高。' : '');
+  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines;
 }
 
 // The moment the library grows: the bricks this job or title added or levelled up, and what opened up.
@@ -293,7 +287,7 @@ function defectsByDimension(project: any) {
 function newProjectMenu(state: any) {  return {
     title: '立项',
     blocks: [
-      { type: 'text', text: '选一个类型与体量。体量决定工作量和售价空间，不是质量分；类型决定各项要做多少工作、玩家多看重哪一项。' },
+      { type: 'text', text: '类型决定各项工作量，以及玩家最看重哪一项。', muted: true },
       { type: 'lines', items: Object.keys(core.TYPES).map(key => [core.TYPES[key].name + ' · ' + core.TYPES[key].audience, '主要看 ' + core.audienceFocus(key)]) }
     ]
   };
@@ -325,10 +319,9 @@ function projectMenu(state: any, id?: string) {
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
         { type: 'section', title: '六项评分（点开可看详情并分工）' },
         { type: 'dimensions', items: rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-        { type: 'note', icon: 'Info', text: '五项内容都做完就算完成；模块没有单独的测试工序，稳定分按待修缺陷算。' },
         { type: 'actions', items: [
-          { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '一个人同一时间只做一个项目。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-          { text: '新项目', detail: '同时也能开自己的作品，人要在两个项目之间分配。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
+          { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+          { text: '新项目', detail: '', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
           ...jobAction(state)
         ] }
       ]
@@ -353,24 +346,21 @@ function projectMenu(state: any, id?: string) {
     { type: 'radar', metrics, genre: project.type, projectId: project.id },
     { type: 'section', title: '六项评分（点开可看详情并分工）' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-    { type: 'note', icon: 'Info', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。' },
-    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '共投入 ' + money(project.promoted) : '未推广']] },
-    ...(updates.work > 0.001 ? [{ type: 'text', text: '沿用模块自动更新质量：还需约 ' + updates.work.toFixed(1) + ' 人日，已计入分工与预计工期。', muted: true }] : []),
-    ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做。在「调整分工」里把人分过去，否则作品永远做不完。' }] : []),
+    { type: 'help', key: 'project-help', title: '怎样算做完', text: '六项都做完才到 100%，测试也要安排人；测得越满，「稳定」越高。做满后参与的人会自动去修已发现的缺陷。' },
+    { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '共投入 ' + money(project.promoted) : '未推广'], ...(updates.work > 0.001 ? [['模块自动更新', '还需约 ' + updates.work.toFixed(1) + ' 人日']] : []), [core.TYPES[project.type].audience + '最看重', core.audienceFocus(project.type)]] },
+    ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
     ...(order.length > 1 ? [
-      { type: 'text', text: '当前第 ' + (rank + 1) + ' 优先。' },
       { type: 'buttons', columns: 2, items: [
-        { text: '提高优先级', action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
+        { text: '提高优先级 · 现第 ' + (rank + 1), action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
         { text: '降低优先级', action: 'priority', data: { id: project.id, priority: rank + 1 }, disabled: rank === order.length - 1 }
       ] }
     ] : []),
-    { type: 'note', icon: 'Users', text: core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type) },
     { type: 'actions', items: [
-      { text: '调整分工', detail: '谁做哪几项工作；做满后自动修复已发现的缺陷。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-      { text: '合成图', detail: '这一作由哪些模块组成，哪些已有、哪些还在做。', icon: 'Wrench', action: 'menu', data: { menu: 'compose', id: 'project:' + project.id } },
+      { text: '调整分工', detail: '谁做哪几项工作', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+      { text: '合成图', detail: '这一作的模块组成', icon: 'Wrench', action: 'menu', data: { menu: 'compose', id: 'project:' + project.id } },
       { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '共投入 ' + money(project.promoted) + ' · 报名展会' : '推广 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
-      { text: '再开一个项目', detail: '一个人同一时间只属于一个项目。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
+      { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
       ...jobAction(state)
     ] },
     { type: 'checklist', items: core.launchChecklist(state, project) },
@@ -409,7 +399,7 @@ function launchConfirmMenu(state: any, id?: string) {
 function patchProjectMenu(state: any, project: any) {
   const book = state.catalog.find((item: any) => item.id === project.id);
   const live = core.liveProjects(state);
-  if (!project.patch) return { title: '《' + project.name + '》', blocks: [{ type: 'text', text: '这部作品已发售，没有进行中的补丁。' }, { type: 'actions', items: [{ text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }, { text: '再开一个项目', detail: '一个人同一时间只属于一个项目。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }, ...jobAction(state)] }] };
+  if (!project.patch) return { title: '《' + project.name + '》', blocks: [{ type: 'text', text: '这部作品已发售，没有进行中的补丁。' }, { type: 'actions', items: [{ text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }, { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }, ...jobAction(state)] }] };
   const forecast = core.patchForecast(state, project);
   const crew = state.staff.filter((person: any) => core.personWorks(state, project, person).length);
   const rework = project.patch.rework ? core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : '';
@@ -430,16 +420,16 @@ function patchProjectMenu(state: any, project: any) {
       ] },
       { type: 'radar', metrics: core.projectMetrics(project), genre: project.type, projectId: project.id },
       ...(book ? [{ type: 'lines', items: [['当前口碑', book.reviewScore.toFixed(1)], ['最近一日销量', book.lastDayUnits + ' 份']] }] : []),
-      { type: 'text', text: '补丁的范围在开工时定下：只修开工时已报告的缺陷' + (rework ? '，再返工' + rework : '') + '。之后新报告的问题留给下一个补丁。做完自动上线。', muted: true },
+      { type: 'help', key: 'patch-run-help', title: '补丁怎么算', text: '范围在开工时定下：只修开工时已报告的缺陷' + (rework ? '，再返工' + rework : '') + '。之后新报告的问题留给下一个补丁；做完自动上线。' },
       ...(order.length > 1 ? [{ type: 'buttons', columns: 2, items: [
         { text: '提高优先级', action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
         { text: '降低优先级', action: 'priority', data: { id: project.id, priority: rank + 1 }, disabled: rank === order.length - 1 }
       ] }] : []),
       { type: 'actions', items: [
-        { text: '安排补丁人手', detail: '补丁只有一份工作清单，人员只分参与或不参与。', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-        { text: '立即上线', detail: '把已完成的部分先发出去，没修完的问题留在待修列表。', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
+        { text: '安排补丁人手', detail: '谁参与补丁', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+        { text: '立即上线', detail: '先发出已完成的部分', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
         { text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } },
-        { text: '再开一个项目', detail: '一个人同一时间只属于一个项目。', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+        { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
       ] }
     ]
   };
@@ -450,14 +440,14 @@ function jobAction(state: any) {
   if (state.office < 1) return [];
   const offers = core.jobBoard(state);
   const busy = state.projects.some((project: any) => project.job);
-  return [{ text: '接委托', detail: busy ? '手上还有一份委托。' : offers.length ? offers.length + ' 份委托 · 报酬固定，做完模块也留给你' : '这个月的委托都接完了。', icon: 'Briefcase', action: 'menu', data: { menu: 'jobs' }, disabled: busy || !offers.length }];
+  return [{ text: '接委托', detail: busy ? '手上还有一份委托。' : offers.length ? offers.length + ' 份委托' : '这个月的委托都接完了。', icon: 'Briefcase', action: 'menu', data: { menu: 'jobs' }, disabled: busy || !offers.length }];
 }
 
 function jobsMenu(state: any) {
   const offers = core.jobBoard(state);
   return { title: '接委托', blocks: [
-    { type: 'text', text: '给别人做一块模块，报酬固定，做完到账；模块也留在你的模块库里。每月换一批。点开可以先看详情。', muted: true },
-    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 点开看详情', action: 'menu', data: { menu: 'job', id: offer.id } })) }
+    { type: 'text', text: '报酬固定，模块留在你的模块库；每月换一批。', muted: true },
+    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client, action: 'menu', data: { menu: 'job', id: offer.id } })) }
   ] };
 }
 
@@ -521,7 +511,7 @@ function patchMenu(state: any, routeId: string) {
   for (const key of core.CONTENT_KEYS) {
     const plan = core.patchPlan(state, project, key, sync);
     const name = core.DIMENSIONS.find(item => item.key === key)?.name;
-    items.push({ text: (fix.targets ? '修缺陷 + 返工' : '返工') + name, detail: '当前 ' + Math.round(metrics.dimensions[key]) + ' 分 · ' + crewDays(state, plan.work) + '；返工只替换比返工者能力低的成果', icon: 'Hammer', action: 'patch-start', data: { id, rework: key, sync } });
+    items.push({ text: (fix.targets ? '修缺陷 + 返工' : '返工') + name, detail: '当前 ' + Math.round(metrics.dimensions[key]) + ' 分 · ' + crewDays(state, plan.work), icon: 'Hammer', action: 'patch-start', data: { id, rework: key, sync } });
   }
   const updates: any[] = preview.any ? [
     { type: 'section', title: '可同步的更新' },
@@ -538,7 +528,7 @@ function patchMenu(state: any, routeId: string) {
   return {
     title: '开补丁',
     blocks: [
-      { type: 'text', text: '补丁像一个小项目：开工时定下范围，单独安排人手和优先级，做完自动上线。玩家报告的只是他们碰到的问题，开工后新报告的留给下一个补丁。模块库里的改进也只在补丁上线时才进到这部作品。', muted: true },
+      { type: 'help', key: 'patch-start-help', title: '补丁怎么算', text: '补丁像一个小项目：开工时定下范围，单独安排人手和优先级，做完自动上线。玩家报告的只是他们碰到的问题，开工后新报告的留给下一个补丁。返工只替换比返工者能力低的成果；模块库里的改进也只在补丁上线时才进到这部作品。' },
       { type: 'lines', items: [['已报告待修', fix.targets + ' 项'], ['综合评分', metrics.overall.toFixed(0)]] },
       ...updates,
       { type: 'actions', items }
@@ -765,7 +755,7 @@ function marketMenu(state: any, id?: string) {
     { text: '展会与媒体', detail: '历届参展名次与报道。', icon: 'Award', action: 'menu', data: { menu: 'exhibitions' } }
   ] });
   if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版后才能报名展会。', muted: true });
-  else blocks.push({ type: 'text', text: '三级展会都可以报名：级别越高报名费越贵、对手越强，作品不够突出时几乎换不来关注。', muted: true });
+  else blocks.push({ type: 'help', key: 'market-expo-help', title: '展会怎么选', text: '三级展会都可以报名：级别越高报名费越贵、对手越强，作品不够突出时几乎换不来关注。' });
   if (project && !project.released) {
     blocks.push({ type: 'section', title: '推广《' + project.name + '》' });
     const status = core.promoStatus(state, project);
@@ -813,8 +803,8 @@ function bookMenu(state: any, id: string) {
       { type: 'actions', anchor: 'book-ops', items: [
         project?.patch
           ? { text: '查看进行中的补丁', detail: '修复与返工进度、人手和预计上线日。', icon: 'Hammer', action: 'menu', data: { menu: 'project', id }, anchor: 'patch-book' }
-          : { text: '开补丁', detail: (project ? project.defects.filter((defect: any) => defect.found && !defect.fixed).length : 0) + ' 项玩家报告的缺陷待修；也可以返工某一项做更新。', icon: 'Hammer', action: 'menu', data: { menu: 'patch', id }, disabled: !project, anchor: 'patch-book' },
-        { text: book.sale ? '关闭促销' : '开启促销', detail: '统一 ' + (core.DISCOUNTS[0] * 10) + ' 折；开启后系统按剩余需求决定何时开始，关闭立即恢复原价。', icon: 'Coins', action: 'sale', data: { id, enabled: !book.sale }, disabled: state.day - book.released > 540, anchor: 'sale-toggle', tag: book.sale ? '促销中' : '' },
+          : { text: '开补丁', detail: (project ? project.defects.filter((defect: any) => defect.found && !defect.fixed).length : 0) + ' 项玩家报告的缺陷待修', icon: 'Hammer', action: 'menu', data: { menu: 'patch', id }, disabled: !project, anchor: 'patch-book' },
+        { text: book.sale ? '关闭促销' : '开启促销', detail: '统一 ' + (core.DISCOUNTS[0] * 10) + ' 折，系统择机开始', icon: 'Coins', action: 'sale', data: { id, enabled: !book.sale }, disabled: state.day - book.released > 540, anchor: 'sale-toggle', tag: book.sale ? '促销中' : '' },
         ...(!book.parentId ? [{ text: '资料片（DLC）· ' + money(4 + book.scale * 2), detail: '作为新项目立项，独立开发、核算与发售。', icon: 'Gift', action: 'dlc', data: { id }, disabled: dlcs.length >= 2 || state.cash < 4 + book.scale * 2 || state.day - book.released > 540 }] : []),
         { text: '开发续作', detail: book.reviewScore >= 70 ? '继承部分关注，玩家期待更高。' : '好评达到 70 分才能开发续作。', icon: 'Sparkles', action: 'sequel', data: { id }, disabled: book.reviewScore < 70 }
       ] },
@@ -898,9 +888,7 @@ function staffOrder(state: any, sort: string) {
 
 function teamMenu(state: any, sort = 'joined') {
   const channel = bestChannel(state);
-  const hasTeammate = state.staff.some((person: any) => !person.founder);
   const openRoles = Object.keys(core.ROLES).filter((role: string) => core.roleOpen(state, role));
-  const lockedRoles = Object.keys(core.ROLES).filter((role: string) => !core.roleOpen(state, role));
   const sample = state.staff.find((person: any) => !person.tags.some((tag: any) => tag.key === 'social')) || state.staff[0];
   const offers = core.OUTING_DAYS.map((days: number) => ({ days, offer: core.outingOffer(state, days), chance: sample ? core.outingChances(sample, days) : { clear: 0, awaken: 0 } }));
   const outing = state.outing;
@@ -912,7 +900,6 @@ function teamMenu(state: any, sort = 'joined') {
     blocks: [
       { type: 'lines', items: [['工位', state.staff.length + ' / ' + core.seats(state) + '（' + core.OFFICES[state.office].name + '）'], ['月开支（整月 · 含房租）', money(core.monthlyCost(state))]] },
       ...(state.office < 1 ? [{ type: 'text', text: '自家只有一个工位。交付委托、租下' + core.OFFICES[1].name + '后才能招人。', muted: true }] : [{ type: 'buttons', items: [{ text: '招聘', action: 'menu', icon: 'UserPlus', data: { menu: 'recruit', id: weakestRole(state) + ':' + channel }, anchor: 'recruit' }] }]),
-      ...(lockedRoles.length ? [{ type: 'text', text: lockedRoles.map((role: string) => core.ROLES[role].name).join('、') + '岗位在首作发售后开放。', muted: true }] : []),
       ...(state.office >= 2 ? [{ type: 'actions', items: [{ text: '猎头', detail: '向对手的名人开高薪挖人。', icon: 'Briefcase', action: 'menu', data: { menu: 'talents' } }] }] : []),
       ...(state.staff.length > 1 ? [
         { type: 'dropdown', key: 'team-sort', label: '成员排序', text: sortLabel(sort), value: sort, items: sortOptions(), anchor: 'team-sort' }
@@ -921,7 +908,6 @@ function teamMenu(state: any, sort = 'joined') {
         { text: allOvertime ? '取消全部加班' : '全部加班', action: 'overtime-all', icon: 'Moon', data: { enabled: !allOvertime } }
       ] },
       { type: 'staff', order: staffOrder(state, sort) },
-      ...(hasTeammate ? [] : [{ type: 'text', text: '首作一个人就能做完，招人是为了补上自己干不了的那一头。', muted: true }]),
       { type: 'section', title: '团建' },
       { type: 'help', key: 'outing-help', title: '团建怎么算', text: '团建是清掉「疲惫」「想走」的唯一办法：全队停工、工资照付，另付费用。天数越长，每个标签越可能被清掉（先清「想走」），但不保证；每人还可能觉醒正面性格或团队增益。团建期间暂停加班，回来后恢复。次数要攒，两次之间有间隔；「合群」的人更容易出效果。加班在员工页按人设置：产出更高，但缺陷更多，也会累积负面标签。' },
       { type: 'lines', items: [
@@ -994,19 +980,18 @@ function mentorMenu(state: any, id: string) {
   // Every ability is listed, strongest first, so the player sees why an ability has nobody to learn from.
   const options = core.mentorOptions(state, person).sort((left: any, right: any) => person.abilities[right.ability] - person.abilities[left.ability]);
   const blocks: any[] = [{ type: 'help', key: 'mentor-pick-help', title: '带教怎么算', text: '带人的一方产出 ×' + core.MENTOR_SLOW + '，被带的一方 ×' + core.MENTEE_SLOW + '。被带的那一项每天向带人一方靠拢，差得越多涨得越快、差得越少越慢，追上后自动出师；超过自己潜力后速度减半。带人的一方这一项只要比他高就行，两人需在同一个项目。' }];
+  const missing: string[] = [];
   for (const option of options) {
     const name = core.ABILITIES.find(item => item.key === option.ability)?.name;
+    if (!option.mentors.length) { missing.push(name + ' ' + Math.round(person.abilities[option.ability])); continue; }
     blocks.push({ type: 'section', title: name + ' · 现在 ' + Math.round(person.abilities[option.ability]) });
-    if (!option.mentors.length) {
-      blocks.push({ type: 'text', text: '同一项目里没有这一项比' + person.name + '高的人。可以招一位更强的人，或把更强的同事调到同一项目。', muted: true });
-      continue;
-    }
     blocks.push({ type: 'choices', items: option.mentors.slice(0, 3).map((mentor: any) => {
       const gap = mentor.abilities[option.ability] - person.abilities[option.ability];
       const monthly = Math.min(gap, 30 * core.mentorDaily(gap));
-      return { text: mentor.name + ' · ' + name + ' ' + Math.round(mentor.abilities[option.ability]), detail: '预计第一个月 +' + monthly.toFixed(1) + '，两人这段时间都变慢', action: 'mentor', data: { id: person.id, mentor: mentor.id, ability: option.ability } };
+      return { text: mentor.name + ' · ' + name + ' ' + Math.round(mentor.abilities[option.ability]), detail: '第一个月约 +' + monthly.toFixed(1), action: 'mentor', data: { id: person.id, mentor: mentor.id, ability: option.ability } };
     }) });
   }
+  if (missing.length) blocks.push({ type: 'text', text: '同一项目里没人比' + person.name + '强：' + missing.join('、') + '。', muted: true });
   return { title: '找人带' + person.name, blocks };
 }
 
@@ -1132,7 +1117,7 @@ function libraryMenu(state: any, id?: string) {
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];
-  blocks.push({ type: 'text', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一级' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按等级收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。'), muted: true });
+  blocks.push({ type: 'help', key: 'library-help', title: '模块怎么更新', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一级' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按等级收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。') });
   return { title: '模块库', blocks };
 }
 
@@ -1186,7 +1171,7 @@ function financeMenu(state: any) {
       { type: 'lines', items: [['现金', money(state.cash)], ['本月收入', money(ledger.income)], ['本月已开支', money(monthSpent(state))], ['月开支（整月 · 工资 + 房租）', money(core.monthlyCost(state))], ['其中已累计应付', money(state.accrued)]] },
       // Wages and rent accrue one day at a time, so a month with a mid-month hire, dismissal, raise or
       // move settles short of the full-month figure — that is the bill, not a calculation error.
-      { type: 'text', text: '月底按当月实际在职天数结算：月中招人、裁人、调薪或搬办公室，都只从当天的比例开始计入，所以账单会比「月开支」少一些。', muted: true },
+      { type: 'help', key: 'finance-help', title: '月底怎么结算', text: '工资与房租按在职天数累计，月底结算：月中招人、裁人、调薪或搬办公室，都只从当天的比例开始计入，所以账单会比「月开支」少一些。' },
       { type: 'section', title: '办公室' },
       { type: 'lines', items: [['现在', core.OFFICES[state.office].name + ' · ' + core.seats(state) + ' 个工位 · 月租 ' + money(core.OFFICES[state.office].rent)], ...(nextOffice ? [['下一档', nextOffice.name + ' · ' + nextOffice.seats + ' 个工位 · 月租 ' + money(nextOffice.rent)]] : [])] },
       ...(nextOffice && moveCost !== null ? [{ type: 'buttons', anchor: 'move', items: [{ text: (state.office === 1 ? '搬进' : '扩建为') + nextOffice.name + ' · ' + money(moveCost), action: 'move', icon: 'Building2', disabled: state.cash < moveCost }] }, { type: 'text', text: '搬家费 ' + money(moveCost) + '，之后月开支约 ' + money(core.monthlyCost(state) - core.OFFICES[state.office].rent + nextOffice.rent) + '。', muted: true }] : nextOffice ? [{ type: 'text', text: '交付委托后会租下' + nextOffice.name + '。', muted: true }] : [{ type: 'text', text: '已经是最大的办公室了。', muted: true }]),
@@ -1199,7 +1184,7 @@ function financeMenu(state: any) {
       ] },
       { type: 'section', title: '作品履历' },
       { type: 'lines', items: [['已发售作品', state.catalog.length + ' 部'], ['年度获奖', wins + ' 次']] },
-      ...(state.catalog.length ? [{ type: 'catalog' }] : [{ type: 'text', text: '作品发售后，在这里查看销量、回款、复盘与参与的人。', muted: true }]),
+      ...(state.catalog.length ? [{ type: 'catalog' }] : []),
       { type: 'section', title: '存档与设置' },
       { type: 'buttons', columns: 3, items: [
         { text: '存档管理', action: 'menu', data: { menu: 'slots' } },
@@ -1303,7 +1288,7 @@ function rankText(ranks: any) {
 }
 
 function exhibitionsMenu(state: any) {
-  const blocks: any[] = [{ type: 'text', text: '城市独立游戏展每年 3 月 30 日与 9 月 30 日，全国游戏展 5 月 30 日，国际游戏展 10 月 30 日，都提前七天截止报名。完成体验版才能报名，名次决定换来的关注。', muted: true }];
+  const blocks: any[] = [{ type: 'help', key: 'expo-help', title: '展会怎么报名', text: '城市独立游戏展每年 3 月 30 日与 9 月 30 日，全国游戏展 5 月 30 日，国际游戏展 10 月 30 日，都提前七天截止报名。完成体验版才能报名，名次决定换来的关注。' }];
   for (const entry of [...state.exhibitions].reverse()) {
     blocks.push({ type: 'section', title: core.dateText(entry.day) + ' · ' + core.TIERS[entry.tier ?? 0].expo + ' · 《' + entry.name + '》' });
     if (!entry.result) blocks.push({ type: 'text', text: '已报名，等待展会。期间继续完善会影响名次。' });
@@ -1365,7 +1350,7 @@ function industryMenu(state: any, id?: string) {
   } else {
     blocks.push(levelTabs);
     const awards = [...state.awards].reverse().filter((award: any) => (award.tier ?? 1) === level).slice(0, 9);
-    if (!awards.length) blocks.push({ type: 'text', text: '评选每年两次：6 月 30 日评上半年，12 月 30 日评全年。获奖增加粉丝并上新闻，不计入媒体评级；成就以年度评选为准。' });
+    if (!awards.length) blocks.push({ type: 'help', key: 'awards-help', title: '评选怎么算', text: '评选每年两次：6 月 30 日评上半年，12 月 30 日评全年。获奖增加粉丝并上新闻，不计入媒体评级；成就以年度评选为准。' });
     for (const award of awards) {
       blocks.push({ type: 'section', title: '第 ' + award.year + ' 年 · ' + award.category });
       blocks.push({ type: 'note', icon: 'Trophy', text: award.winner + (award.own ? ' · 本社获奖，粉丝增加' : ' 获奖') });
