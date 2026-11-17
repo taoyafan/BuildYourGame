@@ -13,13 +13,13 @@ H5 产物需通过本地 HTTP 服务打开，不能双击 HTML。抖音发布前
 ## 源码
 
 - [assets/scripts/core/Planning.ts](assets/scripts/core/Planning.ts)：基础经济模型与轮换排期的共用公式与参数；[MarketCycle.ts](assets/scripts/core/MarketCycle.ts) 处理体量切换。
-- [assets/scripts/core/Modules.ts](assets/scripts/core/Modules.ts)：模块、槽位与出身数据。
+- [assets/scripts/core/Modules.ts](assets/scripts/core/Modules.ts)：模块、六条轴、四个大类与出身数据。
 - [assets/scripts/core/Studio.ts](assets/scripts/core/Studio.ts)：经营规则，不依赖引擎，可在 Node 中用临时脚本模拟。
 - [assets/scripts/core/Content.ts](assets/scripts/core/Content.ts)：菜单、下一步建议与首作教程步骤。
 - [assets/scripts/StudioApp.ts](assets/scripts/StudioApp.ts)：原生节点界面与操作，教程按锚点计算高亮位置。
 - [assets/scripts/ui/Art.ts](assets/scripts/ui/Art.ts)：代码绘制办公室、人物与作品画面。
 - [assets/scripts/Platform.ts](assets/scripts/Platform.ts)：微信 `wx`、抖音 `tt`、H5 的存储、剪贴板与安全区。
-- 图标与音效由 [tools/prepare.cjs](tools/prepare.cjs) 在构建前生成，不联网下载。
+- 图标、音效与背景音乐由 [tools/prepare.cjs](tools/prepare.cjs) 在构建前生成，不联网下载，也不进 git；换机器后运行 `prepare:assets` 即可。
 
 ## 存档
 

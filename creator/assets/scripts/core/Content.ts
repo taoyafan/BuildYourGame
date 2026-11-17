@@ -84,7 +84,7 @@ export function advice(state: any, projectId?: string) {
   const idle = pipeline.rows.filter((row: any) => row.days === null && row.remaining > 0);
   if (idle.length) return { title: '《' + project.name + '》有评分项没人做', text: `${idle.map((row: any) => core.DIMENSIONS.find(d => d.key === row.key)?.name).join('、')}还没有人负责。`, menu: 'project', id: project.id };
   if (state.staff.some((person: any) => person.stressTags.length)) return { title: '有人状态不对', text: '负面标签正在拉低产出，团建能清掉它们，但要全队停工。', menu: 'team' };
-  if (project.kind === 'game' && project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，了解玩家偏好。', menu: 'testing', id: project.id };
+  if (project.kind === 'game' && project.progress >= 55 && !project.test && core.playtestOffer(state, project).available) return { title: '《' + project.name + '》招募玩家试玩体验版', text: '试玩能发现缺陷，看看玩家买不买账。', menu: 'testing', id: project.id };
   if (pipeline.bottlenecks.length) {
     const names = pipeline.bottlenecks.map((key: string) => core.bottleneckName(key));
     const days = Math.max(...pipeline.bottlenecks.map((key: string) => pipeline.rows.find((row: any) => row.key === key)?.days || 0));
@@ -194,6 +194,10 @@ export function menu(state: any, route: any, slots: any[] = []) {
       const tested = event.id === 'feedback' ? core.activeProject(state, event.project) : null;
       if (tested?.test) return { title: event.title, blocks: [...testReport(state, tested), choices] };
       if (event.id === 'dream') return { title: '那天夜里', blocks: [{ type: 'dream', lines: dreamLines(state) }, choices] };
+      if (event.id === 'story') {
+        const founder = state.staff.find((person: any) => person.founder);
+        return { title: event.title, blocks: [{ type: 'story', id: founder?.id || 'founder', look: founder?.look, name: founder?.name || '创始人', text: storyLine(state, event.key) }, choices] };
+      }
       if (event.id === 'outing') return { title: event.title, blocks: [...outingReport(state, (state.outing.history || [])[0]), choices] };
       if (event.id === 'job') return { title: event.title, blocks: [{ type: 'text', text: event.text }, ...gainedBlocks(state, event), choices] };
       // 发售瞬间既是决策页，也是这一作的成绩单：封面、首发到账、玩家评价和复盘入口。
@@ -357,7 +361,7 @@ function projectMenu(state: any, id?: string) {
     ] : []),
     { type: 'actions', items: [
       { text: '调整分工', detail: '谁做哪几项工作', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
-      { text: '试玩', detail: demo ? (project.test ? '最近一次 ' + project.test.score.toFixed(1) + ' 分 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、听评价') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
+      { text: '试玩', detail: demo ? (project.test ? '最近一次新发现 ' + (project.test.found ?? 0) + ' 项缺陷 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、看玩家买不买账') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '共投入 ' + money(project.promoted) + ' · 报名展会' : '推广 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
       { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
       ...jobAction(state)
@@ -438,15 +442,18 @@ function patchProjectMenu(state: any, project: any) {
 function jobAction(state: any) {
   if (state.office < 1) return [];
   const offers = core.jobBoard(state);
-  const busy = state.projects.some((project: any) => project.job);
-  return [{ text: '接委托', detail: busy ? '手上还有一份委托。' : offers.length ? offers.length + ' 份委托' : '这个月的委托都接完了。', icon: 'Briefcase', action: 'menu', data: { menu: 'jobs' }, disabled: busy || !offers.length }];
+  const fresh = core.freshJobs(state);
+  return [{ text: '接委托', detail: offers.length ? offers.length + ' 份委托' + (fresh ? ' · ' + fresh + ' 份新' : '') : '暂时没有委托', icon: 'Briefcase', action: 'menu', data: { menu: 'jobs' }, disabled: !offers.length, tag: fresh ? '新' : '' }];
 }
+
+const jobDaysLeft = (state: any, offer: any) => core.JOB_EXPIRY - (state.day - offer.day);
 
 function jobsMenu(state: any) {
   const offers = core.jobBoard(state);
   return { title: '接委托', blocks: [
-    { type: 'help', key: 'jobs-help', title: '委托说明', text: '报酬固定，模块留在你的模块库；每月换一批。' },
-    { type: 'choices', items: offers.map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client, action: 'menu', data: { menu: 'job', id: offer.id } })) }
+    { type: 'help', key: 'jobs-help', title: '委托说明', text: '报酬固定，交付时一次到账，模块留在你的模块库。可以同时接几份，让不同的人各做一份。新委托隔几天来一份，放久了会被别人接走。' },
+    ...(offers.length ? [] : [{ type: 'text', text: '暂时没有委托。', muted: true }]),
+    { type: 'choices', items: [...offers].reverse().map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 还剩 ' + jobDaysLeft(state, offer) + ' 天', tag: offer.seen ? '' : '新', action: 'menu', data: { menu: 'job', id: offer.id } })) }
   ] };
 }
 
@@ -455,7 +462,7 @@ function jobsMenu(state: any) {
 function jobDetailMenu(state: any, id: string) {
   const offer = core.jobBoard(state).find((item: any) => item.id === id);
   if (!offer) return { title: '委托详情', blocks: [
-    { type: 'text', text: '这份委托已经不在了，每月会换一批。' },
+    { type: 'text', text: '这份委托已经不在了。' },
     { type: 'buttons', items: [{ text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }] }
   ] };
   const module = core.MODULES[offer.line];
@@ -474,7 +481,6 @@ function jobDetailMenu(state: any, id: string) {
       if (dims[dim] !== undefined) dims[dim] += amount;
     }
   }
-  const busy = state.projects.some((project: any) => project.job);
   return {
     title: '委托详情',
     blocks: [
@@ -482,11 +488,12 @@ function jobDetailMenu(state: any, id: string) {
       { type: 'lines', items: [
         ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 级' : '')],
         ['报酬', money(offer.pay) + '（交付时一次到账）'],
-        ['工作量', crewDays(state, work)]
+        ['工作量', crewDays(state, work)],
+        ['有效期', '还剩 ' + jobDaysLeft(state, offer) + ' 天']
       ] },
       { type: 'workload', values: dims, crew: state.staff.length },
       { type: 'buttons', items: [
-        { text: busy ? '手上还有一份委托' : '接下这份委托', action: 'take-job', data: { id: offer.id }, disabled: busy },
+        { text: '接下这份委托', action: 'take-job', data: { id: offer.id } },
         { text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }
       ] }
     ]
@@ -644,33 +651,27 @@ function assignMenu(state: any, projectId: string) {
   return { title: '分工', blocks };
 }
 
-// The playtest report: score, comparison with the previous run, per-dimension findings and history.
+// The playtest report: what the last round found, how the players took it, and every round so far.
 // Shared by the 试玩 page and the feedback popup so the two never drift apart.
 function testReport(state: any, project: any) {
-  const known = core.visibleMetrics(project).known;
+  const test = project.test;
+  if (!test) return [{ type: 'text', text: '还没有试玩过。', muted: true }];
+  const value = (amount: any, unit = '') => amount === undefined || amount === null ? '—' : amount + unit;
   const blocks: any[] = [
-    { type: 'stats', tone: 'plain', items: [['已知待修', known + ' 项'], ['累计试玩', (project.testCount || 0) + ' 人次'], ['试玩轮数', (project.tests || 0) + ' 轮']] }
+    { type: 'text', text: core.dateText(test.day) + ' · ' + test.count + ' 位玩家', muted: true },
+    { type: 'stats', tone: 'plain', items: [['新发现缺陷', value(test.found, ' 项')], ['新增关注', value(test.gain, ' 人')], ['每 100 个关注', test.buy ? '约 ' + test.buy + ' 个会买' : '—']] },
+    { type: 'lines', items: [['本作当下需求', test.demand || '—']] },
+    { type: 'help', key: 'test-help', title: '怎么看试玩结果', text: '「每 100 个关注约几个会买」按作品目前做到的样子估算，试玩人数越少越不准。需求是此刻市场对这类作品的热度，到发售时可能变化。' }
   ];
-  if (!project.test) {
-    blocks.push({ type: 'text', text: '试玩能碰到测试漏掉的缺陷。' });
-    return blocks;
-  }
-  blocks.push({ type: 'result', label: '最近一次试玩评分', value: project.test.score.toFixed(1), note: project.test.count + ' 人 · ' + core.dateText(project.test.day) + ' · 新发现 ' + project.test.found + ' 项缺陷' });
-  // Comparing with the previous run is the whole point of a retest: a bare score cannot tell you
-  // whether the last round of work helped.
   const history = project.testLog || [];
   if (history.length > 1) {
-    const last = history[history.length - 1];
     const previous = history[history.length - 2];
-    const delta = last.score - previous.score;
-    const base = '（' + core.dateText(previous.day) + ' ' + previous.score.toFixed(1) + ' 分）';
-    blocks.push({ type: 'text', text: Math.abs(delta) < 0.05 ? '与上次' + base + '持平。' : '比上次' + base + (delta > 0 ? '高 ' : '低 ') + Math.abs(delta).toFixed(1) + ' 分。' });
-  }
-  blocks.push({ type: 'section', title: '逐项评价' });
-  blocks.push({ type: 'feedback', items: project.test.findings });
-  if (history.length > 1) {
+    if (previous.found !== undefined && test.found !== undefined) {
+      const delta = test.found - previous.found;
+      blocks.push({ type: 'text', text: delta === 0 ? '新发现的缺陷和上一轮一样多。' : '新发现的缺陷比上一轮' + (delta > 0 ? '多 ' : '少 ') + Math.abs(delta) + ' 项。' });
+    }
     blocks.push({ type: 'section', title: '试玩历史' });
-    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => [core.dateText(entry.day) + ' · ' + entry.count + ' 人', entry.score.toFixed(1) + ' 分']) });
+    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => [core.dateText(entry.day) + ' · ' + entry.count + ' 人', '缺陷 ' + value(entry.found) + ' · 约 ' + value(entry.buy) + '/100 会买 · 关注 +' + value(entry.gain)]) });
   }
   return blocks;
 }
@@ -703,6 +704,28 @@ function outingsMenu(state: any) {
   }) }] };
 }
 
+// The founder's own words at turning points. The opening and the first release depend on where the
+// founder came from; the rest are the same for everyone.
+const STORY: any = {
+  opening: {
+    code: '辞职那天，我只带走了一台旧笔记本。第一单是替别人写个 2D 引擎——先把它跑顺，再做我自己的游戏。',
+    design: '本子里攒了一百多个点子，一个都没做出来过。先替别人把分支剧情的结构搭好，攒点钱，也攒点手感。',
+    art: '画了这么多年别人的角色，这回想画自己的。第一单是一套像素人物——画完它，我的游戏就有主角了。'
+  },
+  firstRelease: {
+    code: '第一部作品上架了。代码里还有好多地方想重写，不过——它能跑，而且有人在玩。',
+    design: '玩家走的路线，有一半是我没想到的。原来设计出来的东西，到了别人手里会长出新样子。',
+    art: '看到玩家把我画的角色截图发出来，比收到钱还高兴。……当然，钱也要。'
+  },
+  breakEven: '账本第一次翻成了正数。不是赚了多少，而是——这条路走得通。',
+  moved: '搬家那天，大家把旧桌子也搬来了。地方大了，可我还是习惯坐在靠窗那个位置。',
+  departure: '今天有人收拾东西走了。一起熬过的夜不会白熬，但我得想想，是哪里没做好。'
+};
+function storyLine(state: any, key: string) {
+  const line = STORY[key];
+  return typeof line === 'string' ? line : line?.[state.founder] || line?.code || '';
+}
+
 // The founder's dream speaks to the person holding the phone, using the real clock and real play time.
 function dreamLines(state: any) {
   const now = new Date();
@@ -725,12 +748,17 @@ function testingMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   if (!project || project.released) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把体验版做出来。' }] };
   const offer = core.playtestOffer(state, project);
-  const blocks: any[] = testReport(state, project);
-  blocks.push({ type: 'section', title: '招募试玩' });
-  blocks.push({ type: 'buttons', anchor: 'tests', items: [
-    { text: '试玩一轮 · ' + offer.players + ' 人 · ' + money(offer.cost), action: 'test', data: { id: project.id }, disabled: !offer.available, anchor: 'test-30' }
-  ] });
-  blocks.push({ type: 'text', text: offer.available ? '可以多试几轮。' : offer.reason || '先处理当前决策。', muted: true });
+  const [low, high] = core.playtestGain(offer.players);
+  const blocks: any[] = [
+    { type: 'section', title: '招募试玩' },
+    { type: 'lines', items: [['费用', money(offer.cost)], ['人数', offer.players + ' 人'], ['预计新增关注', '约 ' + low + '–' + high + ' 人']] },
+    { type: 'buttons', anchor: 'tests', items: [
+      { text: '试玩一轮 · ' + money(offer.cost), action: 'test', data: { id: project.id }, disabled: !offer.available, anchor: 'test-30' }
+    ] },
+    ...(offer.available ? [] : [{ type: 'text', text: offer.reason || '先处理当前决策。', muted: true }]),
+    { type: 'section', title: '最近一轮' },
+    ...testReport(state, project)
+  ];
   return { title: '试玩', blocks };
 }
 
@@ -1071,7 +1099,7 @@ function brickOf(state: any, line: string, extra: any = {}) {
     : info.level ? (tiers ? info.level + ' 级 · ' : '') + '用过 ' + info.uses + ' 次 · 质量 ' + Math.round(info.quality) + (info.next > 0 ? ' · 下一级做了 ' + Math.round(info.next * 100) + '%' : '')
     : info.next > 0 ? '做了 ' + Math.round(info.next * 100) + '%' : '还没有';
   return {
-    module: line, name: module.name, axis: module.axis, glyph: module.glyph,
+    module: line, name: module.name, field: module.field, glyph: module.glyph,
     level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : info.next > 0.001 ? 'partial' : 'missing',
     // How much of this tier is done, so a half-built module reads as half coloured and half grey.
     progress: info.level ? 1 : info.next,
@@ -1102,14 +1130,14 @@ const editableBrick = (state: any, line: string, extra: any = {}) => brickOf(sta
 // brick, so every line is shown directly: the name already says the style, and each card keeps its
 // own colour instead of mixing two styles on one card.
 function libraryMenu(state: any, id?: string) {
-  // Tabs are the same slots the plan form lists, so a genre and a theme never share a page.
-  const slots = core.SLOTS.filter((item: any) => core.slotOpen(state, item));
+  // Tabs are the same axes the plan form lists, so a genre and a theme never share a page.
+  const axes = core.AXES.filter((item: any) => core.axisOpen(state, item));
   const [tab] = String(id || '').split(':');
-  const slot = slots.find((item: any) => item.key === tab) || slots.find((item: any) => item.axis === tab) || slots[0];
-  const tabs = { type: 'tabs', items: slots.map((item: any) => ({ text: item.name, route: { menu: 'library', id: item.key }, active: item === slot })) };
+  const axis = axes.find((item: any) => item.key === tab) || axes.find((item: any) => item.field === tab) || axes[0];
+  const tabs = { type: 'tabs', items: axes.map((item: any) => ({ text: item.name, route: { menu: 'library', id: item.key }, active: item === axis })) };
   // Only learned lines appear here: a locked line is not a choice yet, so showing it as a grey brick
   // would be indistinguishable from a learned line that simply has not been built.
-  const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].slot === slot.key && core.moduleOpen(state, line));
+  const lines = Object.keys(core.MODULES).filter(line => core.MODULES[line].axis === axis.key && core.moduleOpen(state, line));
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];
@@ -1167,6 +1195,7 @@ function financeMenu(state: any) {
         { text: '重新创业', action: 'menu', data: { menu: 'restart' } }
       ] },
       { type: 'toggle', text: '音效', value: state.sound, action: 'sound' },
+      { type: 'toggle', text: '音乐', value: state.music !== false, action: 'music' },
       // The build number lives here instead of on the studio header: it is a "which build am I on"
       // question you ask once, not something worth a line of the main screen every session.
       { type: 'foot', text: '版本 v' + core.VERSION }
@@ -1341,14 +1370,14 @@ const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0', '#
 function marketBlocks(state: any, id?: string) {
   const [, groupText = '', tag = ''] = String(id || '').split(':');
   const groups = core.heatGroups(state);
-  const group = groups.find((item: any) => item.key === groupText) || groups.find((item: any) => item.axis === core.lensOf(state)) || groups[0];
+  const group = groups.find((item: any) => item.key === groupText) || groups.find((item: any) => item.field === core.lensOf(state)) || groups[0];
   const route = (key: string, nextTag: string) => ({ menu: 'industry', id: ['market', key, nextTag].join(':') });
   const lines = group.tags.map((name: string, index: number) => {
     const series = core.heatSeries(state, name);
     return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.tagHeat(series[series.length - 1].value).label, shown: !tag || tag === name };
   });
   return [
-    ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name + (core.activeMarketAxes(state).includes(item.axis) ? ' · 关注' : ''), route: route(item.key, ''), active: item.key === group.key })) }] : []),
+    ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name + (core.activeMarketFields(state).includes(item.field) ? ' · 关注' : ''), route: route(item.key, ''), active: item.key === group.key })) }] : []),
     { type: 'heat', lines, start: state.day - 360, end: state.day, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },
     { type: 'text', text: '近一年各选项的需求冷热，越高越热、越低越拥挤；只回顾，不预告。作品发售后，档案里写着它赶上的行情。', muted: true }
   ];
@@ -1530,7 +1559,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       }
       return null;
     }
-    case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：会碰到一些测试漏掉的缺陷，也会指出这类玩家最在意的评分项。可以试多轮，覆盖越高碰到的越少。', ack: 'testing' };
+    case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：会碰到一些测试漏掉的缺陷，带来一些关注，还能看出关注的人里大约多少会买。可以试多轮，覆盖越高碰到的越少。', ack: 'testing' };
     case 'market':
       if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '先投一笔小的，几天后看带来多少关注，再决定要不要追加。不投也可以。', ack: 'promotions' };
       return null;

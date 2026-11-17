@@ -54,6 +54,7 @@ export class StudioApp extends Component {
   // Which open project the main screen currently speaks for when several run at once.
   private watching: string | null = null;
   private audio: AudioSource;
+  private music: AudioSource | null = null;
   private sounds = new Map<string, AudioClip>();
   private stage: Node;
   private effects: Node;
@@ -151,12 +152,22 @@ export class StudioApp extends Component {
     for (const name of ['click', 'income', 'launch', 'breakeven']) resources.load('sounds/' + name, AudioClip, (error, clip) => {
       if (!error && this.isValid) this.sounds.set(name, clip);
     });
+    this.music = this.canvas.addComponent(AudioSource);
+    resources.load('sounds/bgm', AudioClip, (error, clip) => {
+      if (error || !this.isValid || !this.music) return;
+      this.music.clip = clip;
+      this.music.loop = true;
+      this.music.volume = 0.35;
+      this.syncMusic();
+    });
     if (!this.state.company) this.routes = [{ menu: 'setup' }];
     else if (this.state.event) this.routes = [{ menu: 'event' }];
     this.resize();
     screen.on('window-resize', this.resize, this);
     engineGame.on(Game.EVENT_HIDE, this.background, this);
     platform.onHide(() => { if (this.isValid) this.background(); });
+    engineGame.on(Game.EVENT_SHOW, this.syncMusic, this);
+    platform.onShow(() => { if (this.isValid) this.syncMusic(); });
     // The storage warning stays until dismissed (no timer), so it is not lost while the player is still
     // reading the opening screen; normal notices still expire on their own.
     if (this.storageIssue) this.render();
@@ -165,6 +176,16 @@ export class StudioApp extends Component {
   onDestroy() {
     screen.off('window-resize', this.resize, this);
     engineGame.off(Game.EVENT_HIDE, this.background, this);
+    engineGame.off(Game.EVENT_SHOW, this.syncMusic, this);
+  }
+
+  // Music follows the setting; browsers only let it start after a touch, so touches retry it too.
+  private syncMusic() {
+    const music = this.music;
+    if (!music?.clip) return;
+    const on = this.state?.music !== false;
+    if (on && !music.playing) music.play();
+    else if (!on && music.playing) music.pause();
   }
 
   private resize() {
@@ -191,6 +212,7 @@ export class StudioApp extends Component {
 
   private background() {
     this.activeTouches.clear();
+    this.music?.pause();
     // Leaving the app always closes the soft keyboard; do not keep the input guard armed.
     this.editing = false;
     this.playing = false;
@@ -203,6 +225,7 @@ export class StudioApp extends Component {
 
   private touchStarted(event: EventTouch) {
     this.activeTouches.add(event.getID());
+    this.syncMusic();
   }
 
   private touchFinished(event: EventTouch) {
@@ -513,7 +536,7 @@ export class StudioApp extends Component {
       if (batched) shapes.push(() => drawAvatar(pen, ox + 25, oy + 25, 12, options.avatar, options.avatarLook));
       else drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar, options.avatarLook);
     }
-    if (options.brick) drawBrick(this.canvasNode(node, 'Brick', 8, 10, 30, 30).pen, 0, 0, 30, core.AXES[options.brick.axis].color, options.brick.glyph, 1, 'have');
+    if (options.brick) drawBrick(this.canvasNode(node, 'Brick', 8, 10, 30, 30).pen, 0, 0, 30, core.FIELDS[options.brick.field].color, options.brick.glyph, 1, 'have');
     const left = options.icon || options.avatar || options.brick ? 44 : 14;
     // A person card carries a small ability radar on the right; the text column makes room for it.
     const side = options.radar ? 70 : 0;
@@ -840,6 +863,7 @@ export class StudioApp extends Component {
         this.openMenu(menu, id);
       });
       this.navIcon(node, lock ? 'Lock' : icon, (cellWidth - 22) / 2, 5, 22, lock ? colors.line : colors.green);
+      if (menu === 'project' && !lock && core.freshJobs(state)) new Pen(this.box(node, 'Dot', cellWidth / 2 + 8, 2, 10, 10).addComponent(Graphics)).circle(5, 5, 5, colors.danger);
       this.text(node, title, 0, 32, cellWidth, 18, 11, lock ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
       this.anchors.set('nav-' + menu, node);
     });
@@ -1089,7 +1113,7 @@ export class StudioApp extends Component {
     ], () => this.openMenu('project', project.id));
     y += Math.max(height, 164) + 6;
     const insight = core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type);
-    this.anchors.set('insight', this.text(body, insight + (project.test ? ' · 试玩 ' + project.test.score.toFixed(1) + ' 分' : ''), 0, y, inner, 18, 11, colors.muted).node);
+    this.anchors.set('insight', this.text(body, insight, 0, y, inner, 18, 11, colors.muted).node);
     return y + 26;
   }
 
@@ -1418,13 +1442,13 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const state = this.state;
     this.draft.suggested = this.draft.suggested || content.randomTitle(state);
-    if (!this.draft.slots) this.draft = { ...core.recommendPlan(state), ...this.draft, slots: core.recommendPlan(state).slots };
+    if (!this.draft.axes) this.draft = { ...core.recommendPlan(state), ...this.draft, axes: core.recommendPlan(state).axes };
     this.input(body, this.draft.suggested, this.draft.name, 0, 48, value => { this.draft.name = value; });
     let cursor = 64;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
-    // Every slot comes filled in (what the company has, or a recommendation) and folded into one line;
-    // the player opens only the slot they want to change. The first title's gameplay is the origin's.
+    // Every axis comes filled in (what the company has, or a recommendation) and folded into one line;
+    // the player opens only the axis they want to change. The first title's gameplay is the origin's.
     const first = core.firstGameCore(state);
     const open = this.draft.open || (this.draft.open = {});
     const rent: string[] = this.draft.rent || (this.draft.rent = []);
@@ -1437,14 +1461,14 @@ export class StudioApp extends Component {
       if (info.level > 0 || info.next > 0) return { need, text: '补到 ' + need + ' 级', tone: colors.amber, brick: 'partial', progress: Math.max(0, Math.min(1, (info.level + info.next) / Math.max(1, need))) };
       return { need, text: '新做', tone: colors.amber, brick: 'missing', progress: 0 };
     };
-    for (const slot of core.SLOTS) {
-      if (!core.slotOpen(state, slot)) continue;
-      const chosen: string[] = this.draft.slots?.[slot.key] || [];
-      const fixed = !!this.draft.sequel || (slot.key === 'core' && !!first);
-      const expanded = !!open[slot.key];
-      const color = core.AXES[slot.axis].color;
-      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）' + (slot.key === 'core' ? ' · ' + core.TYPES[core.MODULES[key].type].name : '')).join('、') || '未选';
-      const row = this.box(body, 'Slot', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
+    for (const axis of core.AXES) {
+      if (!core.axisOpen(state, axis)) continue;
+      const chosen: string[] = this.draft.axes?.[axis.key] || [];
+      const fixed = !!this.draft.sequel || (axis.key === 'core' && !!first);
+      const expanded = !!open[axis.key];
+      const color = core.FIELDS[axis.field].color;
+      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）' + (axis.key === 'core' ? ' · ' + core.TYPES[core.MODULES[key].type].name : '')).join('、') || '未选';
+      const row = this.box(body, 'Axis', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
       new Pen(this.box(row, 'Rim', 0, 0, inner, 52).addComponent(Graphics)).frame(0, 0, inner, 52, expanded ? colors.green : colors.line, expanded ? 2 : 1, 10);
       chosen.slice(0, 2).forEach((key: string, index: number) => {
         const module = core.MODULES[key];
@@ -1452,14 +1476,14 @@ export class StudioApp extends Component {
         drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, module.glyph, status.need, status.brick, false, status.progress);
       });
       const textLeft = 8 + Math.max(1, Math.min(2, chosen.length)) * 34 + 4;
-      this.text(row, slot.name + (this.draft.sequel && fixed ? ' · 沿用原作' : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
+      this.text(row, axis.name + (this.draft.sequel && fixed ? ' · 沿用原作' : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
       this.text(row, summary, textLeft, 26, inner - textLeft - 40, 20, 11, colors.muted);
       this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
-      this.clickable(row, () => { open[slot.key] = !expanded; this.render(); });
+      this.clickable(row, () => { open[axis.key] = !expanded; this.render(); });
       cursor += 60;
       if (!expanded) continue;
-      const unlocked = Object.keys(core.MODULES).filter(key => core.MODULES[key].slot === slot.key && core.moduleOpen(state, key));
-      // A locked slot still opens like any other; its list just holds the one choice already picked,
+      const unlocked = Object.keys(core.MODULES).filter(key => core.MODULES[key].axis === axis.key && core.moduleOpen(state, key));
+      // A fixed axis still opens like any other; its list just holds the one choice already picked,
       // so there is nothing to switch to. No grey 固定 label and no explanation popup.
       const options = fixed ? unlocked.filter(key => chosen.includes(key)) : unlocked;
       const cell = (inner - 16) / 3;
@@ -1469,7 +1493,7 @@ export class StudioApp extends Component {
         const status = statusOf(key);
         // An art title keeps one visual style: mixing pixel and hand-drawn libraries is not a choice.
         const pickedStyle = chosen.map(line => core.MODULES[line].style).find(Boolean) || '';
-        const styleClash = slot.key === 'art' && !!pickedStyle && !!module.style && module.style !== pickedStyle;
+        const styleClash = axis.key === 'art' && !!pickedStyle && !!module.style && module.style !== pickedStyle;
         const blocked = core.lineBlocked(this.draft, key) || (styleClash ? '与已选风格不同' : '');
         const x = (index % 3) * (cell + 8);
         const y = cursor + Math.floor(index / 3) * 92;
@@ -1479,14 +1503,14 @@ export class StudioApp extends Component {
         this.text(node, module.name, 4, 46, cell - 8, 18, 11, blocked ? colors.muted : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.text(node, blocked || '选 ' + status.need + ' 级 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.clickable(node, () => {
-          // A line that needs something on another axis cannot go in; say why instead of doing nothing.
+          // A line that needs something in another field cannot go in; say why instead of doing nothing.
           if (blocked && !on) { this.notify(module.name + blocked + '。'); return; }
-          const list = (this.draft.slots[slot.key] || []).slice();
-          const max = core.slotMax(state, slot);
-          if (on) { if (list.length > slot.min) list.splice(list.indexOf(key), 1); }
+          const list = (this.draft.axes[axis.key] || []).slice();
+          const max = core.axisMax(state, axis);
+          if (on) { if (list.length > axis.min) list.splice(list.indexOf(key), 1); }
           else if (max === 1) list.splice(0, list.length, key);
           else if (list.length < max) list.push(key);
-          this.draft.slots = { ...this.draft.slots, [slot.key]: list };
+          this.draft.axes = { ...this.draft.axes, [axis.key]: list };
           this.draft.rent = rent.filter(line => core.planLines(this.draft).includes(line));
           this.render();
         });
@@ -1518,7 +1542,7 @@ export class StudioApp extends Component {
       }
     }
     this.anchors.set('project-form', this.box(body, 'FormAnchor', 0, formTop, inner, cursor - formTop - 8));
-    // One press sets every line to the same level; each slot can still change its own lines above.
+    // One press sets every line to the same level; each axis can still change its own lines above.
     const openLevels = core.SCALES.map((_scale: any, index: number) => index + 1).filter((level: number) => core.levelOpen(state, level));
     if (openLevels.length > 1 && !this.draft.sequel) {
       this.text(body, '全部模块设为', 0, cursor, inner, 24, 15, colors.ink, true);
@@ -1633,11 +1657,6 @@ export class StudioApp extends Component {
         });
         return y + 58;
       }
-      case 'result':
-        this.text(parent, block.label, 0, y, width, 22, 13, colors.muted);
-        this.text(parent, block.value, 0, y + 24, width, 50, 38, colors.green, true);
-        y += 80;
-        return block.note ? y + this.paragraph(parent, block.note, y, true, 0, width, 12) : y;
       case 'buttons': {
         const start = y;
         // Wide menus used to stack every action as a full-width row, pushing real content far below
@@ -1733,6 +1752,19 @@ export class StudioApp extends Component {
         this.text(parent, block.text, 68, y + 8, width - 68, 40, 14, colors.ink, true);
         return y + 64;
       }
+      case 'story': {
+        // RPG-style speech: the speaker's portrait and name on the left, what they say in a bubble beside it.
+        const size = 64;
+        drawAvatar(this.canvasNode(parent, 'Speaker', 0, y, size, size).pen, size / 2, size / 2, 28, block.id, block.look);
+        this.text(parent, block.name, 0, y + size + 2, size, 18, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+        const left = size + 12;
+        const bubble = this.box(parent, 'Speech', left, y, width - left, 40);
+        const height = Math.max(size + 20, this.paragraph(bubble, block.text, 12, false, 14, width - left - 28, 14) + 24);
+        bubble.getComponent(UITransform).setContentSize(width - left, height);
+        if (this.shapePen && (bubble as any).inBatch) this.shapePen.rect((bubble as any).ax, (bubble as any).ay, width - left, height, colors.paper, 12);
+        else new Pen(bubble.addComponent(Graphics)).rect(0, 0, width - left, height, colors.paper, 12);
+        return y + height + 14;
+      }
       case 'ability-radar': {
         const values = this.abilityValues(block.abilities);
         const labels = core.ABILITIES.map(ability => ability.name);
@@ -1750,7 +1782,7 @@ export class StudioApp extends Component {
         block.items.forEach((item: any, index: number) => {
           const x = pitch * (index % columns) + (pitch - size) / 2;
           const top = Math.floor(index / columns) * (size + 40);
-          drawBrick(pen, x, top, size, core.AXES[item.axis]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff, item.progress ?? 1);
+          drawBrick(pen, x, top, size, core.FIELDS[item.field]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff, item.progress ?? 1);
           this.text(node, item.name, pitch * (index % columns) + 2, top + size + 2, pitch - 4, 30, 10, item.status === 'missing' ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
           // A shelf opens in place instead of showing a card.
           if (item.open) {
@@ -1813,13 +1845,6 @@ export class StudioApp extends Component {
         this.anchors.set('checklist', this.box(parent, 'ChecklistAnchor', 0, start, width, y - start));
         return y + 4;
       }
-      case 'feedback':
-        for (const item of block.items) {
-          this.text(parent, item.title + ' · ' + Number(item.value).toFixed(0), 0, y, width, 24, 15, colors.ink, true);
-          y += 28;
-          y += this.paragraph(parent, item.text, y, true, 0, width, 13);
-        }
-        return y;
       case 'catalog':
         this.state.catalog.forEach((book: any, index: number) => {
           const balance = book.received - book.invested;
@@ -2166,7 +2191,7 @@ export class StudioApp extends Component {
     const width = this.width - 40;
     if (item.kind === 'unlock') {
       const module = item.line ? core.MODULES[item.line] : null;
-      const color = core.AXES[module ? module.axis : item.axis]?.color || colors.green;
+      const color = core.FIELDS[module ? module.field : item.field]?.color || colors.green;
       // The height is only known after the text has been laid out. Drawing the background at the
       // original 40px and then resizing the node left its lower half transparent, so the body text
       // sat on the page instead of on the bubble. Paint the paper at the final height instead.
@@ -2197,12 +2222,20 @@ export class StudioApp extends Component {
     }
     const big = ['breakeven', 'office', 'record', 'warning'].includes(item.kind);
     const banner = this.box(this.effects, 'Banner', 20, this.top + 98, width, 70, item.kind === 'warning' ? colors.danger : big ? colors.amber : colors.night, 14, 240);
-    this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins', warning: 'Award' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
+    this.image(banner, 'icons/' + (({ breakeven: 'Trophy', office: 'Building2', record: 'Star', units: 'TrendingUp', settle: 'Coins', warning: 'Award', job: 'Briefcase' } as any)[item.kind] || 'Sparkles'), 16, 24, 22, 22, '#ffffff');
     this.text(banner, item.title, 50, 12, width - 64, 24, 16, '#ffffff', true);
     this.text(banner, item.text, 50, 36, width - 64, 20, 12, '#fff3d6');
     banner.setScale(0.9, 0.9, 1);
     const opacity = banner.addComponent(UIOpacity);
     opacity.opacity = 0;
+    // A banner that points somewhere opens that page when tapped.
+    if (item.route) this.clickable(banner, () => {
+      Tween.stopAllByTarget(banner);
+      Tween.stopAllByTarget(opacity);
+      banner.destroy();
+      this.celebrating = false;
+      this.openMenu(item.route.menu, item.route.id);
+    });
     tween(banner).to(0.25, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
     tween(opacity).to(0.2, { opacity: 255 }).delay(big ? 2.6 : 1.8).to(0.3, { opacity: 0 }).call(() => {
       banner.destroy();
@@ -2394,6 +2427,7 @@ export class StudioApp extends Component {
     this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
+    if (menu === 'jobs' || menu === 'job') { this.state = core.markJobsSeen(this.state); this.save(); }
     this.routes.push({ menu, id, dim });
     this.render();
   }
@@ -2453,7 +2487,7 @@ export class StudioApp extends Component {
     if (this.state.event) return;
     this.routes = [];
     this.resumeAfterMenu = false;
-    this.playing = core.liveProjects(this.state).length > 0 && event.id !== 'cash' && !this.state.over;
+    this.playing = core.liveProjects(this.state).length > 0 && event.id !== 'cash' && event.key !== 'opening' && !this.state.over;
     this.elapsed = 0;
     this.render();
     if (this.playing) this.notify('继续经营中，随时可以暂停。');
@@ -2494,6 +2528,7 @@ export class StudioApp extends Component {
         case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
         case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员开始加班。' : '全员恢复正常工作。'); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
+        case 'music': this.apply(core.setMusic(this.state, !!data.value)); this.syncMusic(); break;
         case 'exhibition': this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。'); break;
         case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), '更新已开始制作。'); break;
         case 'sale': this.apply(core.setSale(this.state, data.id, !!data.enabled, data.floor), data.enabled ? '已开启促销，系统会按余量决定打折时机。' : '已关闭促销，恢复原价销售。'); break;
@@ -2501,7 +2536,7 @@ export class StudioApp extends Component {
           const book = this.state.catalog.find((item: any) => item.id === data.id);
           if (!book) throw new Error('原作不存在。');
           this.openMenu('new-project');
-          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, slots: JSON.parse(JSON.stringify(book.slots)), rent: [...(book.rent || [])], lineLevels: { ...(book.lineLevels || {}) }, sequel: book.id };
+          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, axes: JSON.parse(JSON.stringify(book.axes)), rent: [...(book.rent || [])], lineLevels: { ...(book.lineLevels || {}) }, sequel: book.id };
           this.render();
           break;
         }

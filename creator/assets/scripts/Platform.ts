@@ -73,5 +73,8 @@ export const platform = {
   },
   onHide(callback: () => void) {
     api?.onHide?.(callback);
+  },
+  onShow(callback: () => void) {
+    api?.onShow?.(callback);
   }
 };

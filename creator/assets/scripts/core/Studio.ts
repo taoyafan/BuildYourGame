@@ -1,16 +1,16 @@
 // Pure business rules without engine imports, so they can also run in Node for balance checks.
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
-import { MODULES, SLOTS, AXES, ORIGINS, SECOND_MECHANIC } from './Modules';
+import { MODULES, AXES, FIELDS, ORIGINS, SECOND_MECHANIC } from './Modules';
 import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
 import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, promotionReach, launchAttention, salesStep, simulateTitle } from './Planning';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
-export { MODULES, SLOTS, AXES, ORIGINS };
+export { MODULES, AXES, FIELDS, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.25';
+export const VERSION = '0.4.26';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -275,26 +275,26 @@ export function random(state: any) {
 // The market leans by tags. Each tag has a demand around 1: every release carrying it (the player's or a
 // rival's) crowds it a little, and on quiet days it drifts back. The genre's own tag reads as the trend.
 export const ALL_TAGS: string[] = Array.from(new Set(Object.values(MODULES).flatMap((module: any) => module.tags || [])));
-// Which tags compete with each other: genres, mechanics, themes, and each other slot on its own.
+// Which tags compete with each other: genres, mechanics, themes, and each other axis on its own.
 const TAG_GROUP: any = {};
-for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_GROUP[tag]) TAG_GROUP[tag] = module.slot === 'core' ? 'genre' : module.slot;
+for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_GROUP[tag]) TAG_GROUP[tag] = module.axis === 'core' ? 'genre' : module.axis;
 const TAG_RELEASE = 0.07;
 // The tag a title's genre reads as; old saves without a genre line fall back to the audience.
-export const genreTag = (project: any) => MODULES[(project?.slots?.core || [])[0]]?.tags?.[0] || ({ action: '动作', story: '叙事', think: '策略' } as any)[project?.type] || '';
-// The category of each tag: genres, mechanics and themes are gameplay, styles are art, and so on.
-export const TAG_AXIS: any = {};
-for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_AXIS[tag]) TAG_AXIS[tag] = module.axis;
+export const genreTag = (project: any) => MODULES[(project?.axes?.core || [])[0]]?.tags?.[0] || ({ action: '动作', story: '叙事', think: '策略' } as any)[project?.type] || '';
+// The field of each tag: genres, mechanics and themes are gameplay, styles are art, and so on.
+export const TAG_FIELD: any = {};
+for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_FIELD[tag]) TAG_FIELD[tag] = module.field;
 
-// One category at a time, on a calendar clock independent of hiring and release success.
+// One field at a time, on a calendar clock independent of hiring and release success.
 export const LENS_ORDER = ['design', 'art', 'audio', 'tech'];
 export const LENS_ABILITY: any = { design: 'creativity', art: 'picture', audio: 'sound', tech: 'fluidity' };
 export const lensOf = (state: any) => LENS_ORDER[state.marketCycle?.index || 0];
 const cycleClocks = (cycle: any): any[] => cycle.clocks || [cycle];
-export const activeMarketAxes = (state: any): string[] => state.marketCycle ? cycleClocks(state.marketCycle).map(clock => LENS_ORDER[clock.index]) : ['design'];
+export const activeMarketFields = (state: any): string[] => state.marketCycle ? cycleClocks(state.marketCycle).map(clock => LENS_ORDER[clock.index]) : ['design'];
 
 function chooseDirections(state: any, cycle: any) {
-  const axis = LENS_ORDER[cycle.index];
-  const groups = Array.from(new Set(ALL_TAGS.filter(tag => TAG_AXIS[tag] === axis).map(tag => TAG_GROUP[tag])));
+  const field = LENS_ORDER[cycle.index];
+  const groups = Array.from(new Set(ALL_TAGS.filter(tag => TAG_FIELD[tag] === field).map(tag => TAG_GROUP[tag])));
   cycle.hot = {};
   for (const group of groups) {
     const tags = ALL_TAGS.filter(tag => TAG_GROUP[tag] === group);
@@ -310,7 +310,7 @@ function chooseDirections(state: any, cycle: any) {
 function ensureMarketCycle(state: any) {
   if (state.marketCycle) {
     const c = state.marketCycle;
-    if (!Array.isArray(c.reviews)) c.reviews = (c.seen || []).filter((axis: string) => state.catalog.some((book: any) => !book.parentId && book.firstRanks && (book.tags || []).some((tag: string) => TAG_AXIS[tag] === axis)));
+    if (!Array.isArray(c.reviews)) c.reviews = (c.seen || []).filter((field: string) => state.catalog.some((book: any) => !book.parentId && book.firstRanks && (book.tags || []).some((tag: string) => TAG_FIELD[tag] === field)));
     c.dualReviews = c.dualReviews || 0;
     c.parallel = c.parallel || 1;
     return;
@@ -347,7 +347,7 @@ function reviewMarket(state: any, book: any) {
   if (book.parentId) return;
   ensureMarketCycle(state);
   const c = state.marketCycle;
-  c.reviews = Array.from(new Set([...c.reviews, ...(book.marketAxes || [])]));
+  c.reviews = Array.from(new Set([...c.reviews, ...(book.marketFields || [])]));
   if (book.marketParallel === 2) c.dualReviews += 1;
   const next = marketComplexity(c.reviews.length, c.dualReviews);
   if (next <= c.parallel) return;
@@ -365,7 +365,7 @@ function reviewMarket(state: any, book: any) {
   }
   c.clocks = clocks;
   c.parallel = next;
-  announce(state, { kind: 'unlock', title: '看懂了更多市场变化', text: next === 2 ? '四类都经历过发售复盘了。接下来可以同时观察两类行情，各类仍有完整的研发窗口。' : '已经完成两次双类行情复盘。现在各类行情独立变化，每作可以按需要组合。', axis: lensOf(state), amount: 0 });
+  announce(state, { kind: 'unlock', title: '看懂了更多市场变化', text: next === 2 ? '四类都经历过发售复盘了。接下来可以同时观察两类行情，各类仍有完整的研发窗口。' : '已经完成两次双类行情复盘。现在各类行情独立变化，每作可以按需要组合。', field: lensOf(state), amount: 0 });
 }
 
 function marketCycleDay(state: any) {
@@ -381,16 +381,16 @@ function marketCycleDay(state: any) {
         do { clock.index = (clock.index + 1) % LENS_ORDER.length; } while (occupied.includes(clock.index));
       }
       clock.reported = false;
-      const axis = LENS_ORDER[clock.index];
-      if (!c.seen.includes(axis)) c.seen.push(axis);
+      const field = LENS_ORDER[clock.index];
+      if (!c.seen.includes(field)) c.seen.push(field);
       chooseDirections(state, clock);
-      if (c.parallel === 1) announce(state, { kind: 'unlock', title: '行业关注变化', text: `最近大家开始更多讨论${AXES[axis].name}。新闻和榜单会突出这一类的表现。`, axis, amount: 0 });
+      if (c.parallel === 1) announce(state, { kind: 'unlock', title: '行业关注变化', text: `最近大家开始更多讨论${FIELDS[field].name}。新闻和榜单会突出这一类的表现。`, field, amount: 0 });
     }
     const warm = clock.activated === undefined || state.day - clock.activated >= span.rise;
     if (!clock.reported && warm && state.day - clock.from >= span.rise) {
       clock.reported = true;
       const tags = Object.values(clock.hot).join('、');
-      news(state, state.focus || 0, false, `${AXES[LENS_ORDER[clock.index]].name}成为近期话题`, `近期${tags}方向受到关注。同类新作的表现值得留意，作品品质与宣传仍会影响销量。`, null, true);
+      news(state, state.focus || 0, false, `${FIELDS[LENS_ORDER[clock.index]].name}成为近期话题`, `近期${tags}方向受到关注。同类新作的表现值得留意，作品品质与宣传仍会影响销量。`, null, true);
     }
   }
   if (c.clocks) Object.assign(c, c.clocks[0]);
@@ -416,7 +416,7 @@ export function tagDemand(state: any, tag: string) {
   const raw = ((state.tags || {})[tag] ?? 1) / Math.max(0.1, mean);
   const crowd = clamp((raw - 1) * ROTATION.crowdWeight, -ROTATION.crowd, ROTATION.crowd);
   const c = state.marketCycle;
-  const clock = c && cycleClocks(c).find(item => LENS_ORDER[item.index] === TAG_AXIS[tag]);
+  const clock = c && cycleClocks(c).find(item => LENS_ORDER[item.index] === TAG_FIELD[tag]);
   if (!clock) return round(1 + clamp(crowd, -ROTATION.quiet, ROTATION.quiet));
   const warm = clock.activated === undefined ? 1 : clamp((state.day - clock.activated) / rotationSpan(c.scale).rise, 0, 1);
   const strength = rotationPhase(c.scale, state.day - clock.from).strength * warm;
@@ -438,11 +438,11 @@ function tagDay(state: any) {
     state.tags[tag] = Math.round(clamp(value + (1 - value) * 0.012 + (random(state) - 0.5) * 0.012, 0.55, 1.45) * 1000) / 1000;
   }
 }
-// Average within each category, then use fixed weights: adding a quiet tag cannot dilute the focus.
+// Average within each field, then use fixed weights: adding a quiet tag cannot dilute the focus.
 export function tagFactor(state: any, tags: string[], scale = 0) {
   const unique = Array.from(new Set(tags));
-  const axes = LENS_ORDER.map(axis => {
-    const groups = Array.from(new Set(unique.filter(tag => TAG_AXIS[tag] === axis).map(tag => TAG_GROUP[tag])));
+  const fields = LENS_ORDER.map(field => {
+    const groups = Array.from(new Set(unique.filter(tag => TAG_FIELD[tag] === field).map(tag => TAG_GROUP[tag])));
     if (!groups.length) return 0;
     const changes = groups.map(group => {
       const matching = unique.filter(tag => TAG_GROUP[tag] === group);
@@ -450,15 +450,15 @@ export function tagFactor(state: any, tags: string[], scale = 0) {
     });
     return groups.length ? sum(changes) / changes.length : 0;
   });
-  const active = activeMarketAxes(state);
-  const strong = active.map(axis => axes[LENS_ORDER.indexOf(axis)]);
-  const weights = active.map(axis => {
+  const active = activeMarketFields(state);
+  const strong = active.map(field => fields[LENS_ORDER.indexOf(field)]);
+  const weights = active.map(field => {
     if (!state.marketCycle) return 1;
-    const clock = cycleClocks(state.marketCycle).find(item => LENS_ORDER[item.index] === axis);
+    const clock = cycleClocks(state.marketCycle).find(item => LENS_ORDER[item.index] === field);
     return clock.activated === undefined ? 1 : clamp((state.day - clock.activated) / rotationSpan(state.marketCycle.scale).rise, 0, 1);
   });
   const main = combinedDemand(strong, weights);
-  const background = sum(LENS_ORDER.filter(axis => !active.includes(axis)).map(axis => axes[LENS_ORDER.indexOf(axis)])) * ROTATION.otherWeight;
+  const background = sum(LENS_ORDER.filter(field => !active.includes(field)).map(field => fields[LENS_ORDER.indexOf(field)])) * ROTATION.otherWeight;
   const raw = clamp(main + background, 1 - ROTATION.amplitude, 1 + ROTATION.amplitude);
   // The same hot or cold read moves a big title's market further than a small one's.
   const limit = ROTATION.scaleAmplitude[scale] ?? ROTATION.amplitude;
@@ -477,15 +477,15 @@ export function heatSeries(state: any, tag: string) {
   return [...past, { day: state.day, value: tagDemand(state, tag) }];
 }
 // The tags a player compares against each other, grouped like the market does: genres with genres, styles
-// with styles. Only the categories already learned are shown.
+// with styles. Only the fields already learned are shown.
 const HEAT_GROUPS: any[] = [
-  { key: 'genre', name: '类型', axis: 'design' }, { key: 'mechanic', name: '机制', axis: 'design' }, { key: 'theme', name: '题材', axis: 'design' },
-  { key: 'engine', name: '引擎', axis: 'tech' }, { key: 'art', name: '美术', axis: 'art' }, { key: 'audio', name: '音乐', axis: 'audio' }
+  { key: 'genre', name: '类型', field: 'design' }, { key: 'mechanic', name: '机制', field: 'design' }, { key: 'theme', name: '题材', field: 'design' },
+  { key: 'engine', name: '引擎', field: 'tech' }, { key: 'art', name: '美术', field: 'art' }, { key: 'audio', name: '音乐', field: 'audio' }
 ];
 export function heatGroups(state: any) {
-  const learned = marketAxes(state);
+  const learned = marketFields(state);
   return HEAT_GROUPS.map(group => ({ ...group, tags: ALL_TAGS.filter(tag => TAG_GROUP[tag] === group.key) }))
-    .filter(group => learned.includes(group.axis) && group.tags.length > 1);
+    .filter(group => learned.includes(group.field) && group.tags.length > 1);
 }
 
 // Testing is the whole game's work, not a module: a share of all the content, reused parts included.
@@ -538,7 +538,7 @@ export function expandModules(plan: any) {
   for (const line of planLines(plan)) if (MODULES[line]) add(partId(line, levelFor(plan, line)));
   return out;
 }
-export const planLines = (plan: any): string[] => plan.only ? [...plan.only] : SLOTS.flatMap(slot => (plan.slots && plan.slots[slot.key]) || []);
+export const planLines = (plan: any): string[] => plan.only ? [...plan.only] : AXES.flatMap(axis => (plan.axes && plan.axes[axis.key]) || []);
 // Person-days the plan stands for if nothing were reused, testing included: it decides the title's scale.
 export function nominalWork(plan: any) {
   const modules = sum(expandModules(plan).map(id => sum(Object.values(partOf(id).work) as number[])));
@@ -620,31 +620,31 @@ export function moduleMetrics(state: any, id: string) {
   return { dimensions, expected, quality: done > 0 ? round(value / done) : 0, progress: partProgress(state, id), open };
 }
 
-// Slots and lines open up with released titles, so the first game only shows a few choices.
+// Axes and lines open up with released titles, so the first game only shows a few choices.
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
-export const slotOpen = (state: any, slot: any) => !!slot && releases(state) >= (slot.unlock || 0);
-export const slotMax = (state: any, slot: any) => slot.key === 'mechanic' && releases(state) < SECOND_MECHANIC ? 1 : slot.max;
+export const axisOpen = (state: any, axis: any) => !!axis && releases(state) >= (axis.unlock || 0);
+export const axisMax = (state: any, axis: any) => axis.key === 'mechanic' && releases(state) < SECOND_MECHANIC ? 1 : axis.max;
 // The first title's gameplay is fixed by the founder, so the other basic gameplay is not a choice yet.
 // Showing it in the library with no unlock ever shown to the player reads as a stray, unusable option;
 // it becomes a proper unlock the moment the first title ships.
 function firstTitleGate(state: any, line: string) {
   if (releases(state) > 0) return false;
   const first = ORIGINS[state.founder]?.firstCore;
-  if (!first || MODULES[line]?.slot !== 'core' || line === first) return false;
+  if (!first || MODULES[line]?.axis !== 'core' || line === first) return false;
   return !(state.unlocked || {})[line];
 }
 export const moduleOpen = (state: any, line: string) => !!MODULES[line]
   && (!MODULES[line].unlock || !!(state.unlocked || {})[line])
-  && slotOpen(state, SLOTS.find(slot => slot.key === MODULES[line].slot))
+  && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis))
   // The two lines the first title needs start gated and are learned one by one during the opening job.
   && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line])
   && !firstTitleGate(state, line);
-// A slot opens together with one line to put in it. Returns the lines handed out.
-function ensureSlotLines(state: any) {
+// An axis opens together with one line to put in it. Returns the lines handed out.
+function ensureAxisLines(state: any) {
   const given: string[] = [];
-  for (const slot of SLOTS) {
-    if (!slotOpen(state, slot)) continue;
-    const lines = Object.keys(MODULES).filter(line => MODULES[line].slot === slot.key);
+  for (const axis of AXES) {
+    if (!axisOpen(state, axis)) continue;
+    const lines = Object.keys(MODULES).filter(line => MODULES[line].axis === axis.key);
     if (lines.some(line => moduleOpen(state, line))) continue;
     const first = [...lines].sort((left, right) => (MODULES[left].unlock || 0) - (MODULES[right].unlock || 0))[0];
     if (!first) continue;
@@ -653,7 +653,7 @@ function ensureSlotLines(state: any) {
   }
   return given;
 }
-// A hard technical requirement across axes: the line cannot go into a title that lacks the other line.
+// A hard technical requirement across fields: the line cannot go into a title that lacks the other line.
 export function lineBlocked(plan: any, line: string) {
   const missing = (MODULES[line]?.requires || []).filter((need: string) => !planLines(plan).includes(need));
   return missing.length ? `需要${missing.map((need: string) => MODULES[need].name).join('、')}` : '';
@@ -662,23 +662,23 @@ export function lineBlocked(plan: any, line: string) {
 // The plan the form starts from: what the company has wherever it can, the first open line elsewhere.
 // The first title's gameplay follows the founder's origin and is not up for choice.
 export function recommendPlan(state: any) {
-  const slots: any = {};
-  for (const slot of SLOTS) {
-    if (!slotOpen(state, slot) || slot.min < 1) continue;
-    const options = Object.keys(MODULES).filter(id => MODULES[id].slot === slot.key && moduleOpen(state, id) && !(MODULES[id].requires || []).length);
+  const axes: any = {};
+  for (const axis of AXES) {
+    if (!axisOpen(state, axis) || axis.min < 1) continue;
+    const options = Object.keys(MODULES).filter(id => MODULES[id].axis === axis.key && moduleOpen(state, id) && !(MODULES[id].requires || []).length);
     const score = (line: string) => { const info = lineInfo(state, line); return info.level + info.next; };
-    slots[slot.key] = slot.key === 'core' && firstGameCore(state) ? [firstGameCore(state)] : [...options].sort((left, right) => score(right) - score(left)).slice(0, slot.min);
+    axes[axis.key] = axis.key === 'core' && firstGameCore(state) ? [firstGameCore(state)] : [...options].sort((left, right) => score(right) - score(left)).slice(0, axis.min);
   }
-  return { name: '', scale: 0, slots, rent: [], lineLevels: {} };
+  return { name: '', scale: 0, axes, rent: [], lineLevels: {} };
 }
 export function firstGameCore(state: any) {
   return !releases(state) && ORIGINS[state.founder] ? ORIGINS[state.founder].firstCore : '';
 }
 
-// The slots that open with the next release, for the one-line teaser under the form.
+// The axes that open with the next release, for the one-line teaser under the form.
 export function nextUnlocks(state: any) {
   const next = releases(state) + 1;
-  return [...SLOTS.filter(slot => (slot.unlock || 0) === next).map(slot => slot.name), ...(next === SECOND_MECHANIC ? ['第二个机制'] : [])];
+  return [...AXES.filter(axis => (axis.unlock || 0) === next).map(axis => axis.name), ...(next === SECOND_MECHANIC ? ['第二个机制'] : [])];
 }
 
 // What a plan would build: each module, what the company already has of it (carried over at its own
@@ -705,7 +705,7 @@ export function planModules(state: any, plan: any) {
 // multiplies it. It is also why no title, however much it reuses, starts at its trial build.
 export function contentWork(plan: any) {
   if (plan.only) return {};
-  const line = (plan.slots?.core || [])[0];
+  const line = (plan.axes?.core || [])[0];
   const out: any = {};
   for (const [key, base] of Object.entries(MODULES[line]?.content || {}) as any) out[key] = base * tierWork(levelFor(plan, line));
   for (const [key, amount] of Object.entries(integrationWork(plan)) as any) out[key] = (out[key] || 0) + amount;
@@ -732,7 +732,7 @@ export function rentPrice(line: string, level: number) {
   const work = sum(Object.values(lineWork(line, level)) as number[]);
   return { price: round(work * RENT_DAY / RENT_SPLIT), build: round(work * RENT_DAY) };
 }
-export const rentable = (line: string) => !!MODULES[line] && MODULES[line].axis !== 'design';
+export const rentable = (line: string) => !!MODULES[line] && MODULES[line].field !== 'design';
 export function rentRecord(state: any, line: string) {
   return (state.rentLog || {})[line] || { count: 0, paid: 0 };
 }
@@ -753,25 +753,25 @@ function payRent(state: any, plan: any, title: string) {
 
 // The main gameplay decides the genre the audience reads it as; a title without one cannot start.
 export function planType(plan: any) {
-  const core = (plan.slots?.core || [])[0];
+  const core = (plan.axes?.core || [])[0];
   return MODULES[core]?.type || '';
 }
 
 export function planIssue(state: any, plan: any) {
-  if (!plan || !plan.slots) return '请选择模块。';
+  if (!plan || !plan.axes) return '请选择模块。';
   if (plan.rent !== undefined && !Array.isArray(plan.rent)) return '租用设置无效。';
   const first = firstGameCore(state);
-  for (const slot of SLOTS) {
-    const ids = plan.slots[slot.key] || [];
-    if (!slotOpen(state, slot)) { if (ids.length) return `${slot.name}还没有开放。`; continue; }
-    if (ids.some((id: string) => MODULES[id]?.slot !== slot.key || !moduleOpen(state, id))) return `${slot.name}里有还不能用的模块。`;
-    if (ids.length < slot.min) return `请选择${slot.name}。`;
-    if (ids.length > slotMax(state, slot)) return `${slot.name}最多选 ${slotMax(state, slot)} 个。`;
+  for (const axis of AXES) {
+    const ids = plan.axes[axis.key] || [];
+    if (!axisOpen(state, axis)) { if (ids.length) return `${axis.name}还没有开放。`; continue; }
+    if (ids.some((id: string) => MODULES[id]?.axis !== axis.key || !moduleOpen(state, id))) return `${axis.name}里有还不能用的模块。`;
+    if (ids.length < axis.min) return `请选择${axis.name}。`;
+    if (ids.length > axisMax(state, axis)) return `${axis.name}最多选 ${axisMax(state, axis)} 个。`;
   }
-  if (first && (plan.slots.core || [])[0] !== first) return '首作的玩法由出身决定。';
+  if (first && (plan.axes.core || [])[0] !== first) return '首作的玩法由出身决定。';
   for (const line of planLines(plan)) if (!levelOpen(state, levelFor(plan, line))) return `${MODULES[line].name} ${levelFor(plan, line)} 级还没有开放。`;
   // A title cannot ship with pixel characters over hand-drawn scenery (or the other way round).
-  const artStyles = (plan.slots?.art || []).map((line: string) => MODULES[line]?.style).filter(Boolean);
+  const artStyles = (plan.axes?.art || []).map((line: string) => MODULES[line]?.style).filter(Boolean);
   if (new Set(artStyles).size > 1) return '美术风格要一致。';
   for (const line of planLines(plan)) { const reason = lineBlocked(plan, line); if (reason) return `${MODULES[line].name}${reason}。`; }
   if ((plan.rent || []).some((line: string) => !planLines(plan).includes(line))) return '只能租用这一作用到的模块。';
@@ -816,7 +816,7 @@ function blankProject(state: any, id: string, plan: any, day: number) {
   const kind = plan.only || plan.rebuild ? 'module' : 'game';
   const project: any = {
     id, kind, name: plan.name, type: plan.type || planType(plan), scale: plan.scale || 0, parentId: plan.parentId || null,
-    slots: clone(plan.slots || {}), only: plan.only ? [...plan.only] : null, rent: [...(plan.rent || [])], rebuild: plan.rebuild || null,
+    axes: clone(plan.axes || {}), only: plan.only ? [...plan.only] : null, rent: [...(plan.rent || [])], rebuild: plan.rebuild || null,
     lineLevels: plan.rebuild ? {} : fixLevels(plan),
     parts: items.filter(item => !item.rented).map(item => item.id), own, work, base: {}, progress: 0,
     levels: Object.fromEntries(planLines(plan).map(line => [line, lineInfo(state, line).level])),
@@ -1049,7 +1049,7 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 15, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 16, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
@@ -1131,9 +1131,25 @@ export function nameCompany(state: any, name: string, founder?: string, look?: a
     }));
     personNote(next, next.staff[0], `创办${value}`);
     startJob(next);
+    tell(next, 'opening');
   }
   studioLog(next, '工作室成立', `${value}在自家起步，先接一份委托。`);
-  return next;
+  return nextStory(next);
+}
+
+// The founder speaks at a few turning points, each once. Only the key is kept; Content holds the lines.
+function tell(state: any, key: string) {
+  state.told = state.told || {};
+  if (state.told[key]) return;
+  state.told[key] = state.day;
+  state.story = [...(state.story || []), key];
+}
+function nextStory(state: any) {
+  if (state.event || state.over || !(state.story || []).length) return state;
+  const [key, ...rest] = state.story;
+  state.story = rest;
+  state.event = { id: 'story', key, title: '创始人', text: '', choices: [{ id: 'continue', title: '继续' }] };
+  return state;
 }
 
 const FOUNDER_FOCUS: any = { code: 'fluidity', design: 'creativity', art: 'picture' };
@@ -1154,8 +1170,8 @@ function learnOpeningLine(state: any, line: string) {
   state.openingLearned = { ...(state.openingLearned || {}), [line]: state.day };
   state.unlocked = { ...(state.unlocked || {}), [line]: state.day };
   const module = MODULES[line];
-  const slot = SLOTS.find(item => item.key === module.slot);
-  announce(state, { kind: 'unlock', title: '边做边学', text: `解锁${module.name}：立项时${slot?.name || ''}就能选它了。`, line, amount: 0 });
+  const axis = AXES.find(item => item.key === module.axis);
+  announce(state, { kind: 'unlock', title: '边做边学', text: `解锁${module.name}：立项时${axis?.name || ''}就能选它了。`, line, amount: 0 });
   studioLog(state, `解锁${module.name}`, '做第一份委托时摸索出来的，首作能用上。');
 }
 
@@ -1176,41 +1192,57 @@ function startJob(state: any) {
   state.projects.push(project);
 }
 
-// The job board: a few clients who want one module each, at a fixed fee. It pays less per person-day
-// than a decent game, so it is what a studio short of money turns to; the module stays in the library.
+// The job board: clients who each want one module the studio lacks, at a fixed fee per person-day. A small
+// title earns less than this per person-day until the team scores about 58, and more after, so jobs carry
+// a young studio and fade once it is good; the module stays in the library either way.
 export const JOB_RATE = 0.08;
+export const JOB_EVERY = 10;
+export const JOB_BOARD = 5;
+export const JOB_EXPIRY = 60;
 const JOB_CLIENTS = ['一家做教育软件的公司', '隔壁的独立团队', '一家广告公司', '一位做桌游的朋友', '一家外包大厂', '本地的文旅项目'];
 export function jobBoard(state: any) {
-  const batch = Math.floor((state.day - 1) / 30);
-  if (state.board?.batch === batch) return state.board.offers.filter((offer: any) => !offer.taken);
-  return [];
+  return (state.board?.offers || []).filter((offer: any) => state.day - offer.day < JOB_EXPIRY);
 }
+export const freshJobs = (state: any) => jobBoard(state).filter((offer: any) => !offer.seen).length;
+export function markJobsSeen(state: any) {
+  if (!freshJobs(state)) return state;
+  return { ...state, board: { ...state.board, offers: state.board.offers.map((offer: any) => ({ ...offer, seen: true })) } };
+}
+// The dimension a line mostly needs, so offers on the board ask for different people.
+const mainDimension = (line: string) => (Object.entries(MODULES[line].work) as any[]).sort((left, right) => right[1] - left[1])[0][0];
+// One new offer every few days; the oldest drops off when the board is full, and untaken ones expire.
 function refreshBoard(state: any) {
-  const batch = Math.floor((state.day - 1) / 30);
-  if (state.board?.batch === batch || !state.company || state.office < 1) return;
+  if (!state.company || state.office < 1) return;
+  const board = state.board || (state.board = { next: state.day, offers: [] });
+  board.offers = jobBoard(state);
+  if (state.day < board.next) return;
+  board.next = state.day + JOB_EVERY;
   const levelOf = (line: string) => Math.min(lineTiers(line), lineInfo(state, line).level + 1, scaleOpen(state, 1) ? 2 : 1);
-  const lines = Object.keys(MODULES).filter(line => moduleOpen(state, line) && !partBuilt(state, partId(line, levelOf(line))));
-  const offers: any[] = [];
-  for (let index = 0; index < 3 && lines.length; index += 1) {
-    const line = lines.splice(Math.floor(random(state) * lines.length), 1)[0];
-    const level = levelOf(line);
-    const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id).work) as number[])));
-    offers.push({ id: `offer-${batch}-${index}`, line, level, pay: round(work * JOB_RATE), client: pick(state, JOB_CLIENTS) });
-  }
-  state.board = { batch, offers };
+  const jobs = state.projects.filter((project: any) => project.job).map((project: any) => project.job.module);
+  const busy = [...board.offers.map((offer: any) => offer.line), ...jobs];
+  const lines = Object.keys(MODULES).filter(line => moduleOpen(state, line) && !busy.includes(line) && !partBuilt(state, partId(line, levelOf(line))));
+  if (!lines.length) return;
+  const asked = busy.map(mainDimension);
+  const fresh = lines.filter(line => !asked.includes(mainDimension(line)));
+  const pool = fresh.length ? fresh : lines;
+  const line = pool[Math.floor(random(state) * pool.length)];
+  const level = levelOf(line);
+  const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id).work) as number[])));
+  const offer = { id: `offer-${state.day}`, line, level, pay: round(work * JOB_RATE), client: pick(state, JOB_CLIENTS), day: state.day, seen: false };
+  board.offers = [...board.offers, offer].slice(-JOB_BOARD);
+  announce(state, { kind: 'job', title: '收到新委托', text: `${offer.client}想要${MODULES[line].name} · ${moneyText(offer.pay)}`, route: { menu: 'job', id: offer.id }, amount: 0 });
 }
 
 export function takeJob(state: any, id: string) {
   const next = studioAction(state);
   const offer = jobBoard(next).find((item: any) => item.id === id);
   if (!offer) throw new Error('这份委托已经不在了。');
-  if (next.projects.some((project: any) => project.job)) throw new Error('手上还有一份委托没做完。');
   const module = MODULES[offer.line];
-  const project = blankProject(next, `job-${next.day}-${next.seed}`, { name: `委托：${module.name}${lineTiers(offer.line) > 1 ? ` ${offer.level} 级` : ''}`, scale: offer.level - 1, only: [offer.line], type: module.type || 'action' }, next.day);
+  const project = blankProject(next, `job-${next.day}-${next.seed}-${next.projects.length}`, { name: `委托：${module.name}${lineTiers(offer.line) > 1 ? ` ${offer.level} 级` : ''}`, scale: offer.level - 1, only: [offer.line], type: module.type || 'action' }, next.day);
   project.job = { pay: offer.pay, client: offer.client + '想要' + module.name, module: offer.line };
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
-  offer.taken = true;
+  next.board.offers = next.board.offers.filter((item: any) => item.id !== id);
   studioLog(next, '接下委托', `${offer.client}：${module.name}，做完到账 ${moneyText(offer.pay)}。`);
   return next;
 }
@@ -1541,7 +1573,7 @@ export function dismiss(state: any, id: string) {
   }
   if (next.event?.person === id) next.event = null;
   studioLog(next, `${person.name} 被裁`, `支付 N+1 遣散费 ${severance.toFixed(2)} 万，在职同事仍留有心结。`);
-  return next;
+  return nextStory(next);
 }
 
 export const monthlyCost = (state: any) => round(OFFICES[state.office].rent + state.staff.reduce((total: number, person: any) => total + person.wage, 0));
@@ -1590,6 +1622,7 @@ function able(person: any, ability: string) {
 function departed(state: any, person: any) {
   delete state.overtime[person.id];
   for (const other of state.staff) if (other.mentor?.by === person.id) endMentoring(state, other, `${person.name}离开了公司`);
+  tell(state, 'departure');
 }
 
 // Every mentoring stint ends with a line on both records saying how far the ability moved during it.
@@ -2053,6 +2086,11 @@ export function setSound(state: any, enabled: boolean) {
   return { ...state, sound: enabled };
 }
 
+export function setMusic(state: any, enabled: boolean) {
+  if (typeof enabled !== 'boolean') throw new Error('音乐设置无效。');
+  return { ...state, music: enabled };
+}
+
 // Mentoring: a stronger colleague on the same project brings one ability of a weaker one up towards
 // their own level. Both work slower while it lasts; it ends by itself when the gap closes.
 export function mentorOptions(state: any, person: any) {
@@ -2262,7 +2300,7 @@ function keepPerson(state: any, id: string) {
 export function startProject(state: any, draft: any, priority = -1) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
-  if (!draft || !draft.slots) throw new Error('请选择模块。');
+  if (!draft || !draft.axes) throw new Error('请选择模块。');
   // Levels are written out first, then the scale is read from the work they add up to.
   const plan = { ...draft, lineLevels: fixLevels(draft) };
   plan.scale = planScale(plan);
@@ -2858,6 +2896,15 @@ function promoDay(state: any) {
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
 export const PLAYTESTS = [{ players: 30, cost: 0.8 }, { players: 100, cost: 2.5 }, { players: 300, cost: 7 }, { players: 1000, cost: 20 }];
 export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
+// New followers per player, low and high: the range the player sees before paying.
+export const PLAYTEST_GAIN = [0.4, 2.3];
+export const playtestGain = (players: number) => PLAYTEST_GAIN.map(share => Math.round(players * share));
+// Today's demand for the title's tags as a word, relative to how far this scale's market can swing.
+export function demandHeat(state: any, project: any) {
+  const limit = ROTATION.scaleAmplitude[project.scale] ?? ROTATION.amplitude;
+  const lean = tagFactor(state, planTags(project), project.scale);
+  return lean >= 1 + limit * 0.35 ? '热门' : lean <= 1 - limit * 0.35 ? '拥挤' : '平稳';
+}
 
 export function playtestOffer(state: any, project: any) {
   const reason = !project ? '先立项开发' : project.kind === 'module' ? '模块项目不需要试玩' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : state.cash < playtestOf(project).cost ? '资金不足' : '';
@@ -2879,44 +2926,21 @@ export function testDemo(state: any, projectId: string) {
   target.playCover = Math.round(((target.playCover || 0) + left * chance) * 10000) / 10000;
   syncFound(target);
   const newlyFound = target.found - before;
-  const score = round(clamp(projectScore(target) + (random(next) - 0.5) * 6 * Math.sqrt(30 / count), 0, 100));
+  const score = projectScore(target);
   target.invested = round(target.invested + cost);
   target.tests += 1;
   target.testCount += count;
+  const gain = Math.round(count * clamp(score / 50, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3));
+  target.followers += gain;
+  // How many of those who know the title will end up buying it, judged from how these players took it;
+  // a small group reads it less precisely.
+  const conv = conversionRate(marketScore(score, next.day));
+  const buy = Math.round(clamp(conv / (conv + ECONOMY.forget) * (1 + (random(next) - 0.5) * 0.5 * Math.sqrt(30 / count)), 0.01, 0.99) * 100);
+  const demand = demandHeat(next, target);
   // Every run is kept (last five) so a retest can be compared against what changed in between.
-  target.testLog = [...(target.testLog || []), { day: next.day, count, score }].slice(-5);
-  target.followers += Math.round(count * score / 100 * 2);
-  const metrics = visibleMetrics(target);
-  // A score alone tells the player nothing actionable, so every dimension explains its own cause:
-  // unfinished work, a missing trade, or the defects that are still open.
-  const diagnosis: any = {
-    creativity: metrics.dimensions.creativity < 45
-      ? '创意分偏低：安排创意能力更强的人完成这一项；做满后继续返工，才能逐步改善已有成果。'
-      : metrics.dimensions.creativity < 70 ? '创意还有提升空间，继续交付或用更高能力的人返工。' : '创意得到认可，玩家觉得这一作有辨识度。',
-    depth: target.work.depth.done < target.work.depth.total && metrics.dimensions.depth < 70
-      ? `深度 ${metrics.dimensions.depth} 分，这一项内容还没完成；继续安排深度工作，质量也取决于执行者能力。`
-      : metrics.dimensions.depth < 60 ? '深度内容已做完，但已有成果能力偏低；让深度能力更强的人返工，不会因体量变大自动加分。' : '深度得到认可。',
-    fluidity: metrics.dimensions.fluidity < 45
-      ? '流畅分偏低：安排流畅能力更强的人完成内容，已做满则需要返工，单纯招聘不会重算旧成果。'
-      : metrics.dimensions.fluidity < 70 ? '流畅能玩，但还不算顺滑；更高流畅能力的人返工可逐步改善。' : '流畅得到认可，操作型玩家不会抱怨手感。',
-    picture: metrics.dimensions.picture < 45
-      ? '画面分偏低：任何人都能做画面，评分取决于画面能力与进度；安排更合适的人制作或返工。'
-      : metrics.dimensions.picture < 70 ? '画面能看但不够出彩，美术越早加入，越有时间做细节。' : '画面得到认可。',
-    sound: metrics.dimensions.sound < 45
-      ? '声音分偏低：安排声音能力更强的人制作或返工，评分才会提高。'
-      : metrics.dimensions.sound < 70 ? '声音够用但不出彩，音频能再提高沉浸感。' : '声音得到认可。',
-    stability: (newlyFound
-      ? `试玩玩家碰到 ${newlyFound} 项测试漏掉的缺陷，待修 ${metrics.known} 项。`
-      : metrics.known ? `没有碰到新缺陷，还有 ${metrics.known} 项待修。` : '本轮没有碰到新问题。')
-      + (metrics.untested ? '还没有测试覆盖，稳定是 0：安排人做测试工作。' : metrics.dimensions.stability < 60 ? '覆盖率还低或待修缺陷多：继续测试，并修掉已发现的缺陷；没测到的会在发售后被玩家碰到。' : '')
-  };
-  const findings = DIM_KEYS.map(key => {
-    const dimension = DIMENSIONS.find(item => item.key === key);
-    const weight = TYPES[target.type].weights[key];
-    return { key, title: dimension.name, value: metrics.dimensions[key], weight, text: diagnosis[key] };
-  }).sort((left, right) => (100 - left.value) * left.weight < (100 - right.value) * right.weight ? 1 : -1);
-  target.test = { day: next.day, count, score, findings, found: newlyFound, source: '试玩玩家' };
-  next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位${TYPES[target.type].audience}给出 ${score.toFixed(1)} 分，发现 ${newlyFound} 项缺陷。他们最看重：${audienceFocus(target.type)}。`, choices: [{ id: 'continue', title: '收下反馈，继续调整分工', detail: '短板维度可以在项目里调整人手。' }] };
+  target.testLog = [...(target.testLog || []), { day: next.day, count, found: newlyFound, buy, gain }].slice(-5);
+  target.test = { day: next.day, count, found: newlyFound, buy, gain, demand, source: '试玩玩家' };
+  next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位玩家试玩，新发现 ${newlyFound} 项缺陷，新增关注 ${gain} 人。`, choices: [{ id: 'continue', title: '收下反馈，继续经营' }] };
   studioLog(next, '体验版试玩', `${count} 人参与，评分 ${score.toFixed(1)}，发现 ${newlyFound} 项缺陷。`);
   return next;
 }
@@ -3087,7 +3111,7 @@ export function launchChecklist(state: any, project: any) {
   const metrics = visibleMetrics(project);
   return [
     { label: '全部做完', ok: metrics.unfinished.length === 0, required: false, text: metrics.unfinished.length ? `还差 ${metrics.unfinished.length} 项，提前发售评分会偏低` : `完成度 ${metrics.progress.toFixed(0)}%` },
-    { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · ${project.test.score.toFixed(1)} 分` : '没有试玩，问题会在发售后才暴露' },
+    { label: '做过试玩', ok: !!project.test, text: project.test ? `${project.test.count} 人 · 新发现 ${project.test.found} 项缺陷` : '没有试玩，问题会在发售后才暴露' },
     { label: '待修缺陷', ok: metrics.known === 0, text: metrics.known ? `还有 ${metrics.known} 项` : metrics.untested ? '暂无；还没测试，不知道漏了多少' : `暂无；稳定 ${metrics.dimensions.stability.toFixed(0)} 分，没测到的留给玩家` },
     { label: '综合评分', ok: metrics.overall >= 60, text: `${metrics.overall.toFixed(0)} 分` },
     { label: '推广', ok: project.promoCover > 0, text: project.promoCover > 0 ? `共投入 ${moneyText(project.promoted)}` : '没有投入' }
@@ -3144,12 +3168,12 @@ export function launchProject(state: any, projectId: string) {
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
   const review = reviewOf(next, project, metrics);
   const book = {
-    id: project.id, name: project.name, type: project.type, scale: project.scale, slots: project.slots, lineLevels: project.lineLevels,
+    id: project.id, name: project.name, type: project.type, scale: project.scale, axes: project.axes, lineLevels: project.lineLevels,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
     price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: launchFollowers,
     followers: launchFollowers, dailyUnits: units, reviewScore: score,
     reviewCount: Math.max(1, Math.round(units * 0.12)), tested: project.tests > 0,
-    testScore: project.test ? project.test.score : null, testCount: project.testCount, trend: trend.label,
+    testCount: project.testCount, trend: trend.label,
     lastGrowth: 0, lastDayUnits: units, team: next.staff.filter((person: any) => (project.contributions[person.id] || 0) > 0).map((person: any) => ({ id: person.id, name: person.name, role: person.role })),
     quotes: review.quotes,
     weekly: [receipt], paidBack: receipt >= project.invested, marks: 0, record: next.catalog.length > 0 && receipt > best,
@@ -3157,7 +3181,7 @@ export function launchProject(state: any, projectId: string) {
     sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [], flawless: metrics.defects === 0, clash: clash.works.length,
     attention, demand: lean, share, capacity: marketSize, left: Math.max(0, marketSize - units), sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0,
     tags, lean, royalty: 0, rent: [...(project.rent || [])],
-    marketAxes: activeMarketAxes(next), marketParallel: next.marketCycle?.parallel || 1
+    marketFields: activeMarketFields(next), marketParallel: next.marketCycle?.parallel || 1
   };
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
@@ -3191,15 +3215,18 @@ export function launchProject(state: any, projectId: string) {
   // appears in the library out of nowhere.
   if (book.tutorial) {
     const first = ORIGINS[next.founder]?.firstCore;
-    const extra = Object.keys(MODULES).filter(line => MODULES[line].slot === 'core' && !MODULES[line].unlock && line !== first && !(next.unlocked || {})[line]);
+    const extra = Object.keys(MODULES).filter(line => MODULES[line].axis === 'core' && !MODULES[line].unlock && line !== first && !(next.unlocked || {})[line]);
     for (const line of extra) {
       next.unlocked = { ...(next.unlocked || {}), [line]: next.day };
       announce(next, { kind: 'unlock', title: '做完第一款游戏', text: `解锁${MODULES[line].name}：从下一作起，玩法可以自由选了。`, line, amount: 0 });
       studioLog(next, `解锁${MODULES[line].name}`, '做完第一款游戏后摸出的新玩法，下一作可以选。');
     }
   }
-  if (next.goals.firstRelease === null) next.goals.firstRelease = next.day;
-  for (const line of ensureSlotLines(next)) announce(next, { kind: 'unlock', title: `${SLOTS.find(slot => slot.key === MODULES[line].slot).name}开放`, text: `解锁${MODULES[line].name}：下一作可以选了。`, line, amount: 0 });
+  if (next.goals.firstRelease === null) {
+    next.goals.firstRelease = next.day;
+    tell(next, 'firstRelease');
+  }
+  for (const line of ensureAxisLines(next)) announce(next, { kind: 'unlock', title: `${AXES.find(axis => axis.key === MODULES[line].axis).name}开放`, text: `解锁${MODULES[line].name}：下一作可以选了。`, line, amount: 0 });
   announce(next, { kind: 'release', title: `《${book.name}》发售`, text: `首日售出 ${Math.round(units)} 份`, amount: receipt, book: book.id });
   if (book.record) announce(next, { kind: 'record', title: '新纪录', text: `首发到账超过此前最好成绩 ${moneyText(best)}`, amount: receipt });
   checkMarks(next, book);
@@ -3209,7 +3236,7 @@ export function launchProject(state: any, projectId: string) {
   const burst = breakout ? `《${book.name}》出圈了：创意打动了原本不关注这类游戏的人，首发关注翻了数倍。` : '';
   const media = exposure ? `${STAR_NAMES[next.stars || 0]}工作室的媒体曝光带来约 ${Math.round(exposure * 100)}% 额外关注。` : '';
   const promoText = promo ? `推广共投入 ${moneyText(promo.cost)}，相比不投多卖约 ${promo.extraUnits} 份（约 ${moneyText(promo.receipt)}）。` : '';
-  next.event = { id: 'release', gained, unlocked: SLOTS.filter(slot => (slot.unlock || 0) === releases(next)).map(slot => slot.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
+  next.event = { id: 'release', gained, unlocked: AXES.filter(axis => (axis.unlock || 0) === releases(next)).map(axis => axis.name), title: `《${book.name}》正式发售`, text: `首日售出 ${Math.round(units)} 份，到账 ${moneyText(receipt)}，之后每天继续售卖。发售时类型市场：${trend.label}；作品标签（${tags.join('、') || '无'}）综合市场反响 ×${lean.toFixed(2)}。${clashText}${media}${promoText}${shortBoard ? shortBoard + ' ' : ''}${lesson}${burst ? ' ' + burst : ''}`, choices: [{ id: 'continue', title: '收下成绩，继续经营', detail: book.tutorial ? '招聘网站已经开放，可以为下一作找更有经验的同事。' : '后续销量与评价继续变化，可以筹备下一款作品。' }] };
   studioLog(next, next.event.title, next.event.text);
   return next;
 }
@@ -3219,7 +3246,10 @@ function checkMarks(state: any, book: any) {
   if (book.paidBack && !book.paidBackAnnounced) {
     book.paidBackAnnounced = true;
     announce(state, { kind: 'breakeven', title: `《${book.name}》回本了`, text: `累计回款超过投入 ${moneyText(book.invested)}`, amount: book.received });
-    if (state.goals.breakEven === null) state.goals.breakEven = state.day;
+    if (state.goals.breakEven === null) {
+      state.goals.breakEven = state.day;
+      tell(state, 'breakEven');
+    }
   }
   while (book.marks < UNIT_MARKS.length && book.units >= UNIT_MARKS[book.marks]) {
     announce(state, { kind: 'units', title: `销量突破 ${UNIT_MARKS[book.marks].toLocaleString('zh-CN')} 份`, text: `《${book.name}》`, amount: book.received });
@@ -3243,7 +3273,8 @@ export function moveOffice(state: any) {
   next.office += 1;
   next.goals[next.office === 2 ? 'moved' : 'expanded'] = next.goals[next.office === 2 ? 'moved' : 'expanded'] ?? next.day;
   announce(next, { kind: 'office', title: (next.office === 2 ? '搬进' : '扩建为') + office.name, text: `${office.seats} 个工位，月租 ${office.rent} 万`, amount: 0 });
-  return next;
+  if (next.office === 2) tell(next, 'moved');
+  return nextStory(next);
 }
 
 export function goalsOf(state: any) {
@@ -3309,7 +3340,7 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'dlc', group: 'works', title: '还有后续', text: '发售一部资料片。', check: (s: any) => ownBooks(s).some((book: any) => book.parentId) },
   { key: 'breakout', group: 'works', title: '出圈', text: '一部作品凭创意出圈。', check: (s: any) => ownBooks(s).some((book: any) => book.breakout) },
   { key: 'patched', group: 'works', title: '负责到底', text: '为已发售作品上线一个补丁。', check: (s: any) => flag(s, 'patched') },
-  { key: 'tried3', group: 'works', title: '换着花样做', text: '发售过三种不同玩法的作品。', check: (s: any) => new Set(ownBooks(s).map((book: any) => (book.slots?.core || [])[0]).filter(Boolean)).size >= 3, progress: (s: any) => [new Set(ownBooks(s).map((book: any) => (book.slots?.core || [])[0]).filter(Boolean)).size, 3] },
+  { key: 'tried3', group: 'works', title: '换着花样做', text: '发售过三种不同玩法的作品。', check: (s: any) => new Set(ownBooks(s).map((book: any) => (book.axes?.core || [])[0]).filter(Boolean)).size >= 3, progress: (s: any) => [new Set(ownBooks(s).map((book: any) => (book.axes?.core || [])[0]).filter(Boolean)).size, 3] },
   { key: 'styles', group: 'works', title: '两种画风', text: '像素和手绘的作品都发售过。', check: (s: any) => ['像素', '手绘'].every(tag => ownBooks(s).some((book: any) => (book.tags || []).includes(tag))) },
   { key: 'mentored', group: 'team', title: '出师', text: '一次带教让徒弟追上师傅。', check: (s: any) => flag(s, 'mentored') },
   { key: 'boost', group: 'team', title: '主心骨', text: '有员工获得团队增益标签。', check: (s: any) => s.staff.some((person: any) => person.boost) },
@@ -3389,6 +3420,10 @@ export function markAchievementsSeen(state: any) {
 }
 
 export function resolveStudioEvent(state: any, choice: string) {
+  return nextStory(resolveEvent(state, choice));
+}
+
+function resolveEvent(state: any, choice: string) {
   if (!state.event || !state.event.choices.some((item: any) => item.id === choice)) throw new Error('当前选择无效。');
   let next = studioAction(state);
   const event = next.event;
@@ -3503,8 +3538,7 @@ export function stepDay(state: any) {
     if (project.released) syncReleased(next, project);
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
-  const job = next.projects.find((project: any) => project.job && project.progress >= 100);
-  if (job && !next.event) finishJob(next, job);
+  for (const job of next.projects.filter((project: any) => project.job && project.progress >= 100)) if (!job.job.opening || !next.event) finishJob(next, job);
   for (const project of next.projects.filter((item: any) => item.kind === 'module' && !item.job && item.progress >= 100)) finishModuleProject(next, project);
   shareDefects(next);
   tagDay(next);
@@ -3552,7 +3586,7 @@ export function stepDay(state: any) {
   }
   next.day += 1;
   marketCycleDay(next);
-  return next;
+  return nextStory(next);
 }
 
 function cashWarning(state: any) {
@@ -3669,7 +3703,7 @@ export function makeDLC(state: any, id: string) {
   if (book.parentId) throw new Error('请从原作立项资料片。');
   const siblings = next.projects.filter((item: any) => item.parentId === id);
   if (siblings.length >= 2) throw new Error('每部原作最多立项两部资料片。');
-  const plan = { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, slots: book.slots, rent: book.rent || [], lineLevels: book.lineLevels };
+  const plan = { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, axes: book.axes, rent: book.rent || [], lineLevels: book.lineLevels };
   const project = blankProject(next, `${next.day}-${next.seed}-${next.projects.length}`, plan, next.day);
   project.parentId = id;
   project.followers = Math.round(book.units * 0.3 + book.followers * 0.2);
@@ -3760,10 +3794,10 @@ function rivalWork(state: any, tier: number, studio: any, released: number) {
 function rivalTags(state: any, type: string) {
   const lines = Object.values(MODULES) as any[];
   const from = (filter: (module: any) => boolean) => lines.filter(module => filter(module) && (module.tags || []).length);
-  const tags = [...pick(state, from(module => module.slot === 'core' && module.type === type)).tags];
-  if (random(state) < 0.35) tags.push(...pick(state, from(module => module.slot === 'mechanic')).tags);
-  tags.push(...pick(state, from(module => module.slot === 'theme')).tags);
-  tags.push(...pick(state, from(module => module.slot === 'engine')).tags);
+  const tags = [...pick(state, from(module => module.axis === 'core' && module.type === type)).tags];
+  if (random(state) < 0.35) tags.push(...pick(state, from(module => module.axis === 'mechanic')).tags);
+  tags.push(...pick(state, from(module => module.axis === 'theme')).tags);
+  tags.push(...pick(state, from(module => module.axis === 'engine')).tags);
   tags.push(...pick(state, from(module => module.axis === 'art')).tags);
   if (random(state) < 0.6) tags.push(...pick(state, from(module => module.axis === 'audio')).tags);
   return Array.from(new Set(tags));
@@ -3828,14 +3862,14 @@ function totalRanks(state: any, book: any) {
 }
 
 // The categories the page may sort points by: the ones learned so far and the one being learned.
-export function marketAxes(state: any) {
-  return LENS_ORDER.filter(axis => (state.marketCycle?.seen || ['design']).includes(axis));
+export function marketFields(state: any) {
+  return LENS_ORDER.filter(field => (state.marketCycle?.seen || ['design']).includes(field));
 }
 
 // The tags worth mentioning right now: those of the category the market is about (all once learned).
 export function lensTags(state: any, tags: string[]) {
-  const axes = activeMarketAxes(state);
-  return tags.filter(tag => axes.includes(TAG_AXIS[tag]));
+  const fields = activeMarketFields(state);
+  return tags.filter(tag => fields.includes(TAG_FIELD[tag]));
 }
 
 // One chart for the industry menu: first-week sales over the last year, or lifetime sales.
@@ -4528,7 +4562,7 @@ export function restoreStudio(saved: any) {
   const cleanClock = (clock: any) => {
     for (const key of ['hot', 'last']) {
       if (!clock || !clock[key] || typeof clock[key] !== 'object') continue;
-      for (const [group, tag] of Object.entries(clock[key]) as any) if (TAG_GROUP[tag] !== group || (key === 'hot' && TAG_AXIS[tag] !== LENS_ORDER[clock.index])) delete clock[key][group];
+      for (const [group, tag] of Object.entries(clock[key]) as any) if (TAG_GROUP[tag] !== group || (key === 'hot' && TAG_FIELD[tag] !== LENS_ORDER[clock.index])) delete clock[key][group];
     }
   };
   if (next?.marketCycle) { cleanClock(next.marketCycle); for (const clock of next.marketCycle.clocks || []) cleanClock(clock); }
@@ -4736,8 +4770,19 @@ export function restoreStudio(saved: any) {
     next.rulesRevision = 14;
   }
   if (next.rulesRevision < 15) {
-    ensureSlotLines(next);
+    ensureAxisLines(next);
     next.rulesRevision = 15;
+  }
+  if (next.rulesRevision < 16) {
+    // Plans name their picks by axis, books their market fields; the job board posts offers one by one.
+    for (const item of [...next.projects, ...next.catalog]) {
+      if (item.slots && !item.axes) item.axes = item.slots;
+      delete item.slots;
+      if (item.marketAxes && !item.marketFields) item.marketFields = item.marketAxes;
+      delete item.marketAxes;
+    }
+    next.board = { next: next.day, offers: [] };
+    next.rulesRevision = 16;
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
@@ -4775,21 +4820,21 @@ function keepModules(state: any, project: any) {
 // is about right now; now and then one from another category slips in. Each one is a short moment with a
 // person, a reason and what it opens.
 const SIDE_EVERY = [4, 5];
-// Only lines whose batch has come (titles out ≥ unlock − 1) and whose slot is already open can be learned.
+// Only lines whose batch has come (titles out ≥ unlock − 1) and whose axis is already open can be learned.
 function lockedReady(state: any) {
   const open = (line: string) => !MODULES[line].unlock || !!(state.unlocked || {})[line];
   const out = releases(state);
-  return Object.keys(MODULES).filter(line => !open(line) && MODULES[line].unlock <= out + 1 && slotOpen(state, SLOTS.find(slot => slot.key === MODULES[line].slot)));
+  return Object.keys(MODULES).filter(line => !open(line) && MODULES[line].unlock <= out + 1 && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis)));
 }
 
 function nextLesson(state: any) {
   const ready = lockedReady(state);
   if (!ready.length) return null;
   const lens = lensOf(state);
-  const rank = (axis: string) => { const index = LENS_ORDER.indexOf(axis) - LENS_ORDER.indexOf(lens || LENS_ORDER[0]); return index < 0 ? index + LENS_ORDER.length : index; };
-  const sorted = (list: string[]) => [...list].sort((left, right) => rank(MODULES[left].axis) - rank(MODULES[right].axis) || MODULES[left].unlock - MODULES[right].unlock);
-  const main = sorted(ready.filter(line => MODULES[line].axis === lens));
-  const side = sorted(ready.filter(line => MODULES[line].axis !== lens));
+  const rank = (field: string) => { const index = LENS_ORDER.indexOf(field) - LENS_ORDER.indexOf(lens || LENS_ORDER[0]); return index < 0 ? index + LENS_ORDER.length : index; };
+  const sorted = (list: string[]) => [...list].sort((left, right) => rank(MODULES[left].field) - rank(MODULES[right].field) || MODULES[left].unlock - MODULES[right].unlock);
+  const main = sorted(ready.filter(line => MODULES[line].field === lens));
+  const side = sorted(ready.filter(line => MODULES[line].field !== lens));
   const learn = state.learn || (state.learn = { main: 0, gap: SIDE_EVERY[0] });
   const takeSide = side.length && (!main.length || learn.main >= learn.gap);
   if (takeSide) {
@@ -4804,7 +4849,7 @@ function nextLesson(state: any) {
 // Who on the team brings it up, and how they came by it.
 function lessonSource(state: any, line: string, project: any) {
   const module = MODULES[line];
-  const ability = LENS_ABILITY[module.axis];
+  const ability = LENS_ABILITY[module.field];
   const expert = [...state.staff].sort((left: any, right: any) => right.abilities[ability] - left.abilities[ability])[0];
   if (expert && !expert.founder && expert.abilities[ability] >= 65) return { who: expert.name, how: `以前做过${module.name}，可以带大家上手` };
   const tags = module.tags || [];
@@ -4821,8 +4866,8 @@ function learnLine(state: any, project: any) {
   state.unlocked = { ...(state.unlocked || {}), [line]: state.day };
   const module = MODULES[line];
   const source = lessonSource(state, line, project);
-  const slot = SLOTS.find(item => item.key === module.slot);
-  const text = `${source.how}。立项时${slot?.name || ''}可以选${module.name}了。`;
+  const axis = AXES.find(item => item.key === module.axis);
+  const text = `${source.how}。立项时${axis?.name || ''}可以选${module.name}了。`;
   announce(state, { kind: 'unlock', title: source.who, text, line, amount: 0 });
   studioLog(state, `学会${module.name}`, `${source.who}：${text}`);
   return line;
@@ -4851,16 +4896,16 @@ function validStudio(state: any) {
     || !Number.isInteger(cycle.index) || cycle.index < 0 || cycle.index >= LENS_ORDER.length
     || !number(cycle.from) || cycle.from > state.day || state.day - cycle.from > ((state.rulesRevision || 0) < 12 ? legacyRotationSpan(cycle.scale) : rotationSpan(cycle.scale)).total
     || !object(cycle.hot) || !object(cycle.last) || typeof cycle.reported !== 'boolean'
-    || !Array.isArray(cycle.seen) || !cycle.seen.includes(LENS_ORDER[cycle.index]) || !cycle.seen.every((axis: string) => LENS_ORDER.includes(axis))
-    || Object.entries(cycle.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_AXIS[tag] !== LENS_ORDER[cycle.index]))) return false;
+    || !Array.isArray(cycle.seen) || !cycle.seen.includes(LENS_ORDER[cycle.index]) || !cycle.seen.every((field: string) => LENS_ORDER.includes(field))
+    || Object.entries(cycle.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_FIELD[tag] !== LENS_ORDER[cycle.index]))) return false;
   if (cycle?.clocks && (!Array.isArray(cycle.clocks) || ![2, 4].includes(cycle.parallel) || cycle.clocks.length !== cycle.parallel
     || new Set(cycle.clocks.map((clock: any) => clock.index)).size !== cycle.parallel
     || cycle.clocks.some((clock: any) => !Number.isInteger(clock.index) || clock.index < 0 || clock.index >= LENS_ORDER.length
       || !number(clock.from) || clock.from > state.day || state.day - clock.from > rotationSpan(cycle.scale).total
       || !object(clock.hot) || !object(clock.last) || typeof clock.reported !== 'boolean'
       || clock.activated !== undefined && (!number(clock.activated) || clock.activated > state.day)
-      || Object.entries(clock.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_AXIS[tag] !== LENS_ORDER[clock.index])))) return false;
-  if (cycle?.reviews && (!Array.isArray(cycle.reviews) || !cycle.reviews.every((axis: string) => LENS_ORDER.includes(axis)))) return false;
+      || Object.entries(clock.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_FIELD[tag] !== LENS_ORDER[clock.index])))) return false;
+  if (cycle?.reviews && (!Array.isArray(cycle.reviews) || !cycle.reviews.every((field: string) => LENS_ORDER.includes(field)))) return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
