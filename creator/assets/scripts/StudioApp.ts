@@ -55,7 +55,6 @@ export class StudioApp extends Component {
   // Which open project the main screen currently speaks for when several run at once.
   private watching: string | null = null;
   private audio: AudioSource;
-  private music: AudioSource | null = null;
   private sounds = new Map<string, AudioClip>();
   private stage: Node;
   private effects: Node;
@@ -155,22 +154,12 @@ export class StudioApp extends Component {
     for (const name of ['click', 'income', 'launch', 'breakeven']) resources.load('sounds/' + name, AudioClip, (error, clip) => {
       if (!error && this.isValid) this.sounds.set(name, clip);
     });
-    this.music = this.canvas.addComponent(AudioSource);
-    resources.load('sounds/bgm', AudioClip, (error, clip) => {
-      if (error || !this.isValid || !this.music) return;
-      this.music.clip = clip;
-      this.music.loop = true;
-      this.music.volume = 0.35;
-      this.syncMusic();
-    });
     if (!this.state.company) this.routes = [{ menu: 'setup' }];
     else if (this.state.event) this.routes = [{ menu: 'event' }];
     this.resize();
     screen.on('window-resize', this.resize, this);
     engineGame.on(Game.EVENT_HIDE, this.background, this);
     platform.onHide(() => { if (this.isValid) this.background(); });
-    engineGame.on(Game.EVENT_SHOW, this.syncMusic, this);
-    platform.onShow(() => { if (this.isValid) this.syncMusic(); });
     // The storage warning stays until dismissed (no timer), so it is not lost while the player is still
     // reading the opening screen; normal notices still expire on their own.
     if (this.storageIssue) this.render();
@@ -180,16 +169,6 @@ export class StudioApp extends Component {
     this.officeArt.destroy();
     screen.off('window-resize', this.resize, this);
     engineGame.off(Game.EVENT_HIDE, this.background, this);
-    engineGame.off(Game.EVENT_SHOW, this.syncMusic, this);
-  }
-
-  // Music follows the setting; browsers only let it start after a touch, so touches retry it too.
-  private syncMusic() {
-    const music = this.music;
-    if (!music?.clip) return;
-    const on = this.state?.music !== false;
-    if (on && !music.playing) music.play();
-    else if (!on && music.playing) music.pause();
   }
 
   private resize() {
@@ -229,7 +208,6 @@ export class StudioApp extends Component {
 
   private touchStarted(event: EventTouch) {
     this.activeTouches.add(event.getID());
-    this.syncMusic();
   }
 
   private touchFinished(event: EventTouch) {
@@ -2570,7 +2548,6 @@ export class StudioApp extends Component {
         case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
         case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员开始加班。' : '全员恢复正常工作。'); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
-        case 'music': this.apply(core.setMusic(this.state, !!data.value)); this.syncMusic(); break;
         case 'exhibition': this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。'); break;
         case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), '更新已开始制作。'); break;
         case 'sale': this.apply(core.setSale(this.state, data.id, !!data.enabled, data.floor), data.enabled ? '已开启促销，系统会按余量决定打折时机。' : '已关闭促销，恢复原价销售。'); break;

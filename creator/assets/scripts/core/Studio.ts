@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.27';
+export const VERSION = '0.4.28';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -2084,11 +2084,6 @@ export function setAllOvertime(state: any, enabled: boolean) {
 export function setSound(state: any, enabled: boolean) {
   if (typeof enabled !== 'boolean') throw new Error('音效设置无效。');
   return { ...state, sound: enabled };
-}
-
-export function setMusic(state: any, enabled: boolean) {
-  if (typeof enabled !== 'boolean') throw new Error('音乐设置无效。');
-  return { ...state, music: enabled };
 }
 
 // Mentoring: a stronger colleague on the same project brings one ability of a weaker one up towards

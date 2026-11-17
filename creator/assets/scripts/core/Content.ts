@@ -1195,7 +1195,6 @@ function financeMenu(state: any) {
         { text: '重新创业', action: 'menu', data: { menu: 'restart' } }
       ] },
       { type: 'toggle', text: '音效', value: state.sound, action: 'sound' },
-      { type: 'toggle', text: '音乐', value: state.music !== false, action: 'music' },
       // The build number lives here instead of on the studio header: it is a "which build am I on"
       // question you ask once, not something worth a line of the main screen every session.
       { type: 'foot', text: '版本 v' + core.VERSION }
