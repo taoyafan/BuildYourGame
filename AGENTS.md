@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-「造游工坊」——持续经营类工作室模拟游戏。唯一的正式版本是 [creator/](creator/README.md) 下的 **Cocos Creator 3.8.8** 手机竖屏工程，同一套逻辑分别构建 H5、微信小游戏、抖音小游戏。
+「造游工坊」——持续经营类工作室模拟游戏。唯一的正式版本是 [creator/](creator/README.md) 下的 **Cocos Creator 3.8.8** 手机竖屏工程，同一套逻辑分别构建 H5、微信小游戏、抖音小游戏、TapTap 小游戏；小红书小工具由 H5 产物二次适配，见 [xiaohongshu/README.md](xiaohongshu/README.md)。
 
 - 经营规则：[creator/assets/scripts/core/Studio.ts](creator/assets/scripts/core/Studio.ts)（不依赖引擎，可在 Node 中模拟）
 - 内容数据：[creator/assets/scripts/core/Content.ts](creator/assets/scripts/core/Content.ts)
@@ -21,13 +21,20 @@
 - 已完成任务从 TODO 删除，不保留完成历史；程序、设计与运行说明在对应行为变更时同步更新。
 - 除 TODO 外，所有文档只写当前状态与未来规划：不写版本变更记录、讨论过程、存档迁移明细和「不再、原先、取代旧的」这类对比说法，历史由 git 记录。修改文档时同步清理遇到的此类句子，不要再添加。
 
-## 本机环境
+## 机器环境
+
+路径因机器而异，先用 `$env:COMPUTERNAME` 确认当前机器，再取对应路径；不在表里的路径不要假定存在。
+
+| 项 | SHAYAFANTAO01 | 另一台机器（有 E:、G: 盘，主机名待补） |
+| --- | --- | --- |
+| 仓库 | `C:\Shared\Code\Private\BuildGame` | `G:\code\Game\BuildYourGame` |
+| Cocos Creator 3.8.8 | `C:\temp\CocosCreator-3.8.8\CocosCreator.exe`（非 Dashboard 安装） | 未记录 |
+| 微信开发者工具 | 未安装 | `E:\Tencent\微信web开发者工具\cli.bat` |
+
+构建时显式设置 `COCOS_CREATOR`。
 
 | 项 | 值 |
 | --- | --- |
-| Cocos Creator | `C:\temp\CocosCreator-3.8.8\CocosCreator.exe`（非 Dashboard 安装） |
-| 环境变量 | 构建时显式设置 `COCOS_CREATOR`，不要假定旧的 E 盘路径仍存在 |
-| 微信开发者工具 | `E:\Tencent\微信web开发者工具\cli.bat` |
 | 微信 AppID | `wx6ec12949d6ad0ad8` |
 | H5 构建输出 | `creator/build/web-mobile` |
 | 微信构建输出 | `creator/build/wechatgame` |
@@ -50,10 +57,10 @@ CocosCreator.exe: bad option: --project
 
 ```powershell
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-$env:COCOS_CREATOR = 'C:\temp\CocosCreator-3.8.8\CocosCreator.exe'
+$env:COCOS_CREATOR = 'C:\temp\CocosCreator-3.8.8\CocosCreator.exe'   # SHAYAFANTAO01
 ```
 
-安装位置变化时，先确认可执行文件存在且版本为 3.8.8，再设置上述变量。
+换机器或安装位置变化时，先确认可执行文件存在且版本为 3.8.8，再设置上述变量。
 
 ### 构建命令
 
@@ -63,6 +70,7 @@ npm --prefix creator run prepare:assets    # 生成图标与音效
 npm --prefix creator run build:web         # H5
 npm --prefix creator run build:wechat      # 微信小游戏
 npm --prefix creator run build:douyin      # 抖音小游戏
+npm --prefix creator run build:tap         # TapTap 小游戏
 ```
 
 - 退出码 **36 表示成功**（`tools/build.cjs` 已按此判定），不是 0。
@@ -76,7 +84,7 @@ npm --prefix creator run build:douyin      # 抖音小游戏
 # H5：必须走 HTTP，不能双击 HTML
 npx --yes http-server@14.1.1 creator/build/web-mobile -a 127.0.0.1 -p 8802 -c-1
 
-# 微信：导入开发者工具
+# 微信：导入开发者工具（仅 E:/G: 盘那台机器；SHAYAFANTAO01 未安装）
 & 'E:\Tencent\微信web开发者工具\cli.bat' open --project 'G:\code\Game\BuildYourGame\creator\build\wechatgame'
 ```
 
@@ -107,7 +115,7 @@ $c.Contains('预期的新字符串')                  # True 才算真的生效
 ```powershell
 Get-Process -Name '微信开发者工具' -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 8
-& 'E:\Tencent\微信web开发者工具\cli.bat' open --project '<上述路径>'
+& 'E:\Tencent\微信web开发者工具\cli.bat' open --project '<上述路径>'   # 仅 E:/G: 盘那台机器
 ```
 
 工具会打印 `app.json 中未定义自定义编译中指定的启动页面` 红字时，说明残留了畸形编译条件（`project.config.json` 里的 `currentL` 字段）。删掉该字段或重新构建产物即可，**不影响运行**。

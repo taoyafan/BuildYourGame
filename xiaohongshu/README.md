@@ -26,7 +26,7 @@ python xiaohongshu/build_minitool.py
 
 产物：`xiaohongshu/build/minitool.zip`，正常是 118 个文件、0.86 MiB 左右，末尾输出 `PASS: N file(s)`。
 
-## 要改什么（5 项，缺一不可）
+## 要改什么（6 项，缺一不可）
 
 | # | 位置 | 改法 | 不改会怎样 |
 |---|---|---|---|

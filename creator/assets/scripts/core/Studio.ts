@@ -10,13 +10,13 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.23';
+export const VERSION = '0.4.24';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
 export const DIMENSIONS: any[] = [
   { key: 'creativity', name: '创意', short: '创', desc: '作品的新意与辨识度，影响能否出圈。' },
-  { key: 'depth', name: '深度', short: '深', desc: '系统与策略的掌握空间，影响长尾与后续扩展。' },
+  { key: 'depth', name: '深度', short: '深', desc: '系统与策略的掌握空间。' },
   { key: 'fluidity', name: '流畅', short: '流', desc: '操作响应、帧率与加载，操作型最看重。' },
   { key: 'picture', name: '画面', short: '画', desc: '美术与场景的呈现水准。' },
   { key: 'sound', name: '声音', short: '声', desc: '音乐与音效的呈现水准。' },
@@ -2989,7 +2989,7 @@ export const RATING_UP = [0, 45, 52, 64, 80];
 export const RATING_KEEP = [0, 38, 45, 56, 72];
 const RATING_WATCH = 4;
 const RATING_WEIGHTS = [0.5, 0.3, 0.2];
-// Attention a star level's coverage adds when a release date is announced and at launch.
+// Attention a star level's coverage adds at launch.
 export const MEDIA_BONUS = [0, 0.05, 0.1, 0.15, 0.2];
 // Every candidate in a three-person shortlist rolls on their own. These are the per-person odds at
 // five stars: 2% through friends, 4% on a job site, 10% through an industry referral. Lower star
