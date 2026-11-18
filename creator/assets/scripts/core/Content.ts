@@ -13,6 +13,8 @@ export function salesHistory(book: any) {
 // Spent this month: purchases already paid plus wages and rent accrued until month-end settlement.
 export const monthSpent = (state: any) => state.ledger.expense + state.accrued;
 
+const dimensionName = (key: string) => core.DIMENSIONS.find(item => item.key === key)?.name || key;
+
 export function stage(project: any) {
   const progress = project.progress || 0;
   if (project.job) return progress >= 100 ? '交付' : '委托制作';
@@ -44,7 +46,11 @@ export function advice(state: any, projectId?: string) {
   const project = shown || core.liveProjects(state)[0] || core.projectOpen(state)[0] || null;
   if (state.over) return { title: '公司没能支付月底开支', text: '点这里到「公司」页底部，加载别的存档或重新创业。', menu: 'finance' };
   if (state.event) return { title: state.event.title, text: '需要你做个决定，时间已暂停。', menu: 'event' };
-  if (project?.job) return { title: '完成委托', text: '做完' + core.MODULES[project.job.module].name + '可得 ' + money(project.job.pay) + '，模块留给你。完成度 ' + project.progress.toFixed(0) + '%。', menu: 'project', id: project.id };
+  if (project?.job) {
+    const missing = core.jobMissing(state, project);
+    if (project.progress >= 100 && missing.length) return { title: '委托的质量还不够', text: missing.map((item: any) => dimensionName(item.key) + ' ' + item.have + ' / ' + item.need).join('、') + '。换更擅长的人接着做，或者放弃这份委托。', menu: 'assign', id: project.id };
+    return { title: '完成委托', text: '做完' + core.MODULES[project.job.module].name + '可得 ' + money(project.job.pay) + '，模块留给你。完成度 ' + project.progress.toFixed(0) + '%。', menu: 'project', id: project.id };
+  }
   if (project?.kind === 'module' && !state.staff.some((person: any) => core.personWorks(state, project, person).length)) return { title: project.name + '还没有人做', text: '点这里安排人手；一个人同一时间只做一个项目。', menu: 'assign', id: project.id };
   const worker = state.staff[0];
   if (!worker) return { title: '招一位同事', text: '先从熟人推荐里招一位同事，一起把第一款游戏做出来。', menu: 'recruit', id: weakestRole(state) + ':' + bestChannel(state) };
@@ -137,6 +143,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'new-project': return newProjectMenu(state);
     case 'project': return projectMenu(state, route.id);
     case 'launch-confirm': return launchConfirmMenu(state, route.id);
+    case 'abandon': return abandonMenu(state, route.id);
     case 'dimension': return dimensionMenu(state, route.id, route.dim);
     case 'assign': return assignMenu(state, route.id);
     case 'testing': return testingMenu(state, route.id);
@@ -326,7 +333,8 @@ function projectMenu(state: any, id?: string) {
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
           { text: '新项目', detail: '', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
-          ...jobAction(state)
+          ...jobAction(state),
+          abandonAction(project)
         ] }
       ]
     };
@@ -373,9 +381,32 @@ function projectMenu(state: any, id?: string) {
     { type: 'actions', items: [
       ...(fix.known || project.fixFirst ? [{ text: project.fixFirst ? '正在先修复缺陷 · 点击恢复做内容' : '先修复缺陷', detail: '待修 ' + fix.known + ' 项' + (fix.days ? '，约 ' + fix.days + ' 天修完' : '') + (fix.unstaffed.length ? '；' + fix.unstaffed.join('、') + '没人修' : '') + '。各项负责人暂停做内容，修完自动恢复。', icon: 'Hammer', action: 'fix-first', data: { id: project.id, on: !project.fixFirst } }] : []),
       { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '还没做满，带着短板上市换回款。' : '已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '', emphasis: project.progress >= 100 && !defectsByDimension(project) }
-    ] }
+    ] },
+    { type: 'actions', items: [abandonAction(project)] }
   ];
   return { title: '项目', blocks };
+}
+
+// Giving up is its own confirmation page; the button only says what kind of project it would drop.
+function abandonAction(project: any) {
+  const info = core.PROJECT_KINDS[core.projectKind(project)];
+  const locked = !!project.job?.opening;
+  return { text: '放弃' + info.name, detail: locked ? '开局的这份委托要做完，才能租下小屋。' : '', icon: 'X', action: 'menu', data: { menu: 'abandon', id: project.id }, disabled: locked };
+}
+
+function abandonMenu(state: any, id?: string) {
+  const project = state.projects.find((item: any) => item.id === id);
+  if (!project) return { title: '放弃', blocks: [{ type: 'text', text: '这个项目已经不在了。' }] };
+  const kind = core.projectKind(project);
+  const info = core.PROJECT_KINDS[kind];
+  const label = kind === 'game' || kind === 'dlc' ? '《' + project.name + '》' : kind === 'patch' ? '《' + project.name + '》的补丁' : project.name;
+  return { title: '放弃' + info.name + '？', blocks: [
+    { type: 'note', icon: 'Target', text: label + '放弃后不能恢复。' + info.abandon },
+    { type: 'buttons', items: [
+      { text: '再想想', action: 'abandon-cancel' },
+      { text: '确认放弃', action: 'abandon-final', data: { id: project.id }, icon: 'X' }
+    ] }
+  ] };
 }
 
 // A second step before an irreversible release: name the work, show what is unfinished, and make the
@@ -432,7 +463,8 @@ function patchProjectMenu(state: any, project: any) {
         { text: '安排补丁人手', detail: '谁参与补丁', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
         { text: '立即上线', detail: '先发出已完成的部分', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
         { text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } },
-        { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+        { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
+        abandonAction(project)
       ] }
     ]
   };
@@ -442,8 +474,7 @@ function patchProjectMenu(state: any, project: any) {
 function jobAction(state: any) {
   if (state.office < 1) return [];
   const offers = core.jobBoard(state);
-  const fresh = core.freshJobs(state);
-  return [{ text: '接委托', detail: offers.length ? offers.length + ' 份委托' + (fresh ? ' · ' + fresh + ' 份新' : '') : '暂时没有委托', icon: 'Briefcase', action: 'menu', data: { menu: 'jobs' }, disabled: !offers.length, tag: fresh ? '新' : '' }];
+  return [{ text: '接委托', detail: offers.length ? offers.length + ' 份委托' : '暂时没有委托', icon: 'Briefcase', action: 'menu', data: { menu: 'jobs' }, disabled: !offers.length }];
 }
 
 const jobDaysLeft = (state: any, offer: any) => core.JOB_EXPIRY - (state.day - offer.day);
@@ -451,9 +482,9 @@ const jobDaysLeft = (state: any, offer: any) => core.JOB_EXPIRY - (state.day - o
 function jobsMenu(state: any) {
   const offers = core.jobBoard(state);
   return { title: '接委托', blocks: [
-    { type: 'help', key: 'jobs-help', title: '委托说明', text: '报酬固定，交付时一次到账，模块留在你的模块库。可以同时接几份，让不同的人各做一份。新委托隔几天来一份，放久了会被别人接走。' },
+    { type: 'help', key: 'jobs-help', title: '委托说明', text: '报酬固定，交付时一次到账，模块留在你的模块库。可以同时接几份，让不同的人各做一份。新委托隔几天来一份，团队越强来得越慢，放久了会被别人接走。每份委托对质量有最低要求，没做到不能交付。' },
     ...(offers.length ? [] : [{ type: 'text', text: '暂时没有委托。', muted: true }]),
-    { type: 'choices', items: [...offers].reverse().map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 还剩 ' + jobDaysLeft(state, offer) + ' 天', tag: offer.seen ? '' : '新', action: 'menu', data: { menu: 'job', id: offer.id } })) }
+    { type: 'choices', items: [...offers].reverse().map((offer: any) => ({ text: core.MODULES[offer.line].name + (core.lineTiers(offer.line) > 1 ? ' ' + offer.level + ' 级' : '') + ' · ' + money(offer.pay), detail: offer.client + ' · 还剩 ' + jobDaysLeft(state, offer) + ' 天', action: 'menu', data: { menu: 'job', id: offer.id } })) }
   ] };
 }
 
@@ -487,6 +518,7 @@ function jobDetailMenu(state: any, id: string) {
       { type: 'text', text: offer.client + '。' + (module.desc || '') },
       { type: 'lines', items: [
         ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 级' : '')],
+        ...Object.entries(offer.requires || {}).map(([key, floor]: any) => [dimensionName(key) + '至少', floor + ' 分']),
         ['报酬', money(offer.pay) + '（交付时一次到账）'],
         ['工作量', crewDays(state, work)],
         ['有效期', '还剩 ' + jobDaysLeft(state, offer) + ' 天']
@@ -653,15 +685,16 @@ function assignMenu(state: any, projectId: string) {
 
 // The playtest report: what the last round found, how the players took it, and every round so far.
 // Shared by the 试玩 page and the feedback popup so the two never drift apart.
+const wantsOf = (entry: any) => entry.wants ?? (entry.buy && entry.gain !== undefined ? Math.round(entry.gain * entry.buy / 100) : undefined);
 function testReport(state: any, project: any) {
   const test = project.test;
   if (!test) return [{ type: 'text', text: '还没有试玩过。', muted: true }];
   const value = (amount: any, unit = '') => amount === undefined || amount === null ? '—' : amount + unit;
   const blocks: any[] = [
     { type: 'text', text: core.dateText(test.day) + ' · ' + test.count + ' 位玩家', muted: true },
-    { type: 'stats', tone: 'plain', items: [['新发现缺陷', value(test.found, ' 项')], ['新增关注', value(test.gain, ' 人')], ['每 100 个关注', test.buy ? '约 ' + test.buy + ' 个会买' : '—']] },
+    { type: 'stats', tone: 'plain', items: [['新发现缺陷', value(test.found, ' 项')], ['新增关注', value(test.gain, ' 人')], ['明确想买', wantsOf(test) === undefined ? '—' : '约 ' + wantsOf(test) + ' 人']] },
     { type: 'lines', items: [['本作当下需求', test.demand || '—']] },
-    { type: 'help', key: 'test-help', title: '怎么看试玩结果', text: '「每 100 个关注约几个会买」按作品目前做到的样子估算，试玩人数越少越不准。需求是此刻市场对这类作品的热度，到发售时可能变化。' }
+    { type: 'help', key: 'test-help', title: '怎么看试玩结果', text: '「明确想买」是新增关注里，按作品目前做到的样子估算会买的人，试玩人数越少越不准。同一部作品试玩的轮数越多，每轮带来的新关注越少。需求是此刻市场对这类作品的热度，到发售时可能变化。' }
   ];
   const history = project.testLog || [];
   if (history.length > 1) {
@@ -671,7 +704,7 @@ function testReport(state: any, project: any) {
       blocks.push({ type: 'text', text: delta === 0 ? '新发现的缺陷和上一轮一样多。' : '新发现的缺陷比上一轮' + (delta > 0 ? '多 ' : '少 ') + Math.abs(delta) + ' 项。' });
     }
     blocks.push({ type: 'section', title: '试玩历史' });
-    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => [core.dateText(entry.day) + ' · ' + entry.count + ' 人', '缺陷 ' + value(entry.found) + ' · 约 ' + value(entry.buy) + '/100 会买 · 关注 +' + value(entry.gain)]) });
+    blocks.push({ type: 'lines', items: [...history].reverse().map((entry: any) => [core.dateText(entry.day) + ' · ' + entry.count + ' 人', '缺陷 ' + value(entry.found) + ' · 关注 +' + value(entry.gain) + ' · 想买 +' + value(wantsOf(entry))]) });
   }
   return blocks;
 }
@@ -748,7 +781,7 @@ function testingMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   if (!project || project.released) return { title: '试玩', blocks: [{ type: 'text', text: '先立项，并把体验版做出来。' }] };
   const offer = core.playtestOffer(state, project);
-  const [low, high] = core.playtestGain(offer.players);
+  const [low, high] = core.playtestGain(offer.players, project.tests || 0);
   const blocks: any[] = [
     { type: 'section', title: '招募试玩' },
     { type: 'lines', items: [['费用', money(offer.cost)], ['人数', offer.players + ' 人'], ['预计新增关注', '约 ' + low + '–' + high + ' 人']] },

@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.30';
+export const VERSION = '0.4.31';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1197,26 +1197,66 @@ function startJob(state: any) {
 // a young studio and fade once it is good; the module stays in the library either way.
 export const JOB_RATE = 0.08;
 export const JOB_EVERY = 10;
-export const JOB_BOARD = 5;
+export const JOB_SLOW = 35;
+export const JOB_STOP = 80;
 export const JOB_EXPIRY = 60;
+export const JOB_FLOORS = [40, 50, 60, 70];
 const JOB_CLIENTS = ['一家做教育软件的公司', '隔壁的独立团队', '一家广告公司', '一位做桌游的朋友', '一家外包大厂', '本地的文旅项目'];
 export function jobBoard(state: any) {
   return (state.board?.offers || []).filter((offer: any) => state.day - offer.day < JOB_EXPIRY);
 }
-export const freshJobs = (state: any) => jobBoard(state).filter((offer: any) => !offer.seen).length;
-export function markJobsSeen(state: any) {
-  if (!freshJobs(state)) return state;
-  return { ...state, board: { ...state.board, offers: state.board.offers.map((offer: any) => ({ ...offer, seen: true })) } };
+// The average of everyone's strongest ability: the studio's level as a client sees it.
+export function teamPeak(state: any) {
+  if (!state.staff.length) return 0;
+  return sum(state.staff.map((person: any) => Math.max(...ABILITY_KEYS.map(key => person.abilities[key])))) / state.staff.length;
+}
+// Days until the next offer: every few days at first, further apart as the team gets stronger, none once it
+// is strong enough that clients stop coming.
+export function jobGap(state: any) {
+  const peak = teamPeak(state);
+  if (peak >= JOB_STOP) return null;
+  return Math.round(JOB_EVERY + clamp((peak - 50) / (JOB_STOP - 50), 0, 1) * (JOB_SLOW - JOB_EVERY));
+}
+// A floor on every dimension the module needs, one the team can actually reach: no more than its best hand
+// there minus 5. A dimension nobody is near 40 in gets no floor.
+function jobRequires(state: any, line: string) {
+  const out: any = {};
+  for (const key of Object.keys(MODULES[line].work)) {
+    const work = WORKS.find(item => item.dimension === key);
+    if (!work) continue;
+    const best = Math.max(0, ...state.staff.map((person: any) => able(person, work.ability)));
+    const reachable = JOB_FLOORS.filter(floor => floor <= best - 5);
+    if (reachable.length) out[key] = reachable[Math.floor(random(state) * reachable.length)];
+  }
+  return out;
+}
+// The floors that still apply to a running job: a dimension this project has no work on (its tiers were
+// already built) cannot be judged, so it is not asked for.
+export function jobNeeds(project: any) {
+  const need = project.job?.requires || {};
+  const out: any = {};
+  for (const key of Object.keys(need)) if (workOf(project, key).total > 0) out[key] = need[key];
+  return out;
+}
+// The content dimensions a project actually has work on; the others are not part of what it delivers.
+export const involvedDims = (project: any) => CONTENT_KEYS.filter((key: string) => workOf(project, key).total > 0);
+// What a running job still lacks: the dimensions below the client's floor.
+export function jobMissing(_state: any, project: any) {
+  const need = jobNeeds(project);
+  const metrics = projectMetrics(project);
+  return Object.keys(need).filter(key => metrics.dimensions[key] < need[key]).map(key => ({ key, need: need[key], have: Math.floor(metrics.dimensions[key]) }));
 }
 // The dimension a line mostly needs, so offers on the board ask for different people.
 const mainDimension = (line: string) => (Object.entries(MODULES[line].work) as any[]).sort((left, right) => right[1] - left[1])[0][0];
-// One new offer every few days; the oldest drops off when the board is full, and untaken ones expire.
+// One new offer every few days, further apart as the team gets stronger; untaken ones expire.
 function refreshBoard(state: any) {
   if (!state.company || state.office < 1) return;
   const board = state.board || (state.board = { next: state.day, offers: [] });
   board.offers = jobBoard(state);
   if (state.day < board.next) return;
-  board.next = state.day + JOB_EVERY;
+  const gap = jobGap(state);
+  if (gap === null) return;
+  board.next = state.day + gap;
   const levelOf = (line: string) => Math.min(lineTiers(line), lineInfo(state, line).level + 1, scaleOpen(state, 1) ? 2 : 1);
   const jobs = state.projects.filter((project: any) => project.job).map((project: any) => project.job.module);
   const busy = [...board.offers.map((offer: any) => offer.line), ...jobs];
@@ -1228,8 +1268,8 @@ function refreshBoard(state: any) {
   const line = pool[Math.floor(random(state) * pool.length)];
   const level = levelOf(line);
   const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id).work) as number[])));
-  const offer = { id: `offer-${state.day}`, line, level, pay: round(work * JOB_RATE), client: pick(state, JOB_CLIENTS), day: state.day, seen: false };
-  board.offers = [...board.offers, offer].slice(-JOB_BOARD);
+  const offer = { id: `offer-${state.day}`, line, level, pay: round(work * JOB_RATE), client: pick(state, JOB_CLIENTS), day: state.day, requires: jobRequires(state, line) };
+  board.offers = [...board.offers, offer];
   announce(state, { kind: 'job', title: '收到新委托', text: `${offer.client}想要${MODULES[line].name} · ${moneyText(offer.pay)}`, route: { menu: 'job', id: offer.id }, amount: 0 });
 }
 
@@ -1239,7 +1279,7 @@ export function takeJob(state: any, id: string) {
   if (!offer) throw new Error('这份委托已经不在了。');
   const module = MODULES[offer.line];
   const project = blankProject(next, `job-${next.day}-${next.seed}-${next.projects.length}`, { name: `委托：${module.name}${lineTiers(offer.line) > 1 ? ` ${offer.level} 级` : ''}`, scale: offer.level - 1, only: [offer.line], type: module.type || 'action' }, next.day);
-  project.job = { pay: offer.pay, client: offer.client + '想要' + module.name, module: offer.line };
+  project.job = { pay: offer.pay, client: offer.client + '想要' + module.name, module: offer.line, requires: offer.requires || {} };
   project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   next.board.offers = next.board.offers.filter((item: any) => item.id !== id);
@@ -2381,6 +2421,42 @@ export function setPriority(state: any, projectId: string, priority: number) {
   return next;
 }
 
+// What each kind of project is and can do, in one place. The kind is read from the markers a project
+// already carries (module / job / patch / parentId), so saves need no migration.
+const ABANDON_GAME = '已花的钱不退，本作内容作废；用到的模块进度仍留在模块库。';
+export const PROJECT_KINDS: any = {
+  game: { name: '游戏', playtest: true, launch: true, abandon: ABANDON_GAME },
+  dlc: { name: '资料片', playtest: true, launch: true, abandon: ABANDON_GAME },
+  module: { name: '模块', playtest: false, launch: false, abandon: '已花的钱不退；已做出的部分仍留在模块库。' },
+  job: { name: '委托', playtest: false, launch: false, abandon: '没有惩罚，但拿不到报酬；已做出的部分仍留在模块库。' },
+  patch: { name: '补丁', playtest: false, launch: false, abandon: '补丁取消，已修好的缺陷保留，剩下的留给下一个补丁。' }
+};
+export function projectKind(project: any): string {
+  // A shipped title only stays among the live projects while a patch runs on it.
+  if (project.released) return 'patch';
+  if (project.job) return 'job';
+  if (project.kind === 'module') return 'module';
+  return project.parentId ? 'dlc' : 'game';
+}
+
+// Giving up costs nothing extra: the money is already spent. Work done on library modules stays in the
+// library; a title's own content, a job's fee and a patch's remaining scope are what is lost.
+export function abandonProject(state: any, projectId: string) {
+  const next = studioAction(state);
+  const project = next.projects.find((item: any) => item.id === projectId);
+  if (!project) throw new Error('项目不存在。');
+  const kind = projectKind(project);
+  if (kind === 'job' && project.job.opening) throw new Error('开局的这份委托要做完，才能租下小屋。');
+  if (kind === 'patch') {
+    project.patch = null;
+    project.assignments = {};
+  } else next.projects = next.projects.filter((item: any) => item.id !== projectId);
+  projectOrder(next).forEach((item: any, index: number) => { item.priority = index; });
+  const label = kind === 'game' || kind === 'dlc' ? `《${project.name}》` : kind === 'patch' ? `《${project.name}》的补丁` : project.name;
+  studioLog(next, `放弃${PROJECT_KINDS[kind].name}`, `${label}已放弃。${PROJECT_KINDS[kind].abandon}`);
+  return next;
+}
+
 // A patch is its own small project on a shipped title: the scope is fixed when it starts (the defects
 // players have reported so far, plus an optional rework of one dimension), it has its own crew and
 // priority, and it ships by itself once the scope is done.
@@ -2889,11 +2965,13 @@ function promoDay(state: any) {
 }
 // One playtest round per press, sized and priced by scale. The less is still uncovered, the smaller each
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
-export const PLAYTESTS = [{ players: 30, cost: 0.8 }, { players: 100, cost: 2.5 }, { players: 300, cost: 7 }, { players: 1000, cost: 20 }];
+export const PLAYTESTS = [{ players: 100, cost: 0.8 }, { players: 300, cost: 2.5 }, { players: 1000, cost: 7 }, { players: 3000, cost: 20 }];
 export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
-// New followers per player, low and high: the range the player sees before paying.
+// New followers per player, low and high: the range the player sees before paying. Every further round on
+// the same title brings in a smaller share of new people.
 export const PLAYTEST_GAIN = [0.4, 2.3];
-export const playtestGain = (players: number) => PLAYTEST_GAIN.map(share => Math.round(players * share));
+export const PLAYTEST_DECAY = 0.7;
+export const playtestGain = (players: number, taken = 0) => PLAYTEST_GAIN.map(share => Math.round(players * share * Math.pow(PLAYTEST_DECAY, taken)));
 // Today's demand for the title's tags as a word, relative to how far this scale's market can swing.
 export function demandHeat(state: any, project: any) {
   const limit = ROTATION.scaleAmplitude[project.scale] ?? ROTATION.amplitude;
@@ -2902,7 +2980,7 @@ export function demandHeat(state: any, project: any) {
 }
 
 export function playtestOffer(state: any, project: any) {
-  const reason = !project ? '先立项开发' : project.kind === 'module' ? '模块项目不需要试玩' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : state.cash < playtestOf(project).cost ? '资金不足' : '';
+  const reason = !project ? '先立项开发' : !PROJECT_KINDS[projectKind(project)].playtest ? '这类项目不需要试玩' : project.progress < TRIAL * 100 ? '完成度达到 55% 后才有体验版，才能试玩' : project.test && state.day - project.test.day < 3 ? '距上次试玩至少间隔 3 天' : state.cash < playtestOf(project).cost ? '资金不足' : '';
   return { available: !reason && !state.over && !state.event, reason, ...playtestOf(project) };
 }
 
@@ -2925,18 +3003,19 @@ export function testDemo(state: any, projectId: string) {
   target.invested = round(target.invested + cost);
   target.tests += 1;
   target.testCount += count;
-  const gain = Math.round(count * clamp(score / 50, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3));
+  const gain = Math.round(count * clamp(score / 50, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3) * Math.pow(PLAYTEST_DECAY, target.tests - 1));
   target.followers += gain;
   // How many of those who know the title will end up buying it, judged from how these players took it;
   // a small group reads it less precisely.
   const conv = conversionRate(marketScore(score, next.day));
   const buy = Math.round(clamp(conv / (conv + ECONOMY.forget) * (1 + (random(next) - 0.5) * 0.5 * Math.sqrt(30 / count)), 0.01, 0.99) * 100);
+  const wants = Math.round(gain * buy / 100);
   const demand = demandHeat(next, target);
   // Every run is kept (last five) so a retest can be compared against what changed in between.
-  target.testLog = [...(target.testLog || []), { day: next.day, count, found: newlyFound, buy, gain }].slice(-5);
-  target.test = { day: next.day, count, found: newlyFound, buy, gain, demand, source: '试玩玩家' };
-  next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位玩家试玩，新发现 ${newlyFound} 项缺陷，新增关注 ${gain} 人。`, choices: [{ id: 'continue', title: '收下反馈，继续经营' }] };
-  studioLog(next, '体验版试玩', `${count} 人参与，评分 ${score.toFixed(1)}，发现 ${newlyFound} 项缺陷。`);
+  target.testLog = [...(target.testLog || []), { day: next.day, count, found: newlyFound, buy, gain, wants }].slice(-5);
+  target.test = { day: next.day, count, found: newlyFound, buy, gain, wants, demand, source: '试玩玩家' };
+  next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位玩家试玩，新发现 ${newlyFound} 项缺陷，新增关注 ${gain} 人，其中约 ${wants} 人明确想买。`, choices: [{ id: 'continue', title: '收下反馈，继续经营' }] };
+  studioLog(next, '体验版试玩', `${count} 人参与，发现 ${newlyFound} 项缺陷，新增关注 ${gain} 人。`);
   return next;
 }
 
@@ -3117,7 +3196,7 @@ export function launchProject(state: any, projectId: string) {
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
-  if (project.kind === 'module') throw new Error('模块项目做完会自动收进模块库，不用发售。');
+  if (!PROJECT_KINDS[projectKind(project)].launch) throw new Error('模块项目做完会自动收进模块库，不用发售。');
   const metrics = projectMetrics(project);
   // Releasing early means shipping with unfinished dimensions — but it still requires the trial build.
   if (metrics.progress < TRIAL * 100) throw new Error('体验版完成后才能发售；提前发售指带着未完成的维度上市。');
@@ -3533,7 +3612,7 @@ export function stepDay(state: any) {
     if (project.released) syncReleased(next, project);
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
-  for (const job of next.projects.filter((project: any) => project.job && project.progress >= 100)) if (!job.job.opening || !next.event) finishJob(next, job);
+  for (const job of next.projects.filter((project: any) => project.job && project.progress >= 100 && !jobMissing(next, project).length)) if (!job.job.opening || !next.event) finishJob(next, job);
   for (const project of next.projects.filter((item: any) => item.kind === 'module' && !item.job && item.progress >= 100)) finishModuleProject(next, project);
   shareDefects(next);
   tagDay(next);

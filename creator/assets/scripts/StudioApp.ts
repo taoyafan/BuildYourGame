@@ -847,7 +847,6 @@ export class StudioApp extends Component {
         this.openMenu(menu, id);
       });
       this.navIcon(node, lock ? 'Lock' : icon, (cellWidth - 22) / 2, 5, 22, lock ? colors.line : colors.green);
-      if (menu === 'project' && !lock && core.freshJobs(state)) new Pen(this.box(node, 'Dot', cellWidth / 2 + 8, 2, 10, 10).addComponent(Graphics)).circle(5, 5, 5, colors.danger);
       this.text(node, title, 0, 32, cellWidth, 18, 11, lock ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
       this.anchors.set('nav-' + menu, node);
     });
@@ -1100,6 +1099,26 @@ export class StudioApp extends Component {
     return y + 26;
   }
 
+  // Six cells for a module or commission: the current score, and "now / floor" where the client asks for
+  // one (red while below it). Dimensions the project does not work on read "-".
+  private dimensionRow(body: Node, y: number, project: any) {
+    const inner = this.width - 40;
+    const metrics = core.projectMetrics(project);
+    const need = core.jobNeeds(project);
+    const involved = core.involvedDims(project);
+    const cell = inner / core.DIM_KEYS.length;
+    core.DIM_KEYS.forEach((key: string, index: number) => {
+      const box = this.box(body, 'Dim-' + key, index * cell + 2, y, cell - 4, 46, colors.pale, 8);
+      this.clickable(box, () => this.openMenu('project', project.id));
+      const on = key === 'stability' || involved.includes(key);
+      const have = metrics.dimensions[key];
+      const short = need[key] !== undefined && have < need[key];
+      this.text(box, core.DIMENSIONS.find((item: any) => item.key === key)?.name || key, 0, 4, cell - 4, 16, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.text(box, on ? Math.floor(have) + (need[key] !== undefined ? '/' + need[key] : '') : '-', 0, 22, cell - 4, 20, 13, short ? colors.danger : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+    });
+    return 54;
+  }
+
   private projectPanel(body: Node, y: number, metrics: any) {
     const state = this.state;
     // Must follow the tab the player picked, not whichever project happens to be first.
@@ -1114,6 +1133,9 @@ export class StudioApp extends Component {
     this.text(heading, core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, 0, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     y += 28;
     y += this.milestones(body, y, project, metrics, forecast) + 6;
+    // A module or commission has no prototype to wait for: its six scores and the client's floors are the
+    // whole picture, so they show from the start.
+    if (project.kind === 'module') return y + this.dimensionRow(body, y, project);
     // The radar is six zeroes and a lot of empty space until a prototype exists. Reveal the scoring
     // panel when it actually has a shape instead of opening the game on a wall of zeroes.
     if (!project.checkpoints?.prototype) {
@@ -2447,7 +2469,6 @@ export class StudioApp extends Component {
     this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
-    if (menu === 'jobs' || menu === 'job') { this.state = core.markJobsSeen(this.state); this.save(); }
     this.routes.push({ menu, id, dim });
     this.render();
   }
@@ -2615,6 +2636,15 @@ export class StudioApp extends Component {
         case 'launch': this.openMenu('launch-confirm', data.id); break;
         case 'launch-cancel': this.routes.pop(); this.render(); break;
         case 'launch-final': this.apply(core.launchProject(this.state, data.id)); break;
+        // Giving up works the same way: the button opens a confirmation, the second press does it.
+        case 'abandon-cancel': this.routes.pop(); this.render(); break;
+        case 'abandon-final': {
+          const next = core.abandonProject(this.state, data.id);
+          this.routes = [];
+          this.watching = null;
+          this.apply(next, '已放弃。');
+          break;
+        }
         case 'decision': this.decide(data.choice); break;
         case 'review':
           this.apply(core.resolveStudioEvent(this.state, 'continue'));
