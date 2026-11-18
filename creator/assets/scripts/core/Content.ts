@@ -819,7 +819,15 @@ function marketMenu(state: any, id?: string) {
     blocks.push({ type: 'section', title: '推广《' + project.name + '》' });
     const status = core.promoStatus(state, project);
     blocks.push({ type: 'lines', items: [['共投入', money(status.spent)], ['已获得关注', status.gain ? '约 ' + number(status.gain) + ' 人' : '—'], ...(status.wait ? [['最近一笔', status.wait + ' 天后反馈']] : [])] });
-    blocks.push({ type: 'buttons', anchor: 'promotions', columns: 3, items: core.promoteSteps(state, project).map((step: any) => ({ text: '追加 ' + money(step.cost), action: 'promote', data: { id: project.id, step: step.index }, disabled: project.progress < 55 || state.cash < step.cost, reason: project.progress < 55 ? '体验版完成后才能推广' : '资金不足', anchor: 'promote-' + step.index })) });
+    const ready = project.progress >= 55;
+    blocks.push({ type: 'choices', anchor: 'promotions', items: core.promoteSteps(state, project).map((step: any) => ({
+      text: step.name,
+      detail: step.reached ? '' : !ready ? '体验版完成后才能推广' : '追加到这一档 ' + money(step.cost) + (state.cash < step.cost ? '，资金不足' : ''),
+      tag: step.current ? '当前' : step.reached ? '已达' : '',
+      action: 'promote', data: { id: project.id, step: step.index },
+      disabled: step.reached || !ready || state.cash < step.cost,
+      anchor: 'promote-' + step.index
+    })) });
   }  return { title: '市场', blocks };
 }
 
@@ -1552,7 +1560,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => project?.checkpoints.demo && !seen.testing && !seen.navTesting ? { anchor: 'nav-project', text: '体验版完成：点「项目」，在里面打开「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
       // Optional tip: 市场 stays live under the highlight, 知道了 dismisses it. Keep this an ack step —
       // a forced tap removes the 知道了 button and makes promoting feel compulsory.
-      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投推广：可以分几笔追加，几天后会告诉你这一笔带来了多少关注。') : null,
+      () => project?.test && !seen.promote && !project.promoted ? explain('promote', 'nav-market', '试玩之后可以去「市场」投推广：共五档，可以分几次追加到更高一档，几天后会告诉你这一笔带来了多少关注。') : null,
       () => project?.test && !seen.defects ? explain('defects', 'stat-defects', '待修缺陷是测试和玩家发现、还没修的问题。员工负责的工作做满后自动消耗工时修复；没测到的缺陷会在发售后被玩家发现。') : null,
       () => complete && !project.released ? explain('launchBook', 'nav-project', '各评分项都做满了。想发售时在「项目」里正式发售，也可以继续返工提高评分。') : null,
       () => !project && state.catalog.length === 1 && !seen.navReview ? { anchor: 'nav-finance', text: '首作已发售。点「公司」，在作品履历里打开它看看复盘：哪里亏了，下一作怎么改。', tap: 'navReview' } : null
@@ -1593,7 +1601,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     }
     case 'testing': return seen.testing ? null : { anchor: 'tests', text: '花一点钱招玩家试玩：会碰到一些测试漏掉的缺陷，带来一些关注，还能看出关注的人里大约多少会买。可以试多轮，覆盖越高碰到的越少。', ack: 'testing' };
     case 'market':
-      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '先投一笔小的，几天后看带来多少关注，再决定要不要追加。不投也可以。', ack: 'promotions' };
+      if (project && !project.promoted && !seen.promotions) return { anchor: 'promotions', text: '先投试水一档，几天后看带来多少关注，再决定要不要追加到更高一档。不投也可以。', ack: 'promotions' };
       return null;
     default: return null;
   }

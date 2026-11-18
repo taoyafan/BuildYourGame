@@ -3,14 +3,14 @@
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, AXES, FIELDS, ORIGINS, SECOND_MECHANIC } from './Modules';
 import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, promotionReach, launchAttention, salesStep, simulateTitle } from './Planning';
+import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
 export { MODULES, AXES, FIELDS, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.31';
+export const VERSION = '0.4.32';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -2907,10 +2907,9 @@ export function expectedScore(state: any, project: any) {
   return round(clamp(overallOf(project.type, expectedDimensions(state, project)) - (project.expectation || 0), 0, 100));
 }
 
-// Promotion is bought in instalments until launch: each one raises the share of the market that knows the
-// title, and what it added is only reported a few days later. Steps are multiples of the smallest campaign.
+// Promotion is bought up to a tier until launch: each purchase raises the share of the market that knows
+// the title to that tier's cover, and what it added is only reported a few days later.
 export const PROMO_DELAY = 3;
-const PROMO_STEPS = [1, 3, 6];
 function promoBasis(state: any, project: any) {
   const scale = project.scale;
   const qe = marketScore(expectedScore(state, project), state.day);
@@ -2919,10 +2918,18 @@ function promoBasis(state: any, project: any) {
   const priceShare = project.parentId ? SIDE_PRICE : 1;
   return { scale, qe, demand, share, priceShare, market: marketCapacity(scale, qe) * demand * share };
 }
+// Index 0 is no campaign (the platform's own cover); 1..4 are the paid tiers. The price is what the cover
+// still missing costs at today's market, so a changed score never refunds or voids what was bought.
 export function promoteSteps(state: any, project: any) {
   const basis = promoBasis(state, project);
-  const base = promotionCost(basis.scale, basis.qe, PROMOTE_TIERS[0].cover, basis.demand, basis.share) * basis.priceShare;
-  return PROMO_STEPS.map((times, index) => ({ index, cost: Math.max(0.1, Math.round(base * times * 10) / 10) }));
+  const have = Math.max(ECONOMY.platform, project.promoCover || 0);
+  const price = (cover: number) => promotionCost(basis.scale, basis.qe, cover, basis.demand, basis.share) * basis.priceShare;
+  const tiers = [{ name: PROMOTION_TIERS[0][0], cover: ECONOMY.platform }, ...PROMOTE_TIERS];
+  const top = tiers.reduce((best: number, tier: any, index: number) => have >= tier.cover - 1e-9 ? index : best, 0);
+  return tiers.map((tier: any, index: number) => {
+    const reached = have >= tier.cover - 1e-9;
+    return { index, name: tier.name, cover: tier.cover, reached, current: index === top, cost: reached ? 0 : Math.max(0.1, Math.round((price(tier.cover) - price(have)) * 10) / 10) };
+  });
 }
 // What the player may know: money in, attention reported so far, and days until the last report arrives.
 export function promoStatus(state: any, project: any) {
@@ -2933,25 +2940,25 @@ export function promoStatus(state: any, project: any) {
 
 export function promote(state: any, projectId: string, step: number) {
   const index = Number(step);
-  if (!Number.isInteger(index) || !PROMO_STEPS[index]) throw new Error('推广金额无效。');
+  if (!Number.isInteger(index) || index < 1 || index > PROMOTE_TIERS.length) throw new Error('推广档位无效。');
   const next = studioAction(state);
   const project = next.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后才能推广。');
-  const cost = promoteSteps(next, project)[index].cost;
+  const tier = promoteSteps(next, project)[index];
+  if (tier.reached) throw new Error('已经达到这一档。');
+  const cost = tier.cost;
   spend(next, cost, '推广预算');
   const basis = promoBasis(next, project);
   const before = Math.max(ECONOMY.platform, project.promoCover || 0);
-  // The cover already bought is priced at today's market, so a changed score never refunds or voids it.
-  const bought = promotionCost(basis.scale, basis.qe, before, basis.demand, basis.share) * basis.priceShare;
-  const cover = Math.max(before, promotionReach(basis.scale, basis.qe, (bought + cost) / basis.priceShare, basis.demand, basis.share));
-  project.promoCover = cover;
+  project.promoCover = tier.cover;
   project.promoted = round((project.promoted || 0) + cost);
-  project.promoFollowers = Math.round((cover - ECONOMY.platform) * basis.market);
-  project.promoPlan = [...(project.promoPlan || []), index];
-  project.promoLog = [...(project.promoLog || []), { due: next.day + PROMO_DELAY, spent: cost, gain: Math.round((cover - before) * basis.market) }];
+  project.promoFollowers = Math.round((tier.cover - ECONOMY.platform) * basis.market);
+  // Paid tiers are numbered from 0 here, so a lone smallest purchase still reads as tier 0.
+  project.promoPlan = [...(project.promoPlan || []), index - 1];
+  project.promoLog = [...(project.promoLog || []), { due: next.day + PROMO_DELAY, spent: cost, gain: Math.round((tier.cover - before) * basis.market) }];
   project.invested = round(project.invested + cost);
-  studioLog(next, '推广投入', `《${project.name}》追加推广 ${moneyText(cost)}，共投入 ${moneyText(project.promoted)}；效果几天后反馈。`);
+  studioLog(next, '推广投入', `《${project.name}》推广追加到「${tier.name}」，花 ${moneyText(cost)}，共投入 ${moneyText(project.promoted)}；效果几天后反馈。`);
   return next;
 }
 function promoDay(state: any) {
