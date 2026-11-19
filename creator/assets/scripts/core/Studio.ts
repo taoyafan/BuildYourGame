@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.32';
+export const VERSION = '0.4.33';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -3410,7 +3410,7 @@ export const ACHIEVEMENTS: any[] = [
   { key: 'cash1000', group: 'business', title: '千万现金', text: '公司现金达到 1000 万。', check: (s: any) => s.cash >= 1000, progress: (s: any) => [s.cash, 1000, 'money'] },
   { key: 'cash10000', group: 'business', title: '资产过亿', text: '公司现金达到 1 亿。', check: (s: any) => s.cash >= 10000, progress: (s: any) => [s.cash, 10000, 'money'] },
   { key: 'team8', group: 'business', title: '八人小队', text: '同时有 8 名员工。', check: (s: any) => s.staff.length >= 8, progress: (s: any) => [s.staff.length, 8] },
-  { key: 'team16', group: 'business', title: '座无虚席', text: '16 个工位全部坐满。', check: (s: any) => s.staff.length >= 16, progress: (s: any) => [s.staff.length, 16] },
+  { key: 'team16', group: 'business', title: '座无虚席', text: '20 个工位全部坐满。', check: (s: any) => s.staff.length >= 20, progress: (s: any) => [s.staff.length, 20] },
   { key: 'team40', group: 'business', title: '四十人团队', text: '同时有 40 名员工。', check: (s: any) => s.staff.length >= 40, progress: (s: any) => [s.staff.length, 40] },
   { key: 'year3', group: 'business', title: '三周年', text: '公司经营满三年。', check: (s: any) => s.day >= 1080, progress: (s: any) => [s.day, 1080] },
   { key: 'books10', group: 'works', title: '十部作品', text: '发售 10 部作品。', check: (s: any) => ownBooks(s).length >= 10, progress: (s: any) => [ownBooks(s).length, 10] },

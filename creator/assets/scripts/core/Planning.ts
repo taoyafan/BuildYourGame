@@ -30,7 +30,7 @@ export const PLANNING_OFFICES = [
   { name: '自家', seats: 1, rent: 0, cost: 0, crew: 1, peak: 45 },
   { name: '起步小屋', seats: 4, rent: 1.5, cost: 0, crew: 3, peak: 48 },
   { name: '正式办公室', seats: 10, rent: 3, cost: 8, crew: 6, peak: 60 },
-  { name: '独立工作室', seats: 16, rent: 5, cost: 26, crew: 10, peak: 70 },
+  { name: '独立工作室', seats: 20, rent: 6, cost: 32, crew: 10, peak: 70 },
   { name: '写字楼整层', seats: 40, rent: 12, cost: 64, crew: 24, peak: 85 },
   { name: '园区大楼', seats: 100, rent: 30, cost: 160, crew: 60, peak: 93 }
 ];
