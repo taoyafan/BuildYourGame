@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.34';
+export const VERSION = '0.4.36';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -140,8 +140,8 @@ export const PERSONALITY_TAGS: any = {
   speedy: { name: '手快', text: '工作速度更高。', rarity: 1 },
   social: { name: '合群', text: '团建更容易出效果。', rarity: 1 }
 };
-// Negative labels are the only form stress takes. They lower ability and output, and only overtime
-// produces them. No fallback: the more often someone works overtime, the likelier they appear.
+// Negative labels are the only form stress takes. They lower ability and output. Overtime produces
+// both; a wage far below the market price produces「想走」.
 export const STRESS_TAGS: any = {
   tired: { name: '疲惫', text: '能力与产出下降。', warn: true },
   leaving: { name: '想走', text: '每天可能提出离职，还在加班时概率翻倍。', warn: true }
@@ -206,7 +206,8 @@ export function personTags(person: any) {
   const notable = ABILITY_KEYS.filter(ability => valueRank(person.abilities[ability]) >= 2).sort((left, right) => person.abilities[right] - person.abilities[left]).slice(0, 2);
   for (const ability of notable) out.push(abilityTag(ability, person.abilities[ability]));
   const good = out.filter(item => item.tone !== 'stress').sort((left, right) => right.rank - left.rank);
-  return [...(person.stressTags || []).map((key: string) => tagInfo(key, person)), ...out.filter(item => item.tone === 'stress'), ...good];
+  const pay = underpaid(person) ? [{ name: '薪资偏低', text: '月薪比市场身价低太多，可能因此想走。', kind: '状态', rank: -1, tone: 'stress' }] : [];
+  return [...(person.stressTags || []).map((key: string) => tagInfo(key, person)), ...pay, ...out.filter(item => item.tone === 'stress'), ...good];
 }
 // Potential is the ceiling practice can reach; candidates only show a band, never the number.
 export function potentialBand(person: any) {
@@ -1482,6 +1483,12 @@ export function marketWage(person: any) {
   return round(monthlyWage(peak, person.speed));
 }
 
+// Below this share of the market price a person may start wanting to leave.
+export const UNDERPAID = 0.75;
+export function underpaid(person: any) {
+  return !person.founder && person.wage < marketWage(person) * UNDERPAID;
+}
+
 // Notes on a person's own record: joining, releases, mentoring, labels and the events they lived through.
 function personNote(state: any, person: any, text: string) {
   person.history = [...(person.history || []), { day: state.day, text }].slice(-40);
@@ -1641,9 +1648,19 @@ export function dismiss(state: any, id: string) {
   const person = next.staff.find((item: any) => item.id === id);
   if (!person) throw new Error('员工不存在。');
   if (person.founder) throw new Error('创始人不能被裁员。');
-  const years = Math.max(0, Math.floor((next.day - person.joined) / 360));
-  const severance = round(person.wage * (years + 1));
+  const severance = severanceOf(next, person);
   if (severance > next.cash) throw new Error(`遣散费需要 ${severance.toFixed(2)} 万，资金不足。`);
+  return letGo(next, person, `${person.name} 被裁`);
+}
+
+function severanceOf(state: any, person: any) {
+  const years = Math.max(0, Math.floor((state.day - person.joined) / 360));
+  return round(person.wage * (years + 1));
+}
+
+function letGo(next: any, person: any, title: string) {
+  const id = person.id;
+  const severance = severanceOf(next, person);
   next.cash = round(next.cash - severance);
   next.ledger.expense = round(next.ledger.expense + severance);
   next.staff = next.staff.filter((item: any) => item.id !== id);
@@ -1655,44 +1672,84 @@ export function dismiss(state: any, id: string) {
     if (!other.stressTags.includes('tired') && random(next) < (person.boost ? 0.6 : 0.35)) other.stressTags.push('tired');
   }
   if (next.event?.person === id) next.event = null;
-  studioLog(next, `${person.name} 被裁`, `支付 N+1 遣散费 ${severance.toFixed(2)} 万，在职同事仍留有心结。`);
+  studioLog(next, title, `支付 N+1 遣散费 ${severance.toFixed(2)} 万，在职同事仍留有心结。`);
   return nextStory(next);
 }
 
 export const monthlyCost = (state: any) => round(OFFICES[state.office].rent + state.staff.reduce((total: number, person: any) => total + person.wage, 0));
 
-// A raise is the player's own gesture: the wage goes up for good and the person may grow a new side of
-// themselves. Nobody asks for one, and not giving it costs nothing.
-export const RAISE_STEP = 0.1;
-export const RAISE_MAX = 3;
-export const RAISE_AWAKEN = 0.3;
+// A raise is the player's own gesture: the wage goes up for good to a share of the market price. Higher
+// tiers are likelier to clear「想走」and to awaken a new side of the person.
+export const RAISE_TIERS = [
+  { name: '略低于市场价', ratio: 0.9, clear: 0.3, awaken: 0 },
+  { name: '市场价', ratio: 1, clear: 0.5, awaken: 0.15 },
+  { name: '高于市场价', ratio: 1.1, clear: 0.7, awaken: 0.3 }
+];
+export const RAISE_COOLDOWN = 90;
+// Keeping someone who has already handed in notice costs more than any ordinary raise.
+export const STAY_RATIO = 1.15;
+export const STAY_FLOOR = 1.05;
+
+function freshTraits(person: any) {
+  return Object.keys(PERSONALITY_TAGS).filter(key => !PERSONALITY_TAGS[key].warn && !person.tags.some((tag: any) => tag.key === key));
+}
+
 export function raiseOffer(state: any, id: string) {
   const person = state.staff.find((item: any) => item.id === id);
   if (!person) return null;
-  const count = person.raises || 0;
-  const traits = Object.keys(PERSONALITY_TAGS).filter(key => !PERSONALITY_TAGS[key].warn && !person.tags.some((tag: any) => tag.key === key));
-  const reason = person.founder ? '创始人不领工资。' : count >= RAISE_MAX ? `已经涨过 ${RAISE_MAX} 次了。` : '';
-  return { count, wage: round(person.wage * (1 + RAISE_STEP)), chance: traits.length ? RAISE_AWAKEN : 0, reason, available: !reason };
+  const market = marketWage(person);
+  const traits = freshTraits(person).length > 0;
+  const tiers = RAISE_TIERS.map((tier, index) => ({ ...tier, index, wage: round(market * tier.ratio), awaken: traits ? tier.awaken : 0 }))
+    .filter(tier => tier.wage > person.wage)
+    .map(tier => ({ ...tier, extra: round(tier.wage - person.wage) }));
+  const wait = (person.raisedDay || -Infinity) + RAISE_COOLDOWN - state.day;
+  const reason = person.founder ? '创始人不领工资。' : wait > 0 ? `刚涨过，还要 ${wait} 天才能再涨。` : !tiers.length ? '月薪已经高于市场价，能力涨了再说。' : '';
+  return { tiers: reason ? [] : tiers, reason, available: !reason };
 }
 
-export function raiseWage(state: any, id: string) {
+export function raiseWage(state: any, id: string, tier: number) {
   const offer = raiseOffer(state, id);
   if (!offer) throw new Error('员工不存在。');
   if (!offer.available) throw new Error(offer.reason);
+  const pick = offer.tiers.find((item: any) => item.index === tier);
+  if (!pick) throw new Error('这一档不高于现在的月薪。');
   const next = studioAction(state);
   const person = next.staff.find((item: any) => item.id === id);
   const before = person.wage;
-  person.wage = offer.wage;
-  person.raises = offer.count + 1;
-  personNote(next, person, `涨薪：月薪 ${moneyText(before)} → ${moneyText(offer.wage)}`);
-  studioLog(next, `给${person.name}涨薪`, `月薪 ${moneyText(before)} → ${moneyText(offer.wage)}。`);
-  if (random(next) < offer.chance) {
-    const options = Object.keys(PERSONALITY_TAGS).filter(key => !PERSONALITY_TAGS[key].warn && !person.tags.some((tag: any) => tag.key === key)).map(key => ({ key, rank: PERSONALITY_TAGS[key].rarity }));
+  person.wage = pick.wage;
+  person.raisedDay = next.day;
+  personNote(next, person, `涨薪（${pick.name}）：月薪 ${moneyText(before)} → ${moneyText(pick.wage)}`);
+  studioLog(next, `给${person.name}涨薪`, `月薪 ${moneyText(before)} → ${moneyText(pick.wage)}。`);
+  const calmed = person.stressTags.includes('leaving') && random(next) < pick.clear;
+  if (calmed) {
+    person.stressTags = person.stressTags.filter((key: string) => key !== 'leaving');
+    personNote(next, person, '涨薪后不再想走');
+  }
+  if (random(next) < pick.awaken) {
+    const options = freshTraits(person).map(key => ({ key, rank: PERSONALITY_TAGS[key].rarity }));
     const key = pickByRarity(next, options).key;
     applyGain(next, person, { kind: 'trait', key }, '涨薪后');
     announce(next, { kind: 'record', title: `${person.name}觉醒「${PERSONALITY_TAGS[key].name}」`, text: PERSONALITY_TAGS[key].text, amount: 0 });
-  } else announce(next, { kind: 'notice', title: `给${person.name}涨了薪`, text: `月薪 ${moneyText(offer.wage)}`, amount: 0 });
+  } else announce(next, { kind: 'notice', title: `给${person.name}涨了薪`, text: `月薪 ${moneyText(pick.wage)}` + (calmed ? '，不再想走' : ''), amount: 0 });
   return next;
+}
+
+export function stayWage(person: any) {
+  return round(Math.max(marketWage(person) * STAY_RATIO, person.wage * STAY_FLOOR));
+}
+
+// The sure way to keep someone who wants to leave: a raise above the market price.
+function raiseToStay(state: any, id: string) {
+  const person = state.staff.find((item: any) => item.id === id);
+  if (!person) return state;
+  const before = person.wage;
+  person.wage = stayWage(person);
+  person.raisedDay = state.day;
+  person.stressTags = person.stressTags.filter((key: string) => key !== 'leaving');
+  personNote(state, person, `提过离职，涨薪留下：月薪 ${moneyText(before)} → ${moneyText(person.wage)}`);
+  studioLog(state, `${person.name} 涨薪留下`, `月薪 ${moneyText(before)} → ${moneyText(person.wage)}。`);
+  announce(state, { kind: 'notice', title: `${person.name} 留下了`, text: `月薪 ${moneyText(person.wage)}`, amount: 0 });
+  return state;
 }
 
 function able(person: any, ability: string) {
@@ -2365,13 +2422,33 @@ function outingGain(state: any, person: any) {
   return choice.boost ? boostChoice(state, person) : { kind: 'trait', key: choice.key };
 }
 
-// Talking someone out of leaving only means easing off: the label stays and so does the daily risk.
+// Talking someone out of leaving may fail. When it works it only means easing off: the label stays and
+// so does the daily risk.
+export function keepChance(state: any, person: any) {
+  const years = Math.max(0, Math.floor((state.day - (person.joined || state.day)) / 360));
+  const trait = (key: string) => person.tags.some((tag: any) => tag.key === key);
+  const factors = [
+    { on: underpaid(person), value: -0.25, text: '月薪低于市场价' },
+    { on: !!state.overtime[person.id], value: -0.1, text: '正在加班' },
+    { on: years > 0, value: Math.min(3, years) * 0.05, text: `在职 ${years} 年` },
+    { on: trait('social'), value: 0.15, text: '合群' },
+    { on: trait('grumbler'), value: -0.15, text: '爱抱怨' }
+  ].filter(item => item.on);
+  const chance = clamp(0.5 + factors.reduce((sum, item) => sum + item.value, 0), 0.15, 0.85);
+  return { chance, band: chance < 0.35 ? '小' : chance < 0.65 ? '一般' : '大', reasons: factors.map(item => item.text) };
+}
+
 function keepPerson(state: any, id: string) {
   const person = state.staff.find((item: any) => item.id === id);
   if (!person) return state;
+  if (random(state) >= keepChance(state, person).chance) {
+    announce(state, { kind: 'notice', title: `没能劝住${person.name}`, text: `按 N+1 补偿 ${moneyText(severanceOf(state, person))}。`, amount: 0 });
+    return letGo(state, person, `${person.name} 没被劝住，离开了公司`);
+  }
   delete state.overtime[id];
   delete state.outing.paused[id];
   personNote(state, person, '提过离职，被劝留下来，停掉了加班');
+  announce(state, { kind: 'notice', title: `${person.name} 被劝留下来`, text: '「想走」还在，加班已停掉。', amount: 0 });
   return state;
 }
 
@@ -2941,6 +3018,16 @@ export function projectScore(project: any) {
   return round(clamp(metrics.overall - project.expectation, 0, 100));
 }
 
+// Chance a title breaks out, by its creativity score: zero up to BREAKOUT_FROM, then exponential, capped at
+// BREAKOUT_MAX for a perfect score.
+export const BREAKOUT_FROM = 50;
+export const BREAKOUT_MAX = 0.3;
+export const BREAKOUT_STEEP = 4;
+export function breakoutOdds(creativity: number) {
+  const t = clamp((creativity - BREAKOUT_FROM) / (100 - BREAKOUT_FROM), 0, 1);
+  return BREAKOUT_MAX * (Math.exp(BREAKOUT_STEEP * t) - 1) / (Math.exp(BREAKOUT_STEEP) - 1);
+}
+
 // A sequel-sized side title (DLC) sells to a fraction of the market at a fraction of the price.
 const SIDE_MARKET = 0.4;
 const SIDE_PRICE = 0.35;
@@ -3255,10 +3342,10 @@ export function launchProject(state: any, projectId: string) {
   const tags = planTags(project);
   const lean = tagFactor(next, tags, project.scale);
   const score = round(clamp(projectScore(project) + (random(next) - 0.5) * 3, 0, 100));
-  // Creativity breaks out through a tail jump, not a linear bonus: a high-creativity title has a better
-  // chance of catching on, but there is no guarantee and it cannot be bought. A breakout multiplies the
-  // opening audience once; it is not a permanent multiplier on the whole tail.
-  const breakoutChance = clamp((metrics.dimensions.creativity - 55) / 100 * 0.45, 0, 0.32);
+  // Creativity breaks out through a tail jump, not a linear bonus: the chance stays low for most scores and
+  // climbs steeply near the top, capped at BREAKOUT_MAX for a perfect score. There is no guarantee and it
+  // cannot be bought. A breakout multiplies the opening audience once, not the whole tail.
+  const breakoutChance = breakoutOdds(metrics.dimensions.creativity);
   const breakout = breakoutChance > 0 && random(next) < breakoutChance;
   const exposure = MEDIA_BONUS[next.stars || 0];
   // The economy: how big the market is for this score, how many people know the title on day one (what the
@@ -3585,6 +3672,7 @@ function resolveEvent(state: any, choice: string) {
   if (event.id === 'resign') {
     if (choice.startsWith('outing-')) return teamOuting(next, Number(choice.slice(7)));
     if (choice === 'keep') return keepPerson(next, event.person);
+    if (choice === 'stay') return raiseToStay(next, event.person);
     return dismiss(next, event.person);
   }
   if (event.id === 'release' && choice === 'continue') return next;
@@ -3612,13 +3700,14 @@ function resignOrContinue(state: any) {
       continue;
     }
     if (random(state) < chance) {
-      const years = Math.max(0, Math.floor((state.day - person.joined) / 360));
-      const compensation = round(person.wage * (years + 1));
+      const compensation = severanceOf(state, person);
+      const keep = keepChance(state, person);
+      const stay = stayWage(person);
       const outings = OUTING_DAYS.map(days => {
         const offer = outingOffer(state, days);
         return { id: 'outing-' + days, title: `现在团建 ${days} 天 · ${offer.cost.toFixed(2)} 万`, detail: offer.available ? `全队停工 ${days} 天；每个负面标签约 ${Math.round(outingChances(person, days).clear * 100)}% 被清掉，不保证。` : offer.reason, disabled: !offer.available };
       });
-      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: `长期压力已让${pronoun(person)}想走。团建是唯一能清掉「想走」的办法，但要全队停工；只劝留的话，标签还在。接受离职按 N+1 补偿，并保留裁员记录与同事影响。已完成成果保留。`, choices: [...outings, { id: 'keep', title: `劝留：停掉${pronoun(person)}的加班`, detail: `「想走」还在，每天仍有 ${Math.round(RESIGN_CHANCE * 100)}% 的概率再提离职。` }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
+      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: `${pronoun(person)}想走了。团建和涨薪能清掉「想走」；劝留不一定留得住，留下了标签也还在。接受离职按 N+1 补偿，并保留裁员记录与同事影响。已完成成果保留。`, choices: [...outings, { id: 'stay', title: `涨薪留下 · 月薪 ${moneyText(person.wage)} → ${moneyText(stay)}`, detail: `每月多付 ${moneyText(round(stay - person.wage))}，一定留下并清掉「想走」。` }, { id: 'keep', title: `劝留 · 把握${keep.band}`, detail: (keep.reasons.length ? keep.reasons.join('、') + '。' : '') + `留下后停掉加班，「想走」还在；没劝住就按 N+1 离开。` }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
     }
   }
 }
@@ -3643,6 +3732,13 @@ function stressDay(state: any) {
       person.stressChance = clamp(person.stressChance * 0.93, 0, 0.6);
       person.overtimeDays = Math.max(0, person.overtimeDays - 1);
       if (person.stressTags.includes('tired') && random(state) < 0.05) person.stressTags = person.stressTags.filter((key: string) => key !== 'tired');
+    }
+    if (!person.stressTags.includes('leaving') && underpaid(person)) {
+      const share = person.wage / marketWage(person);
+      if (random(state) < Math.min(0.07, (UNDERPAID - share) * 0.12)) {
+        person.stressTags.push('leaving');
+        announce(state, { kind: 'notice', title: `${person.name} 挂上了「${STRESS_TAGS.leaving.name}」`, text: '月薪比市场身价低太多。', amount: 0 });
+      }
     }
   }
 }

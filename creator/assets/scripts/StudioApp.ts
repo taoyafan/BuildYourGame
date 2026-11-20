@@ -2608,7 +2608,7 @@ export class StudioApp extends Component {
           break;
         }
         case 'license': this.apply(core.setLicense(this.state, data.line, !!data.on), data.on ? '已授权，每月底收授权费。' : '已收回授权。'); break;
-        case 'raise': this.apply(core.raiseWage(this.state, data.id)); this.closeMenu(); this.celebrate(); break;
+        case 'raise': this.apply(core.raiseWage(this.state, data.id, data.tier)); this.closeMenu(); this.celebrate(); break;
         case 'take-job': {
           const next = core.takeJob(this.state, data.id);
           const project = next.projects[next.projects.length - 1];

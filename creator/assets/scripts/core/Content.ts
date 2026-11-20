@@ -975,7 +975,7 @@ function teamMenu(state: any, sort = 'joined') {
         { text: allOvertime ? '取消全部加班' : '全部加班', action: 'overtime-all', icon: 'Moon', data: { enabled: !allOvertime } }
       ] },
       { type: 'staff', order: staffOrder(state, sort) },
-      { type: 'section', title: '团建', help: '团建是清掉「疲惫」「想走」的唯一办法：全队停工、工资照付，另付费用。天数越长，每个标签越可能被清掉（先清「想走」），但不保证；每人还可能觉醒正面性格或团队增益。团建期间暂停加班，回来后恢复。次数要攒，两次之间有间隔；「合群」的人更容易出效果。加班在员工页按人设置：产出更高，但缺陷更多，也会累积负面标签。' },
+      { type: 'section', title: '团建', help: '团建能清掉「疲惫」「想走」（「想走」也可以靠涨薪清掉）：全队停工、工资照付，另付费用。天数越长，每个标签越可能被清掉（先清「想走」），但不保证；每人还可能觉醒正面性格或团队增益。团建期间暂停加班，回来后恢复。次数要攒，两次之间有间隔；「合群」的人更容易出效果。加班在员工页按人设置：产出更高，但缺陷更多，也会累积负面标签。' },
       { type: 'lines', items: [
         ['可用次数', outing.charges + ' 次' + (outing.next !== null ? ' · ' + Math.max(0, outing.next - state.day) + ' 天后恢复 1 次' : '')],
         ['最早可去', offers[0].offer.earliest > state.day ? '还要 ' + (offers[0].offer.earliest - state.day) + ' 天' : '现在'],
@@ -1010,7 +1010,7 @@ function personMenu(state: any, id: string) {
         ['岗位', core.ROLES[person.role].name],
         ['潜力', core.potentialBand(person) + '（练到接近上限后成长变慢）', potentialTone(core.potentialBand(person))],
         ['月薪', money(person.wage)],
-        ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比' + core.pronoun(person) + '的工资高 ' + money(market - person.wage) : ''), market > person.wage ? 'green' : 'muted'],
+        ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比' + core.pronoun(person) + '的工资高 ' + money(market - person.wage) : ''), core.underpaid(person) ? 'red' : market > person.wage ? 'green' : 'muted'],
         ['入职', core.dateText(person.joined || 1) + ' · 在职 ' + Math.max(0, state.day - (person.joined || 1)) + ' 天'],
         ['工作速度', String(person.speed)],
         ['在岗', person.leaveUntil > state.day ? '外出中，' + core.dueText(state, person.leaveUntil) + '回来' : '正常在岗']
@@ -1027,7 +1027,12 @@ function personMenu(state: any, id: string) {
       { type: 'toggle', anchor: 'overtime', text: '让 ' + person.name + ' 加班', value: !!state.overtime[id], action: 'overtime', data: { id } },
       ...(person.founder ? [] : (() => {
         const raise = core.raiseOffer(state, id);
-        return [{ type: 'buttons', items: [{ text: raise.available ? '涨薪 · 月薪 ' + money(person.wage) + ' → ' + money(raise.wage) : '涨薪', action: 'raise', icon: 'Coins', data: { id }, disabled: !raise.available }] }, { type: 'text', text: raise.available ? '工资永久上调；约 ' + Math.round(raise.chance * 100) + '% 会觉醒一个新的正面性格。不涨也没有影响。' : raise.reason, muted: true }];
+        const leaving = person.stressTags.includes('leaving');
+        const odds = (value: number) => value >= 0.6 ? '较大' : value >= 0.4 ? '一半' : '较小';
+        return [
+          { type: 'section', title: '涨薪', help: '月薪永久上调到所选档位。档位越高，越可能清掉「想走」、觉醒新的正面性格。涨过之后要隔一段时间才能再涨；月薪比市场身价低太多时，人会想走。' },
+          ...(raise.available ? [{ type: 'actions', items: raise.tiers.map((tier: any) => ({ text: tier.name + ' · 月薪 ' + money(tier.wage), detail: '每月多付 ' + money(tier.extra) + (leaving ? ' · 清掉「想走」的可能' + odds(tier.clear) : ''), icon: 'Coins', action: 'raise', data: { id, tier: tier.index } })) }] : [{ type: 'text', text: raise.reason, muted: true }])
+        ];
       })()),
       ...(person.founder ? [] : [{ type: 'buttons', items: [{ text: '裁员（N+1）', action: 'menu', icon: 'UserMinus', data: { menu: 'dismiss', id: person.id } }] }]),
       { type: 'section', title: '员工档案' },
