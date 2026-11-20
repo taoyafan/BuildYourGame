@@ -1231,8 +1231,8 @@ function financeMenu(state: any) {
         { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
       ] },
-      { type: 'section', title: '作品履历' },
-      { type: 'lines', items: [['已发售作品', state.catalog.length + ' 部'], ['年度获奖', wins + ' 次']] },
+      { type: 'section', title: '作品履历', help: '粉丝随作品销售、入榜和获奖增加；每次立项，新作会从粉丝里带来一部分初始关注。' },
+      { type: 'lines', items: [['公司粉丝', number(Math.round(state.fans || 0)) + ' 人'], ['已发售作品', state.catalog.length + ' 部'], ['年度获奖', wins + ' 次']] },
       ...(state.catalog.length ? [{ type: 'catalog' }] : []),
       { type: 'section', title: '存档与设置' },
       { type: 'buttons', columns: 3, items: [
