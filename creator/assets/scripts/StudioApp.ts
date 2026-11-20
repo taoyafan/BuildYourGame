@@ -16,6 +16,8 @@ const colors = {
   green: '#1b6651', soft: '#eeecdf', line: '#ded8c7', amber: '#a57024',
   blue: '#497899', danger: '#a7463c', pale: '#edf2ee', gold: '#e0a526', night: '#14231d'
 };
+// Lists longer than this build their off-screen cards only when scrolled to.
+const LAZY_MIN = 12;
 const navigation = [
   ['project', '项目', 'FolderKanban'], ['team', '团队', 'Users'],
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
@@ -82,6 +84,10 @@ export class StudioApp extends Component {
   private scrollView: ScrollView | null = null;
   private scrollBody: Node | null = null;
   private scrollHeight = 0;
+  // Long lists build only the cards near the viewport; the rest are built as the page scrolls.
+  private lazy: { y: number; h: number; build: () => void }[] = [];
+  private lazyWindow: [number, number] | null = null;
+  private savedAt = 0;
   private celebrations: any[] = [];
   private celebrating = false;
   private paidOut = '';
@@ -247,7 +253,9 @@ export class StudioApp extends Component {
         this.celebrations.push({ kind: 'settle', title: core.monthText(report.month) + '结算', text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
       }
       if (changed) {
-        this.save();
+        // Writing the whole save every game day is the costliest part of a tick on phones; while the
+        // clock runs, write at most every two seconds, and always when it stops or something happens.
+        if (!this.playing || this.state.event || this.state.over || (report && report.month !== settledMonth) || Date.now() - this.savedAt >= 2000) this.save();
         // Even at 4x a day can tick on most frames, and each render rebuilds the whole main screen.
         // State still advances every day; only the redraw is capped. Events, game over and stopping
         // must appear at once.
@@ -313,6 +321,7 @@ export class StudioApp extends Component {
   }
 
   private save() {
+    this.savedAt = Date.now();
     try { platform.write(JSON.stringify(this.state), core.SAVE_SLOT_KEY(this.slot)); }
     catch { this.storageIssue = '保存失败，请检查设备存储空间。'; }
   }
@@ -557,15 +566,82 @@ export class StudioApp extends Component {
     return height;
   }
 
+  // The height choice() will give this card, worked out without building it.
+  private choiceHeight(detail: string, options: any = {}) {
+    const width = this.width - 40;
+    const left = options.icon || options.avatar || options.brick ? 44 : 14;
+    const side = options.radar ? 70 : 0;
+    let cursor = 38;
+    if (detail && options.compact) cursor += 20;
+    else if (detail) cursor += this.measure(detail, width - left - 14 - side, 12) - 4;
+    if (options.chips?.length) cursor = this.chipsBottom(options.chips, left, cursor, width - left - 14 - side) + 4;
+    if (options.radar) cursor = Math.max(cursor, 74);
+    return cursor + 8;
+  }
+
+  // What paragraph() returns for this text, measured once on a throwaway node and cached.
+  private measure(value: string, width: number, size: number) {
+    const measured = this.textHeights.get(`${width}|${size}|${value}`);
+    if (measured !== undefined) return Math.max(size + 12, measured) + 10;
+    const scratch = this.box(this.stage, 'Measure', 0, 0, width, 1);
+    const height = this.paragraph(scratch, value, 0, true, 0, width, size);
+    scratch.destroy();
+    return height;
+  }
+
+  // A card in a long list: built now if it is near the viewport, otherwise when the page scrolls to it.
+  private listChoice(parent: Node, y: number, many: boolean, title: string, detail: string, callback: () => void, options: any = {}) {
+    if (many && this.lazyWindow) {
+      const height = this.choiceHeight(detail, options);
+      if (this.defer(y, height, () => this.choice(parent, y, title, detail, callback, options))) return height;
+    }
+    return this.choice(parent, y, title, detail, callback, options);
+  }
+
+  private defer(y: number, height: number, build: () => void) {
+    const window = this.lazyWindow;
+    if (!window || (y + height >= window[0] && y <= window[1])) return false;
+    this.lazy.push({ y, h: height, build });
+    return true;
+  }
+
+  private materialize() {
+    if (!this.lazy.length || !this.scrollView) return;
+    const top = this.scrollView.getScrollOffset().y;
+    const low = top - this.scrollHeight / 2;
+    const high = top + this.scrollHeight * 1.5;
+    const waiting = this.lazy;
+    this.lazy = [];
+    for (const item of waiting) {
+      if (item.y + item.h >= low && item.y <= high) item.build();
+      else this.lazy.push(item);
+    }
+  }
+
   // Tag chips coloured by rarity (green → blue → purple → gold); anything harmful is dark grey with a "!".
-  private chips(parent: Node, items: any[], x: number, y: number, width: number, shared?: { pen: Pen; ox: number; oy: number; shapes: (() => void)[] }) {
+  private chipLayout(items: any[], x: number, y: number, width: number) {
     let cursorX = x;
     let cursorY = y;
-    for (const item of items) {
-      const label = (item.warn ? '! ' : '') + item.name;
+    const spots = items.map((item: any) => {
       const chipWidth = item.name.length * 12 + 14 + (item.warn ? 10 : 0);
       if (cursorX + chipWidth > x + width && cursorX > x) { cursorX = x; cursorY += 22; }
-      const cx = cursorX, cy = cursorY, fill = toneColors[item.tone] || colors.green;
+      const spot = { x: cursorX, y: cursorY, width: chipWidth };
+      cursorX += chipWidth + 6;
+      return spot;
+    });
+    return { spots, bottom: cursorY + 22 };
+  }
+
+  private chipsBottom(items: any[], x: number, y: number, width: number) {
+    return this.chipLayout(items, x, y, width).bottom;
+  }
+
+  private chips(parent: Node, items: any[], x: number, y: number, width: number, shared?: { pen: Pen; ox: number; oy: number; shapes: (() => void)[] }) {
+    const layout = this.chipLayout(items, x, y, width);
+    items.forEach((item: any, index: number) => {
+      const label = (item.warn ? '! ' : '') + item.name;
+      const { x: cx, y: cy, width: chipWidth } = layout.spots[index];
+      const fill = toneColors[item.tone] || colors.green;
       if (shared) {
         shared.shapes.push(() => shared.pen.rect(shared.ox + cx, shared.oy + cy, chipWidth, 18, fill, 9));
         this.text(parent, label, cx, cy, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
@@ -573,9 +649,8 @@ export class StudioApp extends Component {
         const chip = this.box(parent, 'Chip', cx, cy, chipWidth, 18, fill, 9);
         this.text(chip, label, 0, 0, chipWidth, 18, 11, '#ffffff', true).horizontalAlign = HorizontalTextAlignment.CENTER;
       }
-      cursorX += chipWidth + 6;
-    }
-    return cursorY + 22;
+    });
+    return layout.bottom;
   }
 
   // Six abilities as a radar, mapped onto the same axes as a project's six dimensions.
@@ -688,6 +763,7 @@ export class StudioApp extends Component {
     this.art.clear();
     this.anchors.clear();
     this.groupTops.clear();
+    this.lazy = [];
     this.shapePen = null;
     this.shapeRoot = null;
     this.scrollView = null;
@@ -706,6 +782,7 @@ export class StudioApp extends Component {
     scroll.vertical = true;
     scroll.elastic = true;
     scroll.cancelInnerEvents = true;
+    scrollNode.on(ScrollView.EventType.SCROLLING, () => this.materialize());
     this.scrollView = scroll;
     this.scrollBody = body;
     this.scrollHeight = height;
@@ -761,6 +838,7 @@ export class StudioApp extends Component {
     // to scroll back up to a tip near the top (the exhibition buttons right after the promotion
     // cards), and a restore after it would silently undo that scroll and misplace the highlight.
     if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
+    this.materialize();
     this.renderGuide();
     // Applied after the guide so a tip cannot undo the jump to the bottom of the company page.
     // If a tip points somewhere else, let its own scroll win and keep the request pending: the next
@@ -770,6 +848,7 @@ export class StudioApp extends Component {
       const max = Math.max(0, this.scrollBody.getComponent(UITransform).height - this.scrollHeight);
       this.scrollView.scrollToOffset(new Vec2(0, max), 0);
     }
+    this.materialize();
     this.scrollKey = key;
     if (this.tip) this.renderTip();
     if (this.notice || this.storageIssue) {
@@ -1416,12 +1495,14 @@ export class StudioApp extends Component {
     shapes.setSiblingIndex(0);
     this.shapePen = new Pen(shapes.addComponent(Graphics));
     let cursor = 0;
+    this.lazyWindow = [this.scrollKeep - this.scrollHeight / 2, this.scrollKeep + this.scrollHeight * 1.5];
     try {
       if (route.menu === 'setup') cursor = this.renderSetup(body);
       else if (route.menu === 'new-project') cursor = this.renderNewProject(body);
       else if (route.menu === 'history') cursor = this.renderHistory(body);
       else for (const block of model.blocks) cursor = this.drawBlock(body, block, cursor);
     } finally {
+      this.lazyWindow = null;
       shapes.getComponent(UITransform).setContentSize(this.width - 40, Math.max(1, cursor));
       this.shapePen = null;
       this.shapeRoot = null;
@@ -1769,13 +1850,14 @@ export class StudioApp extends Component {
         if (!this.state.staff.length) return y + this.paragraph(parent, '还没有同事，先发布一份招聘。', y, true);
         const order = (block.order || []).map((id: string) => this.state.staff.find((person: any) => person.id === id)).filter(Boolean);
         const people = order.length ? order : this.state.staff;
+        const many = people.length > LAZY_MIN;
         for (let index = 0; index < people.length; index++) {
           const person = people[index];
           // Tags stay on the card: they are how the player ties a later slowdown to overtime.
           const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);
           const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 外出中' : ''}${person.mentor ? ' · 带教中' : ''}`;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: core.artOf(person), anchor: 'staff-' + index }) + 10;
+          y += this.listChoice(parent, y, many, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: core.artOf(person), anchor: 'staff-' + index }) + 10;
         }
         return y;
       case 'avatar': {
@@ -1837,16 +1919,19 @@ export class StudioApp extends Component {
         return y + 6;
       }
       case 'trace': return y + this.trace(parent, y, block.trace, block.history) + 10;
-      case 'achievements':
+      case 'achievements': {
+        // The page splits the list into groups; every group is part of one long page.
+        const many = core.ACHIEVEMENTS.length > LAZY_MIN;
         for (const item of block.items) {
           const done = item.day !== null;
           const hidden = item.group === 'hidden' && !done;
           const progress = !done && item.progress ? '\n进度 ' + (item.progress[2] === 'money'
             ? content.money(Math.min(item.progress[0], item.progress[1])) + ' / ' + content.money(item.progress[1])
             : Math.round(Math.min(item.progress[0], item.progress[1])) + ' / ' + item.progress[1]) : '';
-          y += this.choice(parent, y, hidden ? '???' : item.title, hidden ? '隐藏成就，达成后揭晓。' : item.text + (item.reward ? '\n奖励：' + item.reward : '') + (done ? '\n' + core.dateText(item.day) + '达成' : progress), () => undefined, { icon: done ? 'Trophy' : hidden ? 'CircleHelp' : 'Lock', tag: done ? '已达成' : '', tagColor: colors.gold, highlight: done && item.group === 'milestone' }) + 8;
+          y += this.listChoice(parent, y, many, hidden ? '???' : item.title, hidden ? '隐藏成就，达成后揭晓。' : item.text + (item.reward ? '\n奖励：' + item.reward : '') + (done ? '\n' + core.dateText(item.day) + '达成' : progress), () => undefined, { icon: done ? 'Trophy' : hidden ? 'CircleHelp' : 'Lock', tag: done ? '已达成' : '', tagColor: colors.gold, highlight: done && item.group === 'milestone' }) + 8;
         }
         return y + 4;
+      }
       case 'dream': {
         const start = y;
         const node = this.box(parent, 'Dream', 0, y, width, 40);
@@ -1878,12 +1963,14 @@ export class StudioApp extends Component {
         this.anchors.set('checklist', this.box(parent, 'ChecklistAnchor', 0, start, width, y - start));
         return y + 4;
       }
-      case 'catalog':
+      case 'catalog': {
+        const many = this.state.catalog.length > LAZY_MIN;
         this.state.catalog.forEach((book: any, index: number) => {
           const balance = book.received - book.invested;
-          y += this.choice(parent, y, '《' + book.name + '》', `${content.number(book.units)} 份 · 回款 ${content.money(book.received)} · 评价 ${book.reviewScore.toFixed(1)}\n${this.state.day - book.released < 7 ? '首周统计中' : book.firstRanks ? '全国首周榜第 ' + book.firstRanks[1] + ' 名' : '首周名次未知'}`, () => this.openMenu('book', book.id), { tag: balance >= 0 ? '已回本' : '未回本', tagColor: balance >= 0 ? colors.green : colors.muted, anchor: 'book-' + index }) + 10;
+          y += this.listChoice(parent, y, many, '《' + book.name + '》', `${content.number(book.units)} 份 · 回款 ${content.money(book.received)} · 评价 ${book.reviewScore.toFixed(1)}\n${this.state.day - book.released < 7 ? '首周统计中' : book.firstRanks ? '全国首周榜第 ' + book.firstRanks[1] + ' 名' : '首周名次未知'}`, () => this.openMenu('book', book.id), { tag: balance >= 0 ? '已回本' : '未回本', tagColor: balance >= 0 ? colors.green : colors.muted, anchor: 'book-' + index }) + 10;
         });
         return y;
+      }
       case 'cover': return y + this.cover(parent, y, block.book) + 14;
       case 'chart': return y + this.chart(parent, y, block.book) + 14;
       case 'heat': return y + this.heat(parent, y, block) + 10;
@@ -1952,6 +2039,7 @@ export class StudioApp extends Component {
         // "do everything" or "back to your own trade" has to tap seven boxes one at a time.
         const shortcut = 44;
         const height = header + rows * 50 + shortcut;
+        if (this.state.staff.length > LAZY_MIN && this.defer(y, height, () => this.drawBlock(parent, block, y))) return y + height + 12;
         const card = this.box(parent, 'Assign', 0, y, width, height, colors.paper, 10);
         // Tapping the name row opens that person's own page; the work boxes below are the toggles.
         const titleRow = this.box(card, 'AssignTitle', 0, 0, width, 26);
@@ -2540,6 +2628,7 @@ export class StudioApp extends Component {
             this.guidePaused = false;
             this.elapsed = 0;
             if (this.playing && !this.state.tutorial.seen.clock) this.state = core.markSeen(this.state, 'clock');
+            if (!this.playing) this.save();
             this.render();
           }
           break;
