@@ -203,7 +203,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
       if (event.id === 'dream') return { title: '那天夜里', blocks: [{ type: 'dream', lines: dreamLines(state) }, choices] };
       if (event.id === 'story') {
         const founder = state.staff.find((person: any) => person.founder);
-        return { title: event.title, blocks: [{ type: 'story', id: founder?.id || 'founder', look: founder?.look, name: founder?.name || '创始人', text: storyLine(state, event.key) }, choices] };
+        return { title: event.title, blocks: [{ type: 'story', art: core.artOf(founder), name: founder?.name || '创始人', text: storyLine(state, event.key) }, choices] };
       }
       if (event.id === 'outing') return { title: event.title, blocks: [...outingReport(state, (state.outing.history || [])[0]), choices] };
       if (event.id === 'job') return { title: event.title, blocks: [{ type: 'text', text: event.text }, ...gainedBlocks(state, event), choices] };
@@ -769,7 +769,7 @@ function dreamLines(state: any) {
   const late = hour >= 23 || hour < 5;
   return [
     '创始人在工位上写好了解散公告：「' + state.company + '到此为止。」',
-    '他趴在键盘上睡着了，梦见一块发光的屏幕。屏幕那头，有一个看不见的人。',
+    core.pronoun(state.staff.find((person: any) => person.founder)) + '趴在键盘上睡着了，梦见一块发光的屏幕。屏幕那头，有一个看不见的人。',
     '「是你吧？一直替我按着加班键的那个人。」',
     '「我们一起熬了 ' + state.day + ' 天。你那边，大概陪了我 ' + span + '。」',
     late ? '「你那边现在是 ' + clock + '，这么晚了，你也该睡了。」' : '「你那边现在是 ' + clock + '。记得起来走走，喝口水。」',
@@ -1004,24 +1004,24 @@ function personMenu(state: any, id: string) {
   return {
     title: person.name + (person.founder ? ' · 创始人' : ''),
     blocks: [
-      { type: 'avatar', id: person.id, look: person.look, text: (person.founder ? '创始人 · ' : '') + core.ROLES[person.role].name },
+      { type: 'avatar', art: core.artOf(person), text: (person.founder ? '创始人 · ' : '') + core.ROLES[person.role].name },
       { type: 'ability-radar', abilities: person.abilities },
       { type: 'lines', items: [
         ['岗位', core.ROLES[person.role].name],
         ['潜力', core.potentialBand(person) + '（练到接近上限后成长变慢）', potentialTone(core.potentialBand(person))],
         ['月薪', money(person.wage)],
-        ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比他的工资高 ' + money(market - person.wage) : ''), market > person.wage ? 'green' : 'muted'],
+        ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比' + core.pronoun(person) + '的工资高 ' + money(market - person.wage) : ''), market > person.wage ? 'green' : 'muted'],
         ['入职', core.dateText(person.joined || 1) + ' · 在职 ' + Math.max(0, state.day - (person.joined || 1)) + ' 天'],
         ['工作速度', String(person.speed)],
         ['在岗', person.leaveUntil > state.day ? '外出中，' + core.dueText(state, person.leaveUntil) + '回来' : '正常在岗']
       ] },
       ...(core.personTags(person).length ? [{ type: 'tags', items: core.personTags(person) }] : []),
-      ...(boost ? [{ type: 'note', icon: 'Users', text: '团队增益「' + boost.name + '」' + core.BOOST_GRADES[(person.boostLevel || 1) - 1] + '：' + boost.text + (boostLive ? '当前项目 ' + crew + ' 人受益。' : person.stressTags.length ? '他现在状态不好，增益暂时失效。' : '同一项目已有更高档的同类增益或不在项目中，暂未生效。') + (person.boostLevel < 3 ? '在职越久或团建，可能升档。' : '') }] : []),
+      ...(boost ? [{ type: 'note', icon: 'Users', text: '团队增益「' + boost.name + '」' + core.BOOST_GRADES[(person.boostLevel || 1) - 1] + '：' + boost.text + (boostLive ? '当前项目 ' + crew + ' 人受益。' : person.stressTags.length ? core.pronoun(person) + '现在状态不好，增益暂时失效。' : '同一项目已有更高档的同类增益或不在项目中，暂未生效。') + (person.boostLevel < 3 ? '在职越久或团建，可能升档。' : '') }] : []),
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人。' + (state.day - (person.joined || 0) < 30 ? '仍在磨合期，产出打八折。' : '已融入团队。') + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' ' + person.story : '') }] : []),
-      ...(person.noOvertime ? [{ type: 'note', icon: 'Star', text: '他答应过屏幕外的你：再也不加班。' }] : []),
+      ...(person.noOvertime ? [{ type: 'note', icon: 'Star', text: core.pronoun(person) + '答应过屏幕外的你：再也不加班。' }] : []),
       { type: 'section', title: '带教', help: '带人的一方产出下降，被带的一方也会变慢；被带的那一项每天向带人一方靠拢，差得越多涨得越快，追上后自动出师，超过潜力后会明显变慢。两人需在同一个项目。' },
-      { type: 'text', text: pair ? '正在由' + pair.mentor.name + '带' + core.ABILITIES.find(item => item.key === pair.ability)?.name + '。' : person.mentor ? '带教暂停：两人不在同一个项目。' : pupils.length ? '正在带' + pupils.map((other: any) => other.name).join('、') + '。' : '可以找能力更强的同事带他。', muted: !pair },
-      { type: 'buttons', anchor: 'mentor', columns: person.mentor ? 2 : 1, items: [{ text: person.mentor ? '换一位带教' : '找人带他', action: 'menu', icon: 'GraduationCap', data: { menu: 'mentor', id: person.id } }, ...(person.mentor ? [{ text: '结束带教', action: 'mentor', icon: 'X', data: { id: person.id, mentor: null } }] : [])] },
+      { type: 'text', text: pair ? '正在由' + pair.mentor.name + '带' + core.ABILITIES.find(item => item.key === pair.ability)?.name + '。' : person.mentor ? '带教暂停：两人不在同一个项目。' : pupils.length ? '正在带' + pupils.map((other: any) => other.name).join('、') + '。' : '可以找能力更强的同事带' + core.pronoun(person) + '。', muted: !pair },
+      { type: 'buttons', anchor: 'mentor', columns: person.mentor ? 2 : 1, items: [{ text: person.mentor ? '换一位带教' : '找人带' + core.pronoun(person), action: 'menu', icon: 'GraduationCap', data: { menu: 'mentor', id: person.id } }, ...(person.mentor ? [{ text: '结束带教', action: 'mentor', icon: 'X', data: { id: person.id, mentor: null } }] : [])] },
       ...(person.stressTags.includes('leaving') && !person.founder ? [{ type: 'lines', title: '离职风险', items: [['每天提出离职的概率', Math.round(core.resignChance(state, person) * 100) + '%' + (state.overtime[person.id] ? '（加班中翻倍）' : ''), 'red'], ['说明', '停止加班可降到 ' + Math.round(core.RESIGN_CHANCE * 100) + '%。']] }] : []),
       ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', Math.round((person.stressChance || 0) * 100) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
       { type: 'toggle', anchor: 'overtime', text: '让 ' + person.name + ' 加班', value: !!state.overtime[id], action: 'overtime', data: { id } },
@@ -1106,7 +1106,7 @@ function candidateMenu(state: any, id: string) {
   return {
     title: person.name,
     blocks: [
-      { type: 'avatar', id: person.id, text: core.ROLES[person.role].name + '候选人' + (person.fame ? ' · 名人' : '') },
+      { type: 'avatar', art: core.artOf(person), text: core.ROLES[person.role].name + '候选人' + (person.fame ? ' · 名人' : '') },
       { type: 'ability-radar', abilities: person.abilities },
       { type: 'lines', items: [['岗位', core.ROLES[person.role].name], ['潜力', core.potentialBand(person), potentialTone(core.potentialBand(person))], ['月薪', money(person.wage)], ['工作速度', String(person.speed)]] },
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人，入职前 30 天需要磨合。' + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' 还记得吗？' + person.story : '') }] : []),
@@ -1524,6 +1524,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
   const seen = state.tutorial.seen;
   const project = core.activeProject(state, route?.id) || core.projectOpen(state)[0];
   const hasTeammate = state.staff.some((person: any) => !person.founder);
+  const mateHe = core.pronoun(state.staff.find((person: any) => !person.founder));
   const complete = !!project && project.progress >= 100;
   const explain = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, ack: key };
   const introduce = (key: string, anchor: string, text: string): GuideStep | null => seen[key] ? null : { anchor, text, tap: key };
@@ -1549,14 +1550,14 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       () => project && !project.job && project.progress >= 10 && !hasTeammate && !seen.navTeam ? { anchor: 'nav-team', text: '一个人也能做完首作，但一个人只能顾一头。点「团队」招一位' + core.ROLES[weakestRole(state)].name + '，' + core.ROLES[weakestRole(state)].task + '，进度会快很多。', tap: 'navTeam' } : null,
       // A new hire only covers their own trade by default. Teaching the habit of re-splitting the
       // work right after the first hire is the difference between a second pair of hands and a salary.
-      () => project && seen.assign && hasTeammate && !seen.reassign && !project.released ? { anchor: 'nav-project', text: '新同事到岗了。他默认只做自己最擅长的一项，点「项目」→「调整分工」，可以让他多担几项。', tap: 'navReassign' } : null,
+      () => project && seen.assign && hasTeammate && !seen.reassign && !project.released ? { anchor: 'nav-project', text: '新同事到岗了。' + mateHe + '默认只做自己最擅长的一项，点「项目」→「调整分工」，可以让' + mateHe + '多担几项。', tap: 'navReassign' } : null,
       // The radar only appears once a prototype exists, so its explanation has to wait for that moment
       // too — teaching six axes before they are on screen is a wall of words with nothing to point at.
       () => project?.checkpoints.prototype && !seen.dimensions ? { anchor: 'radar', text: '实线是现在的分数，虚线是按当前团队做完能到哪。', ack: 'dimensions' } : null,
       // "知道了" notes are optional everywhere, the main screen included: the highlighted control stays
       // live, so acting on it and dismissing the tip are both valid. Only the steps below are forced taps —
       // there, opening the page is the lesson itself.
-      () => project?.checkpoints.prototype && !seen.scene ? explain('scene', 'scene', '办公室也是入口：墙上的大屏幕是当前作品，点开进项目；星级铭牌是媒体评级；白板是日历；奖杯架是成就；下方公告栏是行业新闻；点工位打开团队。') : null,
+      () => project?.checkpoints.prototype && !seen.scene ? explain('scene', 'scene', '办公室也是入口：墙上的大屏幕是当前作品，点开进项目；星级铭牌是媒体评级；日历打开行业日程；奖杯架是成就；下方公告栏是行业新闻；点工位打开团队。') : null,
       () => project?.checkpoints.demo && !seen.testing && !seen.navTesting ? { anchor: 'nav-project', text: '体验版完成：点「项目」，在里面打开「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
       // Optional tip: 市场 stays live under the highlight, 知道了 dismisses it. Keep this an ack step —
       // a forced tap removes the 知道了 button and makes promoting feel compulsory.
@@ -1586,7 +1587,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       // what is on screen — work left and the estimated day — instead of systems taught later.
       if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着这一项还剩约几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
-      if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看他现在做什么。', tap: 'assignPage' };
+      if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看' + mateHe + '现在做什么。', tap: 'assignPage' };
       if (project.checkpoints.demo && !seen.testing && !seen.testingEntry) return { anchor: 'testing', text: '点「试玩」，招一批玩家来找缺陷、听评价。', tap: 'testingEntry' };
       // Several buttons live on this page; once the trial build exists the useful one is the release.
       if (project.checkpoints.demo && !project.released && !seen.launchBook) return { anchor: 'launch', text: '体验版已经能卖了：做好准备后点这里发售，也可以继续制作、返工提高评分。', ack: 'launchBook' };
@@ -1595,7 +1596,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       if (!seen.assign) return { anchor: 'person-assign-0', text: '给每人挑工作，可以多选。一个人同时做几项，每天的时间会分摊到各项上，每项都慢一些；做不擅长的工作，评分也会低一些。', ack: 'assign' };
       if (hasTeammate && !seen.reassign) {
         const mate = state.staff.findIndex((person: any) => !person.founder);
-        return { anchor: 'person-assign-' + Math.max(0, mate), text: '新同事默认只做他最擅长的一项。也可以点其它工作让他多担几项，做完会自动空出手。', ack: 'reassign' };
+        return { anchor: 'person-assign-' + Math.max(0, mate), text: '新同事默认只做' + mateHe + '最擅长的一项。也可以点其它工作让' + mateHe + '多担几项，做完会自动空出手。', ack: 'reassign' };
       }
       return null;
     }

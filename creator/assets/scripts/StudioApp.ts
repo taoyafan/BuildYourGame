@@ -6,9 +6,9 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawDesk, drawAvatar, drawBrick, drawWork, seatLayout, roomProps, SKINS, HAIRS, HAIR_STYLES, FACES, GLASSES } from './ui/Art';
+import { Pen, drawRoom, drawBrick, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
-import { OfficeArt } from './ui/OfficeArt';
+import { ArtPack, Look } from './ui/People';
 
 const { ccclass } = _decorator;
 const colors = {
@@ -104,7 +104,7 @@ export class StudioApp extends Component {
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
   private officeSwiped = false;
-  private officeArt = new OfficeArt();
+  private art = new ArtPack();
   private brickTip: any = null;
   private activeTouches = new Set<number>();
   private renderPending = false;
@@ -149,7 +149,7 @@ export class StudioApp extends Component {
     this.stage = this.box(this.canvas, 'Interface', 0, 0, 390, 844);
     this.effects = this.box(this.canvas, 'Effects', 0, 0, 390, 844);
     this.state = this.load();
-    this.officeArt.load(() => { if (this.isValid) this.render(); });
+    this.art.load(() => { if (this.isValid) this.render(); });
     this.audio = this.canvas.addComponent(AudioSource);
     for (const name of ['click', 'income', 'launch', 'breakeven']) resources.load('sounds/' + name, AudioClip, (error, clip) => {
       if (!error && this.isValid) this.sounds.set(name, clip);
@@ -166,7 +166,7 @@ export class StudioApp extends Component {
   }
 
   onDestroy() {
-    this.officeArt.destroy();
+    this.art.destroy();
     screen.off('window-resize', this.resize, this);
     engineGame.off(Game.EVENT_HIDE, this.background, this);
   }
@@ -217,7 +217,7 @@ export class StudioApp extends Component {
   }
 
   update(delta: number) {
-    this.officeArt.update(delta, this.playing && !this.routes.length && !this.state?.event && !this.state?.over);
+    this.art.update(delta, this.playing && !this.routes.length && !this.state?.event && !this.state?.over);
     // Real time with the game open, for the founder's dream; not scaled by game speed.
     if (this.state?.company) this.state.playSeconds = (this.state.playSeconds || 0) + Math.min(delta, 1);
     if (this.activeTouches.size || !this.playing || this.routes.length || this.state?.event || this.state?.over) return;
@@ -459,6 +459,11 @@ export class StudioApp extends Component {
     return this.image(parent, 'icons/' + name, x, y, size, size, tint);
   }
 
+  // A person's photo: the smiling expression cropped to head and shoulders.
+  private portrait(parent: Node, art: string, x: number, y: number, size: number) {
+    if (this.art.ready) this.art.place(parent, this.art.avatar(art), x, y, size, size);
+  }
+
   private clickable(node: Node, callback: () => void, enabled = true) {
     const button = node.addComponent(Button);
     button.interactable = enabled;
@@ -515,10 +520,7 @@ export class StudioApp extends Component {
     const shapes: (() => void)[] = [];
     let cursor = 12;
     if (options.icon) this.image(node, 'icons/' + options.icon, 14, 14, 20, 20, options.disabled ? colors.muted : colors.green);
-    if (options.avatar) {
-      if (batched) shapes.push(() => drawAvatar(pen, ox + 25, oy + 25, 12, options.avatar, options.avatarLook));
-      else drawAvatar(this.canvasNode(node, 'Avatar', 10, 10, 30, 30).pen, 15, 15, 12, options.avatar, options.avatarLook);
-    }
+    if (options.avatar) this.portrait(node, options.avatar, 6, 6, 38);
     if (options.brick) drawBrick(this.canvasNode(node, 'Brick', 8, 10, 30, 30).pen, 0, 0, 30, core.FIELDS[options.brick.field].color, options.brick.glyph, 1, 'have');
     const left = options.icon || options.avatar || options.brick ? 44 : 14;
     // A person card carries a small ability radar on the right; the text column makes room for it.
@@ -683,7 +685,7 @@ export class StudioApp extends Component {
   }
 
   private clear() {
-    this.officeArt.clear();
+    this.art.clear();
     this.anchors.clear();
     this.groupTops.clear();
     this.shapePen = null;
@@ -891,29 +893,41 @@ export class StudioApp extends Component {
   }
 
   // The office is the main screen's picture and its doors: the big screen shows the current work, the
-  // plaque the star rating, the whiteboard opens the calendar, the shelf the achievements and the desks
+  // plaque the star rating, the calendar opens the schedule, the shelf the achievements and the desks
   // the team. Up to twenty desks fit one page; larger teams page horizontally.
   private office(body: Node, y: number, height: number, project: any, metrics: any) {
     const state = this.state;
     const inner = this.width - 40;
     const node = this.box(body, 'Office', 0, y, inner, height);
-    const illustrated = this.officeArt.available(state.office);
-    const props = roomProps(inner, height, state.office);
-    if (illustrated) {
-      const pack = this.officeArt;
-      pack.place(node, 'wall', 0, 0, inner, props.floor);
-      pack.place(node, 'floor', 0, props.floor, inner, height - props.floor);
-      for (const key of ['window', 'plaque', 'board', 'shelf']) {
-        const rect = props[key];
-        pack.place(node, key, rect.x, rect.y, rect.w, rect.h);
-      }
-      const screen = props.screen;
-      pack.place(node, 'monitor', screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 12);
-    }
-    const { pen } = this.canvasNode(node, 'RoomDetails', 0, 0, inner, height);
+    const art = this.art.ready ? this.art : null;
     const rating = core.ratingOf(state);
     const achievements = core.achievementsOf(state);
-    drawRoom(pen, inner, height, state.office, { cups: Math.min(3, Math.ceil(achievements.count / 6)), books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] }, illustrated);
+    const cups = Math.min(3, Math.ceil(achievements.count / 6));
+    let props: any = roomProps(inner, height, state.office);
+    let seats: { x: number; y: number; k: number; decor?: string[] }[] | null = null;
+    if (art && state.office === 1) {
+      // The cottage keeps its width inside the crop-safe sides; on short screens the room squashes
+      // vertically while people and furniture keep their proportions at the height's scale.
+      const room = art.layout!.cottage;
+      const [sourceWidth, sourceHeight] = room.size;
+      const sy = height / sourceHeight;
+      const shown = Math.min(sourceWidth, Math.max(sourceWidth - room.safe * 2, inner / sy));
+      const sx = inner / shown;
+      const left = Math.round((sourceWidth - shown) / 2);
+      const map = (rect: number[]) => ({ x: (rect[0] - left) * sx, y: rect[1] * sy, w: rect[2] * sx, h: rect[3] * sy });
+      art.place(node, art.roomFrame(left, Math.round(shown)), 0, 0, inner, height);
+      props = { floor: room.upper * sy, screen: map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
+      seats = room.seats.map(([x, top, scale, decor]: any[]) => ({ x: (x - left) * sx, y: top * sy, k: scale * sy, decor }));
+      ['trophy-gold', 'trophy-silver', 'trophy-bronze'].slice(0, cups).forEach((name, index) => {
+        const rect = art.layout!.props[name];
+        const tall = 34 * sy;
+        const wide = tall * rect[2] / rect[3];
+        art.place(node, art.prop(name), props.shelf.x + props.shelf.w / 2 + (index - 1) * 40 * sx - wide / 2, room.shelfPlank * sy - tall, wide, tall);
+      });
+    } else {
+      const { pen } = this.canvasNode(node, 'Room', 0, 0, inner, height);
+      drawRoom(pen, inner, height, state.office, { cups, books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] });
+    }
     this.clickable(node, () => { if (!this.officeSwiped) this.openMenu('team'); });
     // Big screen with the work the main screen is looking at, or the last release. The work art is drawn
     // at its design height and scaled down to the screen, and the screen clips anything at the edges.
@@ -921,72 +935,42 @@ export class StudioApp extends Component {
     const monitor = this.box(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
     monitor.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
     const zoom = screen.h / 96;
-    const { node: art, pen: screenPen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w / zoom, 96);
-    art.setScale(zoom, zoom, 1);
+    const { node: work, pen: screenPen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w / zoom, 96);
+    work.setScale(zoom, zoom, 1);
     if (project) drawWork(screenPen, screen.w / zoom, 96, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
     else if (state.catalog.length) drawWork(screenPen, screen.w / zoom, 96, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
     else { screenPen.rect(0, 0, screen.w / zoom, 96, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
     const caption = project ? '《' + project.name + '》' + (project.released ? ' 补丁' : '') : state.catalog.length ? '上一作《' + state.catalog[0].name + '》' : '';
     if (caption) {
-      const tag = this.box(monitor, 'Caption', 4, screen.h - 16, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
+      const tag = this.box(monitor, 'Caption', 4, 2, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
       this.text(tag, caption, 5, 0, Math.min(screen.w - 18, caption.length * 10), 14, 9, '#ffffff');
     }
     this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu('project'));
     this.anchors.set('work', monitor);
     // Desks: people on the watched project first, then anyone resting or stressed, then by seniority.
-    const working = this.playing && core.liveProjects(state).length > 0;
     const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
     const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
     const sorted = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0));
-    const samplePerson = state.staff.find((person: any) => !person.look)?.id;
     // Up to 20 desks fit one picture; a bigger team pages sideways, the watched project's people first.
     const pages = Math.max(1, Math.ceil(sorted.length / 20));
     const page = Math.min(this.officePage, pages - 1);
     const shown = sorted.slice(page * 20, page * 20 + 20);
-    const layout = seatLayout(Math.min(20, Math.max(shown.length, core.seats(state) - page * 20)), inner, height);
-    const desks = new Pen(this.box(node, 'Desks', 0, 0, inner, height).addComponent(Graphics));
-    // One node, one Graphics and one forever tween per head used to mean twenty live tweens and twenty
-    // extra Graphics components, all torn down and rebuilt on every daily redraw while the clock runs.
-    // Draw the faces into two shared Graphics instead: the working ones bob together, the rest stay put.
-    const bobbing = this.box(node, 'Heads', 0, 0, inner, height);
-    const bobbingPen = new Pen(bobbing.addComponent(Graphics));
-    const still = this.box(node, 'HeadsStill', 0, 0, inner, height);
-    const stillPen = new Pen(still.addComponent(Graphics));
-    let anyBobbing = false;
-    layout.forEach((layoutSeat, index) => {
-      // Leave room for a complete face above the computer even at the minimum room height.
-      const seat = illustrated ? { ...layoutSeat, scale: Math.min(layoutSeat.scale, (height - props.floor - 8) / 82) } : layoutSeat;
+    seats = seats || seatLayout(Math.min(20, Math.max(shown.length, core.seats(state) - page * 20)), inner, height).map(seat => ({ x: seat.x, y: seat.y - 13 * seat.scale, k: seat.scale * 0.2 }));
+    // Each person is one whole picture: the face says working, idle or tired; the laptop and the mug say
+    // whether there is work; a sweat drop and a cloud above the head mark tired and wanting to leave.
+    if (art) seats.forEach((seat, index) => {
       const person = shown[index];
-      const assigned = person && core.projectOf(state, person);
-      const active = !!person && working && person.leaveUntil <= state.day && !!assigned && core.personWorks(state, assigned, person).length > 0;
-      if (illustrated) {
-        // Draw each row as complete workstations so a front desk occludes the back row naturally.
-        const station = this.box(node, 'Workstation', seat.x - 32 * seat.scale, seat.y - 62 * seat.scale, 64 * seat.scale, 72 * seat.scale);
-        this.officeArt.place(station, 'chair', 0, 0, 64 * seat.scale, 72 * seat.scale);
-        // One sample character is used for staff without a chosen look. The founder's custom
-        // appearance keeps its Graphics portrait until corresponding artwork is available.
-        if (person && person.id === samplePerson) this.officeArt.person(station, 32 * seat.scale, 50 * seat.scale, seat.scale, active, index % 4);
-        else if (person) {
-          const { pen: portrait } = this.canvasNode(station, 'Portrait', 0, 0, 64 * seat.scale, 72 * seat.scale);
-          portrait.rect(21 * seat.scale, 28 * seat.scale, 22 * seat.scale, 20 * seat.scale, person.role === 'art' ? '#c58a32' : person.role === 'design' ? '#497899' : colors.green, 7 * seat.scale);
-          drawAvatar(portrait, 32 * seat.scale, 20 * seat.scale, 11 * seat.scale, person.id, person.look);
-        }
-        this.officeArt.place(station, 'desk', 0, 0, 64 * seat.scale, 72 * seat.scale);
-        this.officeArt.place(station, 'computer', 0, 0, 64 * seat.scale, 72 * seat.scale);
-        const { pen: status } = this.canvasNode(station, 'Status', 0, 0, 64 * seat.scale, 72 * seat.scale);
-        if (!active) status.rect(19 * seat.scale, 31 * seat.scale, 18 * seat.scale, 12 * seat.scale, '#273c36', seat.scale, 160);
-        if (person?.stressTags.length) status.circle(43 * seat.scale, 7 * seat.scale, 3, colors.danger);
-        return;
+      let look: Look | null = null;
+      if (person && person.leaveUntil > state.day) look = { face: '', person: false, laptop: 'closed', mug: false, symbols: [] };
+      else if (person) {
+        const assigned = core.projectOf(state, person);
+        const busy = !!assigned && core.personWorks(state, assigned, person).length > 0;
+        const tired = person.stressTags.includes('tired');
+        const leaving = person.stressTags.includes('leaving');
+        look = { face: tired ? 'tired' : busy || leaving ? 'neutral' : 'idle', person: true, laptop: busy ? 'open' : 'closed', mug: !busy, symbols: [...(leaving ? ['cloud'] : []), ...(tired ? ['sweat'] : [])] };
       }
-      drawDesk(desks, seat.x, seat.y, seat.scale, !!person, person?.role, active);
-      if (!person) return;
-      const face = active ? bobbingPen : stillPen;
-      if (active) anyBobbing = true;
-      const cy = seat.y - 42 * seat.scale;
-      drawAvatar(face, seat.x, cy, 11 * seat.scale, person.id, person.look);
-      if (person.stressTags.length) face.circle(seat.x + 8 * seat.scale, cy - 12 * seat.scale, 3, colors.danger);
+      art.station(node, seat.x, seat.y, seat.k, person ? core.artOf(person) : '', look, height, index * 1.7, seat.decor);
     });
-    if (anyBobbing) tween(bobbing).by(0.22, { position: new Vec3(0, 2, 0) }).by(0.22, { position: new Vec3(0, -2, 0) }).union().repeatForever().start();
     if (pages > 1) {
       let startX = 0;
       node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { startX = event.getUILocation().x; this.officeSwiped = false; });
@@ -1008,9 +992,12 @@ export class StudioApp extends Component {
     const chip = this.box(node, 'Room', inner - chipWidth - 6, height - 22, chipWidth, 18, colors.night, 9, 200);
     this.text(chip, label, 7, 0, chipWidth - 14, 18, 10, '#ffffff');
     this.clickable(chip, () => this.openMenu('team'));
-    const hotspot = (name: string, rect: any, text: string, open: () => void) => {
+    const hotspot = (name: string, area: any, text: string, open: () => void) => {
+      const x = Math.max(0, area.x);
+      const rect = { x, y: area.y, w: Math.min(inner, area.x + area.w) - x, h: area.h };
+      props[name] = rect;
       const spot = this.box(node, name, rect.x, rect.y, rect.w, rect.h);
-      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, rect.h - 13, 30, 12, colors.night, 6, 170);
+      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, 1, 30, 12, colors.night, 6, 170);
       this.text(tag, text, 0, 0, 30, 12, 9, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
       this.clickable(spot, open);
       this.anchors.set(name, spot);
@@ -1027,6 +1014,22 @@ export class StudioApp extends Component {
     }
     const plaque = this.box(node, 'Plaque', props.plaque.x, props.plaque.y, props.plaque.w, props.plaque.h);
     this.clickable(plaque, () => this.openMenu('rating'));
+    if (art && state.office === 1) {
+      // Stars are centre-anchored children so a press visibly shrinks each one in place.
+      const { w, h } = props.plaque;
+      const size = Math.min(h * 0.8, w / 6.5);
+      const stars: Node[] = [];
+      for (let index = 0; index < 5; index++) {
+        const sprite = art.place(plaque, art.prop(index <= rating.tier ? 'star-on' : 'star-off'), 0, 0, size, size);
+        sprite.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
+        sprite.node.setPosition(w / 2 + (index - 2) * size * 1.2, -h / 2);
+        stars.push(sprite.node);
+      }
+      const press = (scale: number) => stars.forEach(star => { Tween.stopAllByTarget(star); tween(star).to(0.08, { scale: new Vec3(scale, scale, 1) }).start(); });
+      plaque.on(Node.EventType.TOUCH_START, () => press(0.8));
+      plaque.on(Node.EventType.TOUCH_END, () => press(1));
+      plaque.on(Node.EventType.TOUCH_CANCEL, () => press(1));
+    }
     this.anchors.set('tier', plaque);
     if (rating.watch) this.text(plaque, '!', props.plaque.w - 12, 0, 10, props.plaque.h, 12, colors.danger, true);
     return height;
@@ -1430,8 +1433,7 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const { pen } = this.canvasNode(body, 'Room', 0, 0, inner, 150);
     drawRoom(pen, inner, 150, 0);
-    const desks = new Pen(this.box(body, 'Desk', 0, 0, inner, 150).addComponent(Graphics));
-    seatLayout(1, inner, 150).forEach(seat => drawDesk(desks, seat.x, seat.y, seat.scale, false, 'code', false));
+    if (this.art.ready) seatLayout(1, inner, 150).forEach(seat => this.art.station(body, seat.x, seat.y - 13 * seat.scale, seat.scale * 0.2, '', null, 150, 0));
     let cursor = 166;
     cursor += this.paragraph(body, '一间小屋、一张桌子和 ' + content.money(this.state.cash) + ' 积蓄。先接一份委托，再做自己的游戏。', cursor);
     this.draft.suggested = this.draft.suggested || content.randomStudioName();
@@ -1444,36 +1446,23 @@ export class StudioApp extends Component {
       const origin = core.ORIGINS[role];
       cursor += this.choice(body, cursor, origin.name, origin.focus + '\n第一份委托：' + core.MODULES[origin.starter].name, () => { this.draft.founder = role; this.render(); }, { highlight: founder === role, tag: founder === role ? '已选' : '', tagColor: colors.green, brick: core.MODULES[origin.starter] }) + 8;
     }
-    // The founder's look: four small rows, with the face updating as the player taps.
-    const look = this.draft.look || (this.draft.look = { skin: 1, face: 0, hair: 0, hairColor: 0, glasses: 0 });
+    // The founder is one of the ten characters; the pick also sets the founder's gender.
+    const picks = [...core.CHARACTERS.m, ...core.CHARACTERS.f];
+    const art = picks.includes(this.draft.art) ? this.draft.art : (this.draft.art = picks[0]);
     cursor += 6;
     this.text(body, '你的样子', 0, cursor, inner, 24, 15, colors.ink, true);
     cursor += 30;
-    drawAvatar(this.canvasNode(body, 'Face', 0, cursor, 72, 72).pen, 36, 36, 28, 'founder', look);
-    const rows: Array<[string, number, (index: number) => void, (index: number) => boolean]> = [
-      ['肤色', SKINS.length, index => { look.skin = index; }, index => look.skin === index],
-      ['脸型', FACES, index => { look.face = index; }, index => look.face === index],
-      ['发型', HAIR_STYLES, index => { look.hair = index; }, index => look.hair === index],
-      ['发色', HAIRS.length, index => { look.hairColor = index; }, index => look.hairColor === index],
-      ['眼镜', GLASSES.length, index => { look.glasses = index; }, index => look.glasses === index]
-    ];
-    const left = 84;
-    rows.forEach(([label, count, set, on], row) => {
-      const y = cursor + row * 34;
-      this.text(body, label, left, y, 36, 28, 12, colors.muted);
-      const cell = Math.min(30, (inner - left - 40 - (count - 1) * 4) / count);
-      for (let index = 0; index < count; index++) {
-        const swatch = label === '肤色' ? SKINS[index] : label === '发色' ? HAIRS[index] : '';
-        const x = left + 40 + index * (cell + 4);
-        const node = this.box(body, 'Swatch', x, y, cell, 28, swatch || (on(index) ? colors.green : colors.pale), 6);
-        if (!swatch) this.text(node, label === '眼镜' ? GLASSES[index] : String(index + 1), 0, 0, cell, 28, 11, on(index) ? '#ffffff' : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
-        if (on(index)) new Pen(this.box(node, 'Pick', 0, 0, cell, 28).addComponent(Graphics)).frame(0, 0, cell, 28, colors.ink, 2, 6);
-        this.clickable(node, () => { set(index); this.render(); });
-      }
+    const cell = (inner - 4 * 8) / 5;
+    picks.forEach((id, index) => {
+      const x = (index % 5) * (cell + 8);
+      const top = cursor + Math.floor(index / 5) * (cell + 8);
+      const node = this.box(body, 'Look', x, top, cell, cell, id === art ? colors.green : colors.soft, 10);
+      this.portrait(node, id, 3, 3, cell - 6);
+      this.clickable(node, () => { this.draft.art = id; this.render(); });
     });
-    cursor += rows.length * 34 + 10;
+    cursor += 2 * (cell + 8) + 8;
     this.button(body, '成立工作室', 0, cursor, inner, 48, () => {
-      this.apply(core.nameCompany(this.state, this.draft.name.trim() || this.draft.suggested, founder, look));
+      this.apply(core.nameCompany(this.state, this.draft.name.trim() || this.draft.suggested, founder, art));
       this.resumeAfterMenu = false;
       this.closeMenu();
     }, true);
@@ -1771,7 +1760,7 @@ export class StudioApp extends Component {
           const bestAbility = core.primaryAbility(person);
           const bestText = core.ABILITIES.find(ability => ability.key === bestAbility)?.name + ' ' + Math.round(person.abilities[bestAbility]);
           const detail = `月薪 ${content.money(person.wage)} · 速度 ${person.speed}\n最强：${bestText} · 潜力${core.potentialBand(person)}`;
-          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person), avatar: person.id, avatarLook: person.look }) + 10;
+          y += this.choice(parent, y, (person.fame ? '★ ' : '') + person.name, detail, () => this.openMenu('candidate', person.id), { tag: person.hired ? '已录用' : person.fame ? '名人' : '', tagColor: person.fame ? colors.gold : colors.green, disabled: person.hired, anchor: 'candidate-' + index, radar: person.abilities, chips: core.personTags(person), avatar: core.artOf(person) }) + 10;
         });
         this.anchors.set('candidates', this.box(parent, 'CandidatesAnchor', 0, start, width, y - start - 10));
         return y;
@@ -1786,18 +1775,20 @@ export class StudioApp extends Component {
           const chips = core.personTags(person);
           const bestAbility = core.primaryAbility(person);
           const detail = `月薪 ${content.money(person.wage)} · ${core.ABILITIES.find(ability => ability.key === bestAbility)?.name} ${Math.round(person.abilities[bestAbility])}${person.leaveUntil > this.state.day ? ' · 外出中' : ''}${person.mentor ? ' · 带教中' : ''}`;
-          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: person.id, avatarLook: person.look, anchor: 'staff-' + index }) + 10;
+          y += this.choice(parent, y, person.name + ' · ' + core.ROLES[person.role].name, detail, () => this.openMenu('person', person.id), { radar: person.abilities, chips, avatar: core.artOf(person), anchor: 'staff-' + index }) + 10;
         }
         return y;
       case 'avatar': {
-        drawAvatar(this.canvasNode(parent, 'Avatar', 0, y, 56, 56).pen, 28, 28, 22, block.id, block.look);
+        this.box(parent, 'Photo', 0, y, 56, 56, colors.soft, 12);
+        this.portrait(parent, block.art, 0, y, 56);
         this.text(parent, block.text, 68, y + 8, width - 68, 40, 14, colors.ink, true);
         return y + 64;
       }
       case 'story': {
         // RPG-style speech: the speaker's portrait and name on the left, what they say in a bubble beside it.
         const size = 64;
-        drawAvatar(this.canvasNode(parent, 'Speaker', 0, y, size, size).pen, size / 2, size / 2, 28, block.id, block.look);
+        this.box(parent, 'Photo', 0, y, size, size, colors.soft, 12);
+        this.portrait(parent, block.art, 0, y, size);
         this.text(parent, block.name, 0, y + size + 2, size, 18, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
         const left = size + 12;
         const bubble = this.box(parent, 'Speech', left, y, width - left, 40);
@@ -2331,6 +2322,9 @@ export class StudioApp extends Component {
       const bounds = target.getComponent(UITransform).getBoundingBoxToWorld();
       const local = this.stage.getComponent(UITransform).convertToNodeSpaceAR(new Vec3(bounds.x, bounds.y, 0));
       rect = { x: local.x - 5, y: -(local.y + bounds.height) - 5, w: bounds.width + 10, h: bounds.height + 10 };
+      // Targets cut by the screen edge (e.g. the cropped office shelf) keep the frame and bubble on screen.
+      const left = Math.max(0, rect.x), top = Math.max(0, rect.y);
+      rect = { x: left, y: top, w: Math.min(this.width, rect.x + rect.w) - left, h: Math.min(this.height, rect.y + rect.h) - top };
     }
     // Every tip dims whatever it is not pointing at, menus included: a highlight only reads as a
     // highlight when the rest of the screen steps back.

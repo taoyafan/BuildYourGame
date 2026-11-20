@@ -18,7 +18,7 @@ H5 产物需通过本地 HTTP 服务打开，不能双击 HTML。抖音发布前
 - [assets/scripts/core/Content.ts](assets/scripts/core/Content.ts)：菜单、下一步建议与首作教程步骤。
 - [assets/scripts/StudioApp.ts](assets/scripts/StudioApp.ts)：原生节点界面与操作，教程按锚点计算高亮位置。
 - [assets/scripts/ui/Art.ts](assets/scripts/ui/Art.ts)：代码绘制办公室、人物与作品画面。
-- [assets/scripts/ui/OfficeArt.ts](assets/scripts/ui/OfficeArt.ts)：手绘办公室的图集切片、分层与共享动画时钟。运行素材位于 `assets/resources/art/office-sample/`，`manifest.json` 登记像素矩形和伸缩边距；墙、地板分别适配办公室高度，作品屏幕、星级与成就陈列由程序绘制。手绘样板覆盖自家和起步小屋，一名未指定外观的员工使用样板人物，其余员工保留头像；素材缺失或校验失败时使用代码绘制。美术源文件与交付说明见 [样板目录](../art/production/office-sample/README.md)。
+- [assets/scripts/ui/People.ts](assets/scripts/ui/People.ts)：一体化人物与起步小屋的运行素材：人物表情、头像、工位层级、状态符号与呼吸眨眼。素材位于 `assets/resources/art/`（`atlas.png`、`cottage.jpg`、`art.json` 布局），由 [export-runtime.py](../art/production/export-runtime.py) 从美术制作稿导出；其余办公室使用代码绘制。
 - [assets/scripts/Platform.ts](assets/scripts/Platform.ts)：微信 `wx`、抖音 `tt`、H5 的存储、剪贴板与安全区。
 - 图标、音效与背景音乐由 [tools/prepare.cjs](tools/prepare.cjs) 在构建前生成，不联网下载，也不进 git；换机器后运行 `prepare:assets` 即可。
 

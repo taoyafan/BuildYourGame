@@ -150,92 +150,9 @@ export function drawRoom(pen: Pen, w: number, h: number, office: number, record:
   if (!spines && !cups) pen.frame(shelf.x + 6, plankY - 14, 12, 14, '#b9a993', 1, 1);
 }
 
-export function drawDesk(pen: Pen, x: number, y: number, scale: number, occupied: boolean, role: string, working: boolean) {
-  const s = scale;
-  if (occupied) {
-    pen.rect(x - 11 * s, y - 34 * s, 22 * s, 20 * s, role === 'art' ? palette.art : role === 'design' ? palette.design : palette.code, 7 * s);
-  } else {
-    pen.rect(x - 11 * s, y - 24 * s, 22 * s, 12 * s, '#b9a993', 4 * s, 120);
-  }
-  pen.rect(x - 15 * s, y - 33 * s, 22 * s, 16 * s, '#3f4a47', 2 * s);
-  pen.rect(x - 13 * s, y - 31 * s, 18 * s, 12 * s, occupied && working ? (role === 'art' ? palette.screenArt : palette.screenOn) : palette.screenOff, 1 * s);
-  pen.rect(x - 7 * s, y - 17 * s, 6 * s, 4 * s, '#3f4a47', 0);
-  pen.rect(x - 28 * s, y - 13 * s, 56 * s, 7 * s, palette.deskTop, 2 * s);
-  pen.rect(x - 25 * s, y - 6 * s, 4 * s, 16 * s, palette.desk, 0);
-  pen.rect(x + 21 * s, y - 6 * s, 4 * s, 16 * s, palette.desk, 0);
-}
-
 function seeded(seed: number) {
   let value = seed >>> 0;
   return () => { value = (Math.imul(value, 1664525) + 1013904223) >>> 0; return value / 4294967296; };
-}
-
-export const SKINS = ['#f7dcc4', '#f1cfb0', '#e5b892', '#c9956f', '#9c6a4b'];
-export const HAIRS = ['#2b2523', '#4a3328', '#7a4b2a', '#b5833f', '#e2d2a8', '#8a8f94', '#a2443a', '#3b4f7a'];
-export const HAIR_STYLES = 5;
-export const FACES = 3;
-export const GLASSES = ['不戴', '方框', '圆框', '墨镜'];
-const EXTRAS = ['#2f7d63', '#c8574f', '#497899', '#e0a526', '#9b6fb0'];
-
-// A simple face built from the person's id, so the same person always looks the same everywhere. A chosen
-// look (the founder's) overrides skin, hair style, hair colour and glasses.
-export function drawAvatar(pen: Pen, cx: number, cy: number, r: number, id: string, look: any = null) {
-  let hash = 2166136261;
-  for (let index = 0; index < id.length; index++) hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
-  const rand = seeded(hash);
-  const pick = <T>(list: T[]) => list[Math.floor(rand() * list.length)];
-  let skin = pick(SKINS);
-  let hair = pick(HAIRS);
-  const extra = pick(EXTRAS);
-  let face = Math.floor(rand() * 3);
-  let style = Math.floor(rand() * 5);
-  let accessory = Math.floor(rand() * 6);
-  if (look) {
-    skin = SKINS[look.skin] || skin;
-    hair = HAIRS[look.hairColor] || hair;
-    style = Number.isInteger(look.hair) ? look.hair : style;
-    face = Number.isInteger(look.face) ? look.face : face;
-    // Older looks stored glasses as a boolean.
-    const glasses = look.glasses === true ? 1 : Number(look.glasses) || 0;
-    accessory = [0, 1, 5, 6][glasses] || 0;
-  }
-  const w = r * (face === 1 ? 1.5 : face === 2 ? 1.4 : 1.6);
-  const h = r * (face === 2 ? 1.85 : 1.6);
-  const top = cy - h / 2;
-  if (style === 2) pen.rect(cx - w / 2 - r * 0.15, top, w + r * 0.3, h * 0.95, hair, r * 0.5);
-  if (style === 3) pen.circle(cx, top - r * 0.12, r * 0.38, hair);
-  pen.rect(cx - w / 2, top, w, h, skin, face === 0 ? w / 2 : r * 0.45);
-  if (style !== 4) pen.rect(cx - w / 2 - r * 0.05, top - r * 0.08, w + r * 0.1, h * (style === 1 ? 0.42 : 0.3), hair, r * 0.45);
-  if (style === 1) { pen.rect(cx - w / 2 - r * 0.08, top + h * 0.15, r * 0.3, h * 0.55, hair, r * 0.12); pen.rect(cx + w / 2 - r * 0.22, top + h * 0.15, r * 0.3, h * 0.55, hair, r * 0.12); }
-  if (style === 4) pen.rect(cx - w / 2, top, w, h * 0.16, hair, r * 0.3, 150);
-  const eyeY = top + h * 0.55;
-  pen.circle(cx - w * 0.2, eyeY, Math.max(0.8, r * 0.1), '#2b2523');
-  pen.circle(cx + w * 0.2, eyeY, Math.max(0.8, r * 0.1), '#2b2523');
-  pen.rect(cx - r * 0.18, top + h * 0.76, r * 0.36, Math.max(0.8, r * 0.08), '#a5584a', r * 0.04);
-  if (accessory === 1) {
-    pen.line(cx - w * 0.38, eyeY, cx + w * 0.38, eyeY, '#2b3532', Math.max(0.8, r * 0.08));
-    pen.frame(cx - w * 0.36, eyeY - r * 0.18, w * 0.3, r * 0.36, '#2b3532', Math.max(0.8, r * 0.08), r * 0.1);
-    pen.frame(cx + w * 0.06, eyeY - r * 0.18, w * 0.3, r * 0.36, '#2b3532', Math.max(0.8, r * 0.08), r * 0.1);
-  } else if (accessory === 5) {
-    const lens = r * 0.2;
-    pen.line(cx - w * 0.2 + lens, eyeY, cx + w * 0.2 - lens, eyeY, '#2b3532', Math.max(0.8, r * 0.07));
-    pen.frame(cx - w * 0.2 - lens, eyeY - lens, lens * 2, lens * 2, '#2b3532', Math.max(0.8, r * 0.07), lens);
-    pen.frame(cx + w * 0.2 - lens, eyeY - lens, lens * 2, lens * 2, '#2b3532', Math.max(0.8, r * 0.07), lens);
-  } else if (accessory === 6) {
-    pen.line(cx - w * 0.4, eyeY, cx + w * 0.4, eyeY, '#1d2422', Math.max(0.8, r * 0.08));
-    pen.rect(cx - w * 0.38, eyeY - r * 0.16, w * 0.32, r * 0.32, '#1d2422', r * 0.12);
-    pen.rect(cx + w * 0.06, eyeY - r * 0.16, w * 0.32, r * 0.32, '#1d2422', r * 0.12);
-  } else if (accessory === 2) {
-    pen.rect(cx - w / 2 - r * 0.12, top - r * 0.2, w + r * 0.24, r * 0.2, '#3f4a47', r * 0.1);
-    pen.rect(cx - w / 2 - r * 0.25, eyeY - r * 0.3, r * 0.3, r * 0.55, extra, r * 0.12);
-    pen.rect(cx + w / 2 - r * 0.05, eyeY - r * 0.3, r * 0.3, r * 0.55, extra, r * 0.12);
-  } else if (accessory === 3) {
-    pen.rect(cx - w / 2 - r * 0.05, top - r * 0.12, w + r * 0.1, h * 0.28, extra, r * 0.35);
-    pen.rect(cx - w / 2 - r * 0.05, top + h * 0.12, w * 0.75, r * 0.14, extra, r * 0.07);
-  } else if (accessory === 4) {
-    pen.circle(cx - w / 2, eyeY + h * 0.14, Math.max(0.8, r * 0.1), '#e0a526');
-    pen.circle(cx + w / 2, eyeY + h * 0.14, Math.max(0.8, r * 0.1), '#e0a526');
-  }
 }
 
 // A module brick: family colour, the module's glyph on the face, one stud per level on top and a metal

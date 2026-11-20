@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.33';
+export const VERSION = '0.4.34';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -250,7 +250,45 @@ const TRIAL = 0.55;
 const OVERTIME_BOOST = 1.45;
 const OVERTIME_DEFECT = 1.45;
 const FAMILY_NAMES = ['林', '陈', '周', '许', '沈', '叶', '宋', '程', '顾', '苏', '陆', '江', '王', '李', '张', '刘', '赵', '吴', '郑', '孙', '马', '朱', '胡', '郭', '何', '高', '罗', '梁', '谢', '韩', '唐', '冯', '董', '萧', '曹', '袁', '邓', '傅', '彭', '曾', '温', '白', '秦', '姚', '崔', '段', '谭', '姜'];
-const GIVEN_NAMES = ['知夏', '明远', '可宁', '星河', '亦舟', '思齐', '安然', '予墨', '嘉禾', '清和', '一帆', '若溪', '子谦', '雨桐', '景行', '晨曦', '沐白', '少庭', '书瑶', '云起', '桓宁', '绍光', '慕初', '敬之', '听澜', '尚文', '江来', '观潮', '嘉树', '知意', '青竹', '南乔', '一诺', '闻舒', '立夏', '山月', '昭宁', '启航', '书翼', '时雨', '远山', '顺之', '守一', '晴川', '彦庭', '念安', '海宁', '修远', '云舒', '霜降', '春和', '鸿门', '北辰', '小满', '黎明', '文欣', '晨阳', '仲庭', '雨生', '林溪'];
+const GIVEN_NAMES: Record<string, string[]> = {
+  m: ['明远', '星河', '亦舟', '思齐', '予墨', '一帆', '子谦', '景行', '沐白', '少庭', '云起', '桓宁', '绍光', '敬之', '听澜', '尚文', '江来', '观潮', '嘉树', '启航', '书翼', '远山', '顺之', '守一', '晴川', '彦庭', '修远', '北辰', '黎明', '晨阳', '仲庭', '雨生'],
+  f: ['知夏', '可宁', '安然', '嘉禾', '清和', '若溪', '雨桐', '晨曦', '书瑶', '慕初', '知意', '青竹', '南乔', '一诺', '闻舒', '立夏', '山月', '昭宁', '时雨', '念安', '海宁', '云舒', '霜降', '春和', '小满', '文欣', '林溪']
+};
+// Gender is appearance only: it picks the name pool, the pronoun and the character artwork.
+export const CHARACTERS: Record<string, string[]> = { m: ['m01', 'm02', 'm03', 'm04', 'm05'], f: ['f01', 'f02', 'f03', 'f04', 'f05'] };
+export const pronoun = (person: any) => person?.gender === 'f' ? '她' : '他';
+function idHash(id: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < id.length; index++) hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
+  return hash >>> 0;
+}
+// The person's character artwork; anyone without a stored pick gets a stable one from their id.
+export function artOf(person: any) {
+  const pool = CHARACTERS[person?.gender === 'f' ? 'f' : 'm'];
+  return pool.includes(person?.art) ? person.art : pool[idHash(String(person?.id || '')) % pool.length];
+}
+function identity(state: any) {
+  const gender = random(state) < 0.5 ? 'm' : 'f';
+  return { gender, name: pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES[gender]) };
+}
+// The least-used character of that gender among the staff and open shortlists, so faces repeat late.
+function pickArt(state: any, gender: string, extra: any[] = []) {
+  const pool = CHARACTERS[gender === 'f' ? 'f' : 'm'];
+  const people = [...(state.staff || []), ...Object.values(state.candidates || {}).flatMap((list: any) => list.people || []), ...extra];
+  const used = (art: string) => people.filter((person: any) => person.gender === gender && artOf(person) === art).length;
+  const fewest = Math.min(...pool.map(used));
+  return pick(state, pool.filter(art => used(art) === fewest));
+}
+// Old saves: the given name decides when it belongs to one pool, otherwise the id does.
+function fillLooks(state: any, person: any) {
+  if (!person) return;
+  if (person.gender !== 'm' && person.gender !== 'f') {
+    const given = String(person.name || '').slice(1);
+    person.gender = GIVEN_NAMES.f.includes(given) ? 'f' : GIVEN_NAMES.m.includes(given) ? 'm' : idHash(String(person.id || '')) % 2 ? 'f' : 'm';
+  }
+  if (!CHARACTERS[person.gender].includes(person.art)) person.art = artOf(person);
+  delete person.look;
+}
 
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
@@ -1108,7 +1146,7 @@ export function homeWork(person: any) {
   return best;
 }
 
-export function nameCompany(state: any, name: string, founder?: string, look?: any) {
+export function nameCompany(state: any, name: string, founder?: string, art?: string) {
   const next = studioAction(state);
   const value = String(name || '').trim().slice(0, 24);
   if (!value) throw new Error('请输入公司名称。');
@@ -1127,7 +1165,7 @@ export function nameCompany(state: any, name: string, founder?: string, look?: a
       id: `founder-${next.seed}`, name: '创始人', role: next.founder, abilities, speed: 95, wage: 0,
       hired: true, joined: next.day, home: homeWork({ role: next.founder, abilities, home: '' }), founder: true, snap: { ...abilities },
       potential: Math.round(Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 8 + random(next) * 10)),
-      look: look && typeof look === 'object' ? { ...look } : null
+      gender: CHARACTERS.f.includes(art) ? 'f' : 'm', art
     }));
     personNote(next, next.staff[0], `创办${value}`);
     startJob(next);
@@ -1450,9 +1488,10 @@ function personNote(state: any, person: any, text: string) {
 }
 
 function freshPerson(state: any, base: any) {
+  const gender = base.gender === 'f' ? 'f' : 'm';
   return {
     work: 0, growth: 0, level: 0, stressTags: [], stressChance: 0, overtimeDays: 0, leaveUntil: 0, fame: false, rampup: 0,
-    tags: [], boost: null, mentor: null, history: [], trace: [], ...base
+    tags: [], boost: null, mentor: null, history: [], trace: [], ...base, gender, art: CHARACTERS[gender].includes(base.art) ? base.art : pickArt(state, gender)
   };
 }
 
@@ -1493,15 +1532,16 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
   if (next.candidates[key] && next.candidates[key].batch === batch) return next;
   const source = CHANNELS[channel];
   spend(next, recruitFee(next, channel), `${source.name}招聘${ROLES[role].name}`);
-  const people = Array.from({ length: 3 }, (_, index) => {
+  const people: any[] = [];
+  for (let index = 0; index < 3; index++) {
     const abilities = pickAbilities(next, role, channel);
     const tags = rollTags(next, channel);
     const speed = Math.round(source.speed[0] + random(next) * (source.speed[1] - source.speed[0]));
     const strongest = ABILITY_KEYS.reduce((best, item) => abilities[item] > abilities[best] ? item : best, ABILITY_KEYS[0]);
-    const name = FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)];
+    const { gender, name } = identity(next);
     const wage = round(monthlyWage(abilities[strongest], speed));
-    return freshPerson(next, { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, role, abilities, speed, tags, wage, hired: false, potential: potentialFor(next, abilities, channel) });
-  });
+    people.push(freshPerson(next, { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, gender, art: pickArt(next, gender, people), role, abilities, speed, tags, wage, hired: false, potential: potentialFor(next, abilities, channel) }));
+  }
   // Three candidates, three independent rolls. Odds are per person and scale with star level and
   // channel: at five stars an industry referral gives each candidate a 1-in-10 chance. A shortlist
   // can therefore contain more than one famous name.
@@ -1520,7 +1560,10 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     // about in the news takes one of the slots when there is one available.
     const talent = freeTalents[index] || null;
     star.abilities = starFrom(next, role, talent);
-    if (talent) { star.name = talent.name; star.talent = talent.id; star.story = `${dateText(talent.since)}新闻：${talent.title}`; }
+    if (talent) {
+      fillLooks(next, talent);
+      Object.assign(star, { name: talent.name, gender: talent.gender, art: pickArt(next, talent.gender, people.filter((other: any) => other !== star)), talent: talent.id, story: `${dateText(talent.since)}新闻：${talent.title}` });
+    }
     star.potential = Math.max(...ABILITY_KEYS.map(item => star.abilities[item])) + 2;
     star.speed = Math.min(140, star.speed + 12);
     star.wage = round(star.wage * 1.6);
@@ -1582,7 +1625,7 @@ export function hire(state: any, id: string) {
     }
     const mate = freshPerson(next, {
       id: `crew-${next.seed}-${next.staff.length}`,
-      name: FAMILY_NAMES[Math.floor(random(next) * FAMILY_NAMES.length)] + GIVEN_NAMES[Math.floor(random(next) * GIVEN_NAMES.length)],
+      ...identity(next),
       role, abilities, speed: 95, wage: round(1.4 + random(next)), hired: true, joined: next.day, home: homeWork({ role, abilities, home: '' }),
       potential: Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 10)
     });
@@ -2100,7 +2143,7 @@ export function setOvertime(state: any, id: string, enabled: boolean) {
   if (typeof enabled !== 'boolean') throw new Error('加班安排无效。');
   const person = next.staff.find((item: any) => item.id === id);
   if (!person) throw new Error('员工不存在。');
-  if (enabled && person.noOvertime) throw new Error('他答应过你，不再加班了。');
+  if (enabled && person.noOvertime) throw new Error(pronoun(person) + '答应过你，不再加班了。');
   if (enabled) next.overtime[id] = true;
   else { delete next.overtime[id]; delete next.outing.paused[id]; }
   studioLog(next, `${person.name}${enabled ? '开始加班' : '结束加班'}`, enabled ? '产出 +45%，缺陷更多，并会累积负面标签。' : '恢复正常工作。');
@@ -3536,7 +3579,7 @@ function resolveEvent(state: any, choice: string) {
       personNote(next, founder, '托梦之后，答应了屏幕外的人：再也不加班');
     }
     next.flags = { ...(next.flags || {}), dream: next.day };
-    studioLog(next, '一场梦', '创始人撕掉了解散公告。从今天起，他再也不加班。');
+    studioLog(next, '一场梦', '创始人撕掉了解散公告。从今天起，' + pronoun(founder) + '再也不加班。');
     return next;
   }
   if (event.id === 'resign') {
@@ -3563,7 +3606,7 @@ function resignOrContinue(state: any) {
     // The founder cannot resign from their own studio — he writes a farewell and dreams instead (once).
     if (person.founder) {
       if (!state.flags?.dream && random(state) < chance) {
-        state.event = { id: 'dream', person: person.id, title: '解散公告', text: '', choices: [{ id: 'promise', title: '答应他：不再让他加班' }] };
+        state.event = { id: 'dream', person: person.id, title: '解散公告', text: '', choices: [{ id: 'promise', title: `答应${pronoun(person)}：不再让${pronoun(person)}加班` }] };
         return;
       }
       continue;
@@ -3575,7 +3618,7 @@ function resignOrContinue(state: any) {
         const offer = outingOffer(state, days);
         return { id: 'outing-' + days, title: `现在团建 ${days} 天 · ${offer.cost.toFixed(2)} 万`, detail: offer.available ? `全队停工 ${days} 天；每个负面标签约 ${Math.round(outingChances(person, days).clear * 100)}% 被清掉，不保证。` : offer.reason, disabled: !offer.available };
       });
-      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: '长期压力已让他想走。团建是唯一能清掉「想走」的办法，但要全队停工；只劝留的话，标签还在。接受离职按 N+1 补偿，并保留裁员记录与同事影响。已完成成果保留。', choices: [...outings, { id: 'keep', title: '劝留：停掉他的加班', detail: `「想走」还在，每天仍有 ${Math.round(RESIGN_CHANCE * 100)}% 的概率再提离职。` }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
+      state.event = { id: 'resign', person: person.id, title: `${person.name} 提出离职`, text: `长期压力已让${pronoun(person)}想走。团建是唯一能清掉「想走」的办法，但要全队停工；只劝留的话，标签还在。接受离职按 N+1 补偿，并保留裁员记录与同事影响。已完成成果保留。`, choices: [...outings, { id: 'keep', title: `劝留：停掉${pronoun(person)}的加班`, detail: `「想走」还在，每天仍有 ${Math.round(RESIGN_CHANCE * 100)}% 的概率再提离职。` }, { id: 'dismiss', title: `接受离职 · 补偿 ${compensation.toFixed(2)} 万`, detail: '按 N+1 结算，保留应付工资、裁员记录与同事影响。' + (state.cash < compensation ? '当前资金不足支付补偿。' : ''), disabled: state.cash < compensation }] };
     }
   }
 }
@@ -4043,7 +4086,7 @@ function newTalent(state: any, studio: any) {
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp(prior[key][0] * 0.6 + random(state) * 16, 5, 55));
   abilities[primary] = Math.round(clamp(87 + random(state) * 8 + studio.tier * 2, 85, 99));
   state.talentSeq = (state.talentSeq || 0) + 1;
-  const talent = { id: `talent-${state.talentSeq}`, name: pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES), role, primary, abilities, speed: Math.round(100 + random(state) * 15), studio: studio.id, studioName: studio.name, status: 'employed', since: state.day, title: '', work: '', cooldown: 0 };
+  const talent = { id: `talent-${state.talentSeq}`, ...identity(state), role, primary, abilities, speed: Math.round(100 + random(state) * 15), studio: studio.id, studioName: studio.name, status: 'employed', since: state.day, title: '', work: '', cooldown: 0 };
   state.talents = [...(state.talents || []), talent];
   return talent;
 }
@@ -4116,7 +4159,7 @@ export function poach(state: any, talentId: string, bid: number) {
     // No employer to lose them to: a free agent can be approached again much sooner.
     const cooldown = freeAgent ? 30 : 180;
     talent.cooldown = next.day + cooldown;
-    studioLog(next, `${talent.name} 拒绝了邀请`, freeAgent ? `他还在考虑别家，${cooldown} 天内不会再谈。` : `${talent.studioName}留住了人，180 天内不会再谈。`);
+    studioLog(next, `${talent.name} 拒绝了邀请`, freeAgent ? `${pronoun(talent)}还在考虑别家，${cooldown} 天内不会再谈。` : `${talent.studioName}留住了人，180 天内不会再谈。`);
     announce(next, { kind: 'notice', title: `${talent.name} 拒绝了邀请`, text: `猎头费不退，${cooldown} 天内不会再谈`, amount: 0 });
     return next;
   }
@@ -4445,7 +4488,7 @@ const RANDOM_EVENTS: any[] = [
     const person = state.staff.find((item: any) => item.id === ctx.person);
     const name = ABILITIES.find(item => item.key === primaryAbility(person))?.name;
     return { title: '行业大会开幕', text: `全国开发者大会有一场${name}专场，${person.name}很想去听。`, choices: [
-      { id: 'go', title: '花 3 万派他去', outcomes: [{ p: 1, text: `${person.name}离开 5 天，${name} +4`, effects: { cash: -3, busy: { who: 'person', days: 5 }, train: { who: 'person', amount: 4 } } }] },
+      { id: 'go', title: `花 3 万派${pronoun(person)}去`, outcomes: [{ p: 1, text: `${person.name}离开 5 天，${name} +4`, effects: { cash: -3, busy: { who: 'person', days: 5 }, train: { who: 'person', amount: 4 } } }] },
       { id: 'stream', title: '只看线上直播', outcomes: [{ p: 0.6, text: `${person.name}占用 2 天，${name} +2`, effects: { busy: { who: 'person', days: 2 }, train: { who: 'person', amount: 2 } } }, { p: 0.4, text: '直播卡得厉害，白看了 2 天', effects: { busy: { who: 'person', days: 2 } } }] },
       safe('不去', '手头的工作更要紧')
     ] };
@@ -4524,7 +4567,7 @@ function makeJunior(state: any, role: string, skill: number) {
   for (const key of ABILITY_KEYS) abilities[key] = Math.round(clamp((ROLES[role].home.includes(key) ? skill : skill * 0.6) + (random(state) - 0.5) * 10, 5, 95));
   if (role === 'test') abilities.discover = Math.round(clamp(skill + (random(state) - 0.5) * 10, 5, 95));
   return freshPerson(state, {
-    id: `junior-${state.seed}-${state.day}-${state.staff.length}`, name: pick(state, FAMILY_NAMES) + pick(state, GIVEN_NAMES), role, abilities,
+    id: `junior-${state.seed}-${state.day}-${state.staff.length}`, ...identity(state), role, abilities,
     speed: 85, tags: [{ kind: 'personality', key: 'growth' }], wage: 0.8, hired: true, joined: state.day, home: homeWork({ role, abilities, home: '' }),
     snap: { ...abilities }, potential: Math.round(clamp(skill + 30 + random(state) * 10, 70, 96)), history: [{ day: state.day, text: '应届生上门，入职' }]
   });
@@ -4867,6 +4910,7 @@ export function restoreStudio(saved: any) {
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
+  for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;
 }
 
