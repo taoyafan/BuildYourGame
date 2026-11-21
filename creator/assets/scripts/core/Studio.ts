@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.48';
+export const VERSION = '0.4.49';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -568,26 +568,6 @@ function recordHeat(state: any) {
   const sample: any = {};
   for (const tag of ALL_TAGS) sample[tag] = tagDemand(state, tag);
   state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_SAMPLES);
-}
-// The market was already turning before the studio opened, so the chart starts with the days its own clock
-// says already happened. Without this the first visit showed a single dot on the right edge — no line at
-// all — until six more days had passed. The values come from the same clock, so this is the real curve of
-// the round in progress, not a copy of today's, and it never runs past the clock's own start.
-function fillHeatHistory(state: any) {
-  if (!Array.isArray(state.heatLog)) state.heatLog = [];
-  const cycle = ensureMarketCycle(state);
-  const from = Math.min(...MARKET_AXES.map(axis => cycle.axes[axis].from));
-  const start = Math.max(from, state.day - HEAT_EVERY * (HEAT_SAMPLES - 1));
-  // Only the days before the first real sample are filled in; nothing recorded is ever overwritten.
-  const oldest = state.heatLog.length ? state.heatLog[0].day : state.day + 1;
-  if (oldest <= start) return;
-  const log: any[] = [];
-  for (let day = start; day < oldest; day += HEAT_EVERY) {
-    const sample: any = {};
-    for (const tag of ALL_TAGS) sample[tag] = tagDemandOn(state, tag, day);
-    log.push({ day, v: sample });
-  }
-  state.heatLog = [...log, ...state.heatLog].slice(-HEAT_SAMPLES);
 }
 export function heatSeries(state: any, tag: string) {
   const past = (state.heatLog || []).map((item: any) => ({ day: item.day, value: item.v[tag] ?? 1 }));
@@ -1196,15 +1176,13 @@ export function createStudio(seed = Date.now()) {
     office: 0, goals: { firstRelease: null, breakEven: null, moved: null, topTen: null, award: null, expanded: null }, fans: 0, feed: [],
     overtime: {}, outing: { charges: 1, next: 1 + OUTING_RECHARGE, last: null, resume: null, paused: {}, pending: null, history: [] }, sound: true, exhibitions: [], awards: [], rankings: [], operation: null,
     eventNext: 60, eventSeen: {}, schedule: [], talents: [], flags: {}, achievements: {}, playSeconds: 0,
+    heatLog: [],
     rating: { score: 0, watch: false, promotedAt: 0, history: [] }
   };
   // The market clocks are anchored before the industry backfills its history: that backfill walks the
   // calendar backwards, and a clock created then would start hundreds of days behind.
   ensureMarketCycle(state);
   seedIndustry(state);
-  // The studio opens into a market that has been turning for a while, so the first look at 行情 already has
-  // a line to read instead of a single dot.
-  fillHeatHistory(state);
   return state;
 }
 
@@ -5155,9 +5133,10 @@ export function restoreStudio(saved: any) {
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   // The chart only ever draws what was really recorded: a short record stays short until the days pass.
+  // 0.4.48 briefly prefilled the days before opening from the market clock; those samples are not real
+  // records, so they are dropped here. The studio opens on day 1, so nothing before it was ever sampled.
   if (!Array.isArray(next.heatLog)) next.heatLog = [];
-  // A save made before the opening history was filled in shows the market's own days, not an empty chart.
-  fillHeatHistory(next);
+  next.heatLog = next.heatLog.filter((item: any) => item && item.day >= 1 && item.day <= next.day && item.v);
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;

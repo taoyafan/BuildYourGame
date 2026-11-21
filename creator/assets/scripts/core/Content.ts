@@ -1363,7 +1363,11 @@ function industryMenu(state: any, id?: string) {
   const [tabText = '', kind = 'first', levelText] = String(id || '').split(':');
   const tab = tabText || 'market';
   const level = levelText === undefined || levelText === '' ? focus : Number(levelText) || 0;
-  const route = (nextTab: string, nextKind = kind, nextLevel = level) => ({ menu: 'industry', id: nextTab + ':' + nextKind + ':' + nextLevel });
+  // 行情 has no tier or list mode of its own, so it gets a bare id: the tier/list segments that every
+  // other tab carries used to land where 行情 expects an option name and hid every line of the chart.
+  const route = (nextTab: string, nextKind = kind, nextLevel = level) => nextTab === 'market'
+    ? { menu: 'industry', id: 'market' }
+    : { menu: 'industry', id: nextTab + ':' + nextKind + ':' + nextLevel };
   const blocks: any[] = [
     { type: 'tabs', items: [['board', '榜单'], ['market', '行情'], ['rivals', '对手'], ['schedule', '日历'], ['news', '新闻'], ['awards', '评选']].map(([key, text]) => ({ text, route: route(key), active: key === tab })) }
   ];
@@ -1419,22 +1423,26 @@ function industryMenu(state: any, id?: string) {
 // off the market itself (not the titles), so promotion cannot colour it. The legend filters to one line.
 const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0', '#6b8e3d', '#b5547f', '#3f7f9e', '#a8742f', '#5b6770'];
 function marketBlocks(state: any, id?: string) {
-  const [, groupText = '', tag = ''] = String(id || '').split(':');
+  const [, groupText = '', rawTag = ''] = String(id || '').split(':');
   const groups = core.heatGroups(state);
   const group = groups.find((item: any) => item.key === groupText) || groups.find((item: any) => item.field === core.lensOf(state)) || groups[0];
+  // Only a name that really is one of this group's options narrows the chart to one line. Anything else
+  // (an empty segment, a tier index left over from another tab) means "draw all of them": filtering on a
+  // value that matches no line left the chart blank with nothing to explain why.
+  const tag = (group?.tags || []).includes(rawTag) ? rawTag : '';
   const route = (key: string, nextTag: string) => ({ menu: 'industry', id: ['market', key, nextTag].join(':') });
   const lines = group.tags.map((name: string, index: number) => {
     const series = core.heatSeries(state, name);
     return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.tagHeat(series[series.length - 1].value).label, shown: !tag || tag === name };
   });
   const first = (state.heatLog || [])[0];
-  // The chart only shows recorded days: it starts at the first sample and grows to a year. A new studio's
-  // first samples are the days the market already had behind it, so the left edge reads 开业前.
+  // The chart only shows days that were really sampled: it starts at the first sample and grows to a
+  // year. Nothing is drawn in for the days before it — a short record stays short.
   const fromDay = first ? first.day : state.day;
   const span = Math.max(14, state.day - fromDay);
   const start = state.day - span;
-  const fromLabel = span >= 330 ? '一年前' : fromDay <= 0 ? '开业前' : '开业';
-  const note = span >= 330 ? '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。' : '开业前后各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。记录满一年后就是完整的一年。';
+  const fromLabel = span >= 330 ? '一年前' : '开业';
+  const note = span >= 330 ? '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。' : '开业至今各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。记录满一年后就是完整的一年。';
   return [
     ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name, route: route(item.key, ''), active: item.key === group.key })) }] : []),
     { type: 'heat', lines, start, end: state.day, fromLabel, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },
