@@ -1,6 +1,9 @@
-import { JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
+import { Color, JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
 
-type RoomArt = 'home' | 'cottage' | 'formal' | 'studio';
+export const officeRooms = ['home', 'cottage', 'formal', 'studio', 'floor'] as const;
+type RoomArt = typeof officeRooms[number];
+type RoomTexture = RoomArt | `${RoomArt}-staff` | `${RoomArt}-desk-row`;
+const roomTextures: RoomTexture[] = [...officeRooms, 'formal-desk-row', 'studio-staff', 'floor-staff', 'floor-desk-row'];
 type SeatAnchor = [number, number, number, string[]?];
 export type RoomRect = [number, number, number, number];
 type RoomLayout = {
@@ -13,7 +16,7 @@ type RoomLayout = {
   shelf: number[];
   shelfPlank: number;
   trophyStep?: number;
-  staffFloor?: { size: [number, number]; deskOffsetY: number };
+  staffFloor?: { size: [number, number]; deskOffsetY?: number; chairTint?: string };
 };
 type Layout = Record<RoomArt, RoomLayout> & {
   size: number[]; unit: number; characters: { id: string; sex: string; frames: Record<string, number[]>; avatar: number[] }[];
@@ -27,37 +30,24 @@ export type Station = { x: number; y: number; k: number; art: string; look: Look
 export class ArtPack {
   layout: Layout | null = null;
   private atlas: Texture2D | null = null;
-  private rooms: Partial<Record<RoomArt, Texture2D>> = {};
-  private deskRowTexture: Texture2D | null = null;
-  private staffFloorTexture: Texture2D | null = null;
+  private textures: Partial<Record<RoomTexture, Texture2D>> = {};
   private frames = new Map<string, SpriteFrame>();
   private disposed = false;
   private actors: { sprite: Sprite; art: string; face: string; phase: number }[] = [];
   private clock = 0;
 
   load(done: () => void) {
-    const roomNames: RoomArt[] = ['home', 'cottage', 'formal', 'studio'];
-    let pending = 4 + roomNames.length;
+    let pending = 2 + roomTextures.length;
     const finish = () => { if (--pending === 0 && !this.disposed && this.ready) done(); };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
     resources.load('art/atlas/texture', Texture2D, (error, texture) => { if (error) console.warn('Art atlas:', error.message); else this.atlas = texture; finish(); });
-    for (const name of roomNames) {
+    for (const name of roomTextures) {
       resources.load(`art/${name}/texture`, Texture2D, (error, texture) => {
         if (error) console.warn(`Room art (${name}):`, error.message);
-        else this.rooms[name] = texture;
+        else this.textures[name] = texture;
         finish();
       });
     }
-    resources.load('art/formal-desk-row/texture', Texture2D, (error, texture) => {
-      if (error) console.warn('Formal desk row:', error.message);
-      else this.deskRowTexture = texture;
-      finish();
-    });
-    resources.load('art/studio-staff/texture', Texture2D, (error, texture) => {
-      if (error) console.warn('Studio staff floor:', error.message);
-      else this.staffFloorTexture = texture;
-      finish();
-    });
   }
 
   get ready() { return !!(this.layout && this.atlas); }
@@ -83,17 +73,20 @@ export class ArtPack {
     return this.frame(item.id + ':avatar', this.atlas!, [cell[0] + x, cell[1] + y, w, h]);
   }
   roomFrame(name: RoomArt) {
-    const texture = this.rooms[name];
+    const texture = this.textures[name];
     return texture ? this.frame(name, texture, [0, 0, ...this.layout![name].size]) : null;
   }
-  formalDeskFrame() {
-    const texture = this.deskRowTexture;
-    return texture ? this.frame('formal-desk-row', texture, [0, 0, texture.width, texture.height]) : null;
+  deskRowFrame(name: RoomArt) {
+    const key = `${name}-desk-row` as const;
+    const selected = this.textures[key] ? key : 'formal-desk-row';
+    const texture = this.textures[selected];
+    return texture ? this.frame(selected, texture, [0, 0, texture.width, texture.height]) : null;
   }
-  staffFloorFrame() {
-    const texture = this.staffFloorTexture;
-    const floor = this.layout!.studio.staffFloor;
-    return texture && floor ? this.frame('studio-staff', texture, [0, 0, ...floor.size]) : null;
+  staffFloorFrame(name: RoomArt) {
+    const key = `${name}-staff` as const;
+    const texture = this.textures[key];
+    const floor = this.layout![name].staffFloor;
+    return texture && floor ? this.frame(key, texture, [0, 0, ...floor.size]) : null;
   }
 
   // A sprite in a top-left box. Anything below `clip` is cut off by filling only the top part.
@@ -123,10 +116,11 @@ export class ArtPack {
     return this.place(parent, frame, x + dx * k, y + dy * k, w * k, h * k, clip);
   }
 
-  private stationBack(parent: Node, seat: Station, clip: number) {
+  private stationBack(parent: Node, seat: Station, clip: number, chairTint?: Color) {
     const { x, y, k, art, look, phase } = seat;
     const station = this.layout!.station;
-    this.stationPart(parent, seat, 'chair', this.prop('chair'), clip);
+    const chair = this.stationPart(parent, seat, 'chair', this.prop('chair'), clip);
+    if (chairTint) chair.color = chairTint;
     if (look?.person) {
       const sprite = this.stationPart(parent, seat, 'person', this.face(art, look.face), clip);
       // Breathing scales from the desk line, so the body never lifts off the desk.
@@ -161,8 +155,8 @@ export class ArtPack {
   }
 
   // All chairs and people go behind the shared desktop. Laptops and ornaments go in front.
-  stationRow(parent: Node, stations: Station[], frame: SpriteFrame, desk: RoomRect, clip: number) {
-    for (const seat of stations) this.stationBack(parent, seat, clip);
+  stationRow(parent: Node, stations: Station[], frame: SpriteFrame, desk: RoomRect, clip: number, chairTint?: Color) {
+    for (const seat of stations) this.stationBack(parent, seat, clip, chairTint);
     this.place(parent, frame, ...desk, clip);
     for (const seat of stations) this.stationFront(parent, seat, clip);
   }

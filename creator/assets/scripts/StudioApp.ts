@@ -8,7 +8,7 @@ import * as core from './core/Studio';
 import * as content from './core/Content';
 import { Pen, drawRoom, drawTrophy, drawBrick, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
-import { ArtPack, Look, RoomRect, Station } from './ui/People';
+import { ArtPack, Look, RoomRect, Station, officeRooms } from './ui/People';
 
 const { ccclass } = _decorator;
 const colors = {
@@ -997,10 +997,9 @@ export class StudioApp extends Component {
     const project = shown;
     // Illustrated rooms keep their artwork ratio. Short screens scroll the panels below into view.
     const shrink = Math.max(0, Math.min(70, (project ? 586 : 334) - (navY - contentTop - 10)));
-    const officeHeight = state.office === 3 ? inner * 240 / 350 : state.office <= 2 ? inner * 190 / 350 : 190 - shrink;
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
     const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
-    let y = this.office(body, officeHeight, project, metrics);
+    let y = this.office(body, shrink, project, metrics);
     if (project?.released) y = this.patchPanel(body, y, project);
     else if (project) y = this.projectPanel(body, y, metrics);
     else {
@@ -1015,12 +1014,14 @@ export class StudioApp extends Component {
 
   // The office is the main screen's picture and its doors: the big screen shows the current work, the
   // plaque the star rating, the calendar opens the schedule, the shelf the achievements and the desks
-  // the team. Up to twenty desks fit one page; larger teams page horizontally.
-  private office(body: Node, height: number, project: any, metrics: any) {
+  // the team. The illustrated split offices use ten desks per page.
+  private office(body: Node, shrink: number, project: any, metrics: any) {
     const state = this.state;
     const inner = this.width - 40;
     const art = this.art.ready ? this.art : null;
-    const roomName = (['home', 'cottage', 'formal', 'studio'] as const)[state.office as number];
+    const roomName = officeRooms[state.office as number];
+    const splitOffice = state.office >= 3 && !!roomName;
+    const height = splitOffice ? inner * 240 / 350 : state.office <= 2 ? inner * 190 / 350 : 190 - shrink;
     const room = art && roomName ? art.layout![roomName] : null;
     const background = art && roomName ? art.roomFrame(roomName) : null;
     const dividerHeight = room?.staffFloor && background ? BULLETIN_HEIGHT + 2 * OFFICE_DIVIDER_GAP : 0;
@@ -1036,7 +1037,7 @@ export class StudioApp extends Component {
     let staffHeight = height;
     const deskRows: { desk: RoomRect; count: number }[] = [];
     const trophies: Node[] = [];
-    if (art && room && background) {
+    if (art && roomName && room && background) {
       const k = inner / room.size[0];
       const map = ([x, y, w, h]: number[]) => ({ x: x * k, y: y * k, w: w * k, h: h * k });
       const lobbyHeight = room.size[1] * k;
@@ -1046,12 +1047,12 @@ export class StudioApp extends Component {
         this.box(node, 'OfficeDivider', 0, lobbyHeight, inner, dividerHeight, '#ffffff');
         bulletinY = lobbyHeight + OFFICE_DIVIDER_GAP;
         staffArea = this.box(node, 'StaffFloor', 0, lobbyHeight + dividerHeight, inner, staffHeight, '#b28a60');
-        const floor = art.staffFloorFrame();
+        const floor = art.staffFloorFrame(roomName);
         if (floor) art.place(staffArea, floor, 0, 0, inner, staffHeight);
       }
       props = { screen: room.screen && map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
       const offset = room.staffFloor?.deskOffsetY ?? 0;
-      const rows = room.staffFloor ? art.layout!.formal.deskRows : room.deskRows;
+      const rows = room.deskRows ?? (room.staffFloor ? art.layout!.formal.deskRows : undefined);
       const mapSeat = ([x, top, scale, decor]: [number, number, number, string[]?]) => ({ x: x * k, y: (top + offset) * k, k: scale * k, decor });
       if (rows) {
         seats = rows.flatMap(row => row.seats.map(mapSeat));
@@ -1085,10 +1086,13 @@ export class StudioApp extends Component {
     const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
     const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
     const sorted = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0));
-    const pageSize = state.office === 3 ? 10 : 20;
+    const pageSize = splitOffice ? 10 : 20;
     const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
     let page = Math.min(this.officePage, pages - 1);
     const stationLayer = staffArea ? this.box(staffArea, 'Workstations', 0, 0, inner, staffHeight) : node;
+    const sharedDesk = roomName && deskRows.length ? art?.deskRowFrame(roomName) : null;
+    const chairTint = room?.staffFloor?.chairTint;
+    const chairColor = chairTint ? new Color(chairTint) : undefined;
     // Each person is one whole picture: the face says working, idle or tired; the laptop and the mug say
     // whether there is work; a sweat drop and a cloud above the head mark tired and wanting to leave.
     const drawStations = () => {
@@ -1109,12 +1113,11 @@ export class StudioApp extends Component {
         }
         return { ...seat, art: person ? core.artOf(person) : '', look, phase: index * 1.7 };
       });
-      const sharedDesk = deskRows.length ? art.formalDeskFrame() : null;
       if (sharedDesk) {
         let start = 0;
         for (const row of deskRows) {
           const end = start + row.count;
-          art.stationRow(stationLayer, stations.slice(start, end), sharedDesk, row.desk, staffHeight);
+          art.stationRow(stationLayer, stations.slice(start, end), sharedDesk, row.desk, staffHeight, chairColor);
           start = end;
         }
       } else {
