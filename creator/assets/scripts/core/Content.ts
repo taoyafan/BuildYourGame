@@ -1428,11 +1428,13 @@ function marketBlocks(state: any, id?: string) {
     return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.tagHeat(series[series.length - 1].value).label, shown: !tag || tag === name };
   });
   const first = (state.heatLog || [])[0];
-  // The chart only shows recorded days: it starts at the first sample and grows to a year.
-  const span = Math.max(14, state.day - (first ? first.day : state.day));
+  // The chart only shows recorded days: it starts at the first sample and grows to a year. A new studio's
+  // first samples are the days the market already had behind it, so the left edge reads 开业前.
+  const fromDay = first ? first.day : state.day;
+  const span = Math.max(14, state.day - fromDay);
   const start = state.day - span;
-  const fromLabel = span >= 330 ? '一年前' : '开业';
-  const note = span >= 330 ? '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。' : '开业至今各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。记录满一年后就是完整的一年。';
+  const fromLabel = span >= 330 ? '一年前' : fromDay <= 0 ? '开业前' : '开业';
+  const note = span >= 330 ? '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。' : '开业前后各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。记录满一年后就是完整的一年。';
   return [
     ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name, route: route(item.key, ''), active: item.key === group.key })) }] : []),
     { type: 'heat', lines, start, end: state.day, fromLabel, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },

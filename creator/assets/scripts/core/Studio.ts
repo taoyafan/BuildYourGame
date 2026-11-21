@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.47';
+export const VERSION = '0.4.48';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -377,6 +377,9 @@ function rollHot(state: any, axis: string, since: any) {
   for (let i = 0; i < count && i < pool.length; i++) { hot[pool[i]] = i; since[pool[i]] = state.day; }
   return hot;
 }
+// Every axis opens part-way through a round, a little ahead of the one before it. Starting the first axis
+// at zero left the default 行情 tab with a single sample — a dot on the right edge — while the other tabs
+// at least had a few days behind them.
 function freshAxis(state: any, axis: string, scale: number, phase: number, since: any) {
   const len = axisLength(state, scale);
   return { len, from: state.day - Math.round(len * phase), hot: rollHot(state, axis, since) };
@@ -419,7 +422,7 @@ function newMarketCycle(state: any) {
   const scale = Math.max(0, ...state.projects.filter((project: any) => project.kind === 'game' && !project.parentId && !project.port).map((project: any) => project.scale), ...state.catalog.filter((book: any) => !book.parentId).map((book: any) => book.scale));
   const seen = Array.isArray(state.marketCycle?.seen) && state.marketCycle.seen.length ? state.marketCycle.seen.filter((field: string) => LENS_ORDER.includes(field)) : ['design'];
   const cycle: any = { scale, axes: {}, since: {}, focus: FOCUS_AXES[0], done: [FOCUS_AXES[0]], focusAt: releases(state), late: false, handover: null, seen: seen.length ? seen : ['design'] };
-  MARKET_AXES.forEach((axis, index) => { cycle.since[axis] = {}; cycle.axes[axis] = freshAxis(state, axis, scale, index / MARKET_AXES.length, cycle.since[axis]); });
+  MARKET_AXES.forEach((axis, index) => { cycle.since[axis] = {}; cycle.axes[axis] = freshAxis(state, axis, scale, 0.35 + index * 0.09, cycle.since[axis]); });
   state.marketCycle = cycle;
   delete state.lens;
   delete state.lensFrom;
@@ -511,9 +514,11 @@ export function market(state: any, tag: string) {
   };
   return { multiplier: round(clamp(value, HEAT_FLOOR, HEAT_CEIL)), ...text[heat.label] };
 }
-// Demand of one option today: its axis' swing, the direction picked for this round, plus a small daily
-// wobble. Relative to the other options of the same axis, so a busy market never drags all of them.
-export function tagDemand(state: any, tag: string) {
+// Demand of one option on a given day: its axis' swing, the direction picked for this round, plus a small
+// daily wobble. Relative to the other options of the same axis, so a busy market never drags all of them.
+// The day is a parameter because the chart fills in the days before the studio opened from the same clock,
+// so the history it shows is the real curve rather than a copy of today's round.
+function tagDemandOn(state: any, tag: string, day: number) {
   const axis = TAG_GROUP[tag];
   if (!axis) return 1;
   const cycle = ensureMarketCycle(state);
@@ -529,11 +534,16 @@ export function tagDemand(state: any, tag: string) {
   // Several hot options peak one after another instead of together. A later one starts that many days in
   // and fits its own rise and fall into the rest of the round, so nothing is cut off when the round turns.
   const lag = at > 0 ? Math.min(clock.len - 2, Math.round(at * rise / 2)) : 0;
-  const raw = state.day - clock.from;
+  const raw = day - clock.from;
   const age = lag > 0 ? (raw <= lag ? 0 : (raw - lag) * clock.len / (clock.len - lag)) : raw;
   const strength = strengthAt(clock, age);
-  const wobbleValue = wobble(state.day, axisIndex(axis)) * 0.005;
-  return heatRound(1 + axisAmplitude(axis) * axisSwing(state, axis) * direction * strength + wobbleValue);
+  const wobbleValue = wobble(day, axisIndex(axis)) * 0.005;
+  // Handovers interpolate towards today's amplitude, so they only apply to the day being lived through.
+  const swing = day === state.day ? axisSwing(state, axis) : axisTarget(cycle, axis);
+  return heatRound(1 + axisAmplitude(axis) * swing * direction * strength + wobbleValue);
+}
+export function tagDemand(state: any, tag: string) {
+  return tagDemandOn(state, tag, state.day);
 }
 // A title's heat: one multiplier per axis it uses, multiplied, then only six tenths of the deviation is
 // paid out, so market timing is worth chasing without ever overpowering how good the title is.
@@ -559,8 +569,31 @@ function recordHeat(state: any) {
   for (const tag of ALL_TAGS) sample[tag] = tagDemand(state, tag);
   state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_SAMPLES);
 }
+// The market was already turning before the studio opened, so the chart starts with the days its own clock
+// says already happened. Without this the first visit showed a single dot on the right edge — no line at
+// all — until six more days had passed. The values come from the same clock, so this is the real curve of
+// the round in progress, not a copy of today's, and it never runs past the clock's own start.
+function fillHeatHistory(state: any) {
+  if (!Array.isArray(state.heatLog)) state.heatLog = [];
+  const cycle = ensureMarketCycle(state);
+  const from = Math.min(...MARKET_AXES.map(axis => cycle.axes[axis].from));
+  const start = Math.max(from, state.day - HEAT_EVERY * (HEAT_SAMPLES - 1));
+  // Only the days before the first real sample are filled in; nothing recorded is ever overwritten.
+  const oldest = state.heatLog.length ? state.heatLog[0].day : state.day + 1;
+  if (oldest <= start) return;
+  const log: any[] = [];
+  for (let day = start; day < oldest; day += HEAT_EVERY) {
+    const sample: any = {};
+    for (const tag of ALL_TAGS) sample[tag] = tagDemandOn(state, tag, day);
+    log.push({ day, v: sample });
+  }
+  state.heatLog = [...log, ...state.heatLog].slice(-HEAT_SAMPLES);
+}
 export function heatSeries(state: any, tag: string) {
   const past = (state.heatLog || []).map((item: any) => ({ day: item.day, value: item.v[tag] ?? 1 }));
+  // Today is often already one of the samples; appending it again would draw a vertical stub.
+  const last = past[past.length - 1];
+  if (last && last.day >= state.day) return past;
   return [...past, { day: state.day, value: tagDemand(state, tag) }];
 }
 // The tags a player compares against each other: one group per axis. Only the fields learned are shown.
@@ -1169,6 +1202,9 @@ export function createStudio(seed = Date.now()) {
   // calendar backwards, and a clock created then would start hundreds of days behind.
   ensureMarketCycle(state);
   seedIndustry(state);
+  // The studio opens into a market that has been turning for a while, so the first look at 行情 already has
+  // a line to read instead of a single dot.
+  fillHeatHistory(state);
   return state;
 }
 
@@ -5120,6 +5156,8 @@ export function restoreStudio(saved: any) {
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   // The chart only ever draws what was really recorded: a short record stays short until the days pass.
   if (!Array.isArray(next.heatLog)) next.heatLog = [];
+  // A save made before the opening history was filled in shows the market's own days, not an empty chart.
+  fillHeatHistory(next);
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;
