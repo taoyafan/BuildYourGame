@@ -132,3 +132,25 @@ ONLY employee floor/workstation area. Absolutely NO reception counter, wall proj
 COUNT AND GEOMETRY: EXACTLY TWO rows with FIVE desks each, TEN desks TEN people TEN chairs TOTAL. Front row five desks fill lower frame edge, back row five above. All10 faces visible, camera-near to far for each is desk front, laptop BACK, person, chair BEHIND shoulders. NO chair ever in front of a desk, NO extra chair backs at lower camera edge, no tiny background workforce. Laptop backs toward camera, no visible screen or keyboard. Clear small aisle between rows; desks not overlapping heads. Each person has ONE identifiable station. No meeting furniture, sofas, extra tables. All10 workspaces in exactly5x2 layout. Pale warm skin for every character, unique hair/clothes, consistent charming adult-chibi proportions. Characters are illustrative placement examples for a future compositor.
 This employee page will appear under a fixed reception zone and be replaced when paging. Keep hands/human poses coherent. No letters, captions, UI/navigation/icons. Fully painted cohesive workplace, NOT a sprite sheet. Count10 desks and10 faces before finishing.
 ```
+
+## 园区大楼运行素材
+
+使用内置 ImageGen。前台与员工区分别按已定概念图编辑。按固定比例裁出前台 1050 × 330、员工区 1050 × 390 和透明连排桌 900 × 144。
+
+### 前台
+
+```text
+Use case: precise-object-edit. Prepare the exact attached 100-person campus-headquarters lobby illustration for use as a game background. Local edits only, preserve the same framing, proportions, and position of all architecture and elements. Preserve glass roof, double-height courtyard window, tree and pool, mezzanine bridge, elegant bright limestone and walnut, rounded reception counter with its greenery, wall display frames and cabinet, calendar board, individual exhibit trim and spotlights. Replace the painted landscape INSIDE the central display with a blank flat very dark charcoal-blue screen, keeping all bezel edges. Remove the five stars from the small plaque right of the center screen, leaving the clean recessed wood panel so the game will draw stars. Keep the faint calendar grid and tint, clean of writing. On the right exhibit wall, replace ONLY the three colorful art images INSIDE their poster frames with blank matte dark warm-brown panels. Maintain all three poster frames, spotlights and precise interior rectangles to fit game covers. Remove ALL three trophies and their small stands on the credenza, leaving the empty smooth horizontal top ledge at its exact original height. Preserve the flowerpots at the ends. No new objects, no text. Keep the original panoramic format (~3.05:1); the runtime will use a tiny balanced vertical trim to 1050×330. Maintain architecture, shadows, lighting and artwork quality.
+```
+
+### 员工区
+
+```text
+Use case: precise-object-edit. Remove the foreground environment's ten seated employees, two whole rows of five joined workstations, their ten office chairs, all ten laptops and all items on their desktops, and their cast shadows. Inpaint a single continuous light limestone floor into those footprints, reconstruct perspective seams and the existing tile pattern to match the visible floor; fill missing sections of the back wall and garden glazing naturally. Leave the focal length, framing, perspective, rear wall and floor junction exactly the same. Preserve the entire courtyard garden, monastery-style campus wing across the garden, pale stone, timber skylights, lights, windows, sill and exact window mullions, two large floor plants at extreme sides, and their natural shadows. IMPORTANT: preserve the enclosed glazed game playtest room at far right exactly as-is, including its distant TV, controllers, furniture and interior detail. Removal is strictly the two rows of foreground workstations and people. The inpainted work area is entirely empty, level and furniture-free. Keep very wide 2.69:1 panorama, same lighting, camera and viewpoint as source. This will be used for layering rendered game sprites at the same positions.
+```
+
+### 五座连排桌
+
+```text
+Use case: precise-object-edit of a single isolated game sprite. Image 1 is the geometry and transparent silhouette lock; Edit the exact desk in image 1, with five connected bays, precise low-profile positions of six end/divider pieces and top/front edge, original elevated frontal projection and slender 6.25:1 asset silhouette. Image 2 is purely the texture/color guide for the walnut, pale limestone and olive workstation treatment. Retexture the tabletop to rich warm dark walnut, fascia to light warm ivory/limestone inset panels, slightly rounded trim, and all six narrow divider/end pieces to muted olive. Same adult illustrated game-asset style. EMPTY surfaces. Do not introduce any objects, people, chairs, text, shadows outside the sprite, scenery or tabs. All pixels outside the desk silhouette must be actual transparent alpha, no fake checkerboard. Center the complete row, keep all five bays visible. Cropped aspect exactly 900x144.
+```

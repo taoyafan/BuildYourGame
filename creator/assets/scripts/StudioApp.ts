@@ -112,6 +112,7 @@ export class StudioApp extends Component {
   private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
+  private choosingOfficePage = false;
   private officeSwiped = false;
   private staffSwipe: { id: number; turn: (step: number) => void } | null = null;
   private art = new ArtPack();
@@ -211,6 +212,7 @@ export class StudioApp extends Component {
     // Leaving the app always closes the soft keyboard; do not keep the input guard armed.
     this.editing = false;
     this.playing = false;
+    this.choosingOfficePage = false;
     this.guidePaused = false;
     this.resumeAfterMenu = false;
     this.elapsed = 0;
@@ -872,8 +874,10 @@ export class StudioApp extends Component {
     // A screen that throws half-way used to leave a blank page with no way back. Draw the reason on
     // the page instead, and keep the bottom navigation alive so the player can still move around.
     try {
-      if (this.routes.length) this.renderMenu();
-      else this.renderStudio();
+      if (this.routes.length) {
+        this.choosingOfficePage = false;
+        this.renderMenu();
+      } else this.renderStudio();
     } catch (error: any) {
       console.error('Render failed:', error);
       this.text(this.stage, '这一页没能画出来：' + (error?.message || error), 20, this.top + 70, this.width - 40, 60, 13, colors.danger);
@@ -1051,8 +1055,19 @@ export class StudioApp extends Component {
         if (floor) art.place(staffArea, floor, 0, 0, inner, staffHeight);
       }
       props = { screen: room.screen && map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
+      room.covers?.forEach((frame, index) => {
+        const book = state.catalog[index];
+        if (!book) return;
+        const { x, y, w, h } = map(frame);
+        const cover = this.box(node, 'ExhibitCover', x, y, w, h);
+        cover.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+        const zoom = h / 96;
+        const { node: illustration, pen } = this.canvasNode(cover, 'Art', 0, 0, w / zoom, 96);
+        illustration.setScale(zoom, zoom, 1);
+        drawWork(pen, w / zoom, 96, book.type, 1, book.metrics.dimensions.picture, book.released);
+      });
       const offset = room.staffFloor?.deskOffsetY ?? 0;
-      const rows = room.deskRows ?? (room.staffFloor ? art.layout!.formal.deskRows : undefined);
+      const rows = room.deskRows ?? (room.staffFloor ? art.layout![room.staffFloor.deskRowsFrom ?? 'formal'].deskRows : undefined);
       const mapSeat = ([x, top, scale, decor]: [number, number, number, string[]?]) => ({ x: x * k, y: (top + offset) * k, k: scale * k, decor });
       if (rows) {
         seats = rows.flatMap(row => row.seats.map(mapSeat));
@@ -1130,7 +1145,8 @@ export class StudioApp extends Component {
       this.clickable(staffTap, () => this.openMenu('team'));
     }
     if (pages > 1) {
-      const pageText = () => '‹ ' + (page + 1) + '/' + pages + ' ›';
+      const selectPage = roomName === 'campus';
+      const pageText = () => selectPage ? `${page + 1}/${pages} ▾` : `‹ ${page + 1}/${pages} ›`;
       const pageChip = this.box(staffArea || node, 'Pager', 6, staffHeight - 22, 54, 18, colors.night, 9, 200);
       const pager = this.text(pageChip, pageText(), 0, 0, 54, 18, 10, '#ffffff');
       pager.horizontalAlign = HorizontalTextAlignment.CENTER;
@@ -1157,8 +1173,12 @@ export class StudioApp extends Component {
           if (Math.abs(dx) > 30) this.scheduleOnce(() => turn(dx < 0 ? 1 : -1), 0);
         });
       }
-      this.clickable(pageChip, () => turn(1));
-    }
+      if (selectPage) {
+        const choose = () => this.officePagePicker(page, pages, index => turn(index - page));
+        this.clickable(pageChip, choose);
+        if (this.choosingOfficePage) choose();
+      } else this.clickable(pageChip, () => turn(1));
+    } else this.choosingOfficePage = false;
     // One chip in the bottom corner: room, people and seats.
     const label = core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state);
     const chipWidth = label.length * 10 + 14;
@@ -1170,7 +1190,8 @@ export class StudioApp extends Component {
       const rect = { x, y: area.y, w: Math.min(inner, area.x + area.w) - x, h: area.h };
       props[name] = rect;
       const spot = this.box(node, name, rect.x, rect.y, rect.w, rect.h);
-      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, 1, 30, 12, colors.night, 6, 170);
+      const tagY = name === 'shelf' && roomName === 'campus' ? rect.h - 13 : 1;
+      const tag = this.box(spot, 'Label', (rect.w - 30) / 2, tagY, 30, 12, colors.night, 6, 170);
       this.text(tag, text, 0, 0, 30, 12, 9, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
       this.clickable(spot, open);
       this.anchors.set(name, spot);
@@ -1206,6 +1227,31 @@ export class StudioApp extends Component {
     this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, 0, inner, sceneHeight));
     this.bulletin(body, bulletinY);
     return Math.max(sceneHeight, bulletinY + BULLETIN_HEIGHT) + 8;
+  }
+
+  private officePagePicker(selected: number, pages: number, goTo: (index: number) => void) {
+    this.choosingOfficePage = true;
+    const overlay = this.box(this.stage, 'OfficePagePicker', 0, 0, this.width, this.height);
+    const close = () => {
+      this.choosingOfficePage = false;
+      overlay.removeFromParent();
+      overlay.destroy();
+    };
+    const scrim = this.box(overlay, 'Scrim', 0, 0, this.width, this.height, colors.night, 0, 130);
+    this.clickable(scrim, close).getComponent(Button)!.transition = Button.Transition.NONE;
+    const width = this.width - 56;
+    const height = 54 + Math.ceil(pages / 5) * 46;
+    const card = this.box(overlay, 'PageCard', 28, Math.max(this.top, (this.height - height) / 2), width, height, colors.paper, 14);
+    card.addComponent(BlockInputEvents);
+    this.text(card, '工位页', 16, 8, width - 68, 36, 16, colors.ink, true);
+    this.button(card, '', width - 46, 8, 34, 34, close, false, false, 'X');
+    const cell = (width - 24) / 5;
+    for (let index = 0; index < pages; index++) {
+      this.button(card, String(index + 1), 12 + (index % 5) * cell + 3, 46 + Math.floor(index / 5) * 46, cell - 6, 38, () => {
+        close();
+        if (index !== selected) goTo(index);
+      }, index === selected);
+    }
   }
 
   // The screen clips artwork drawn at its design height and scaled down into the room.

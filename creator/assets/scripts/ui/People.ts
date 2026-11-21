@@ -1,9 +1,9 @@
 import { Color, JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
 
-export const officeRooms = ['home', 'cottage', 'formal', 'studio', 'floor'] as const;
+export const officeRooms = ['home', 'cottage', 'formal', 'studio', 'floor', 'campus'] as const;
 type RoomArt = typeof officeRooms[number];
 type RoomTexture = RoomArt | `${RoomArt}-staff` | `${RoomArt}-desk-row`;
-const roomTextures: RoomTexture[] = [...officeRooms, 'formal-desk-row', 'studio-staff', 'floor-staff', 'floor-desk-row'];
+const roomTextures: RoomTexture[] = [...officeRooms, 'formal-desk-row', 'studio-staff', 'floor-staff', 'floor-desk-row', 'campus-staff', 'campus-desk-row'];
 type SeatAnchor = [number, number, number, string[]?];
 export type RoomRect = [number, number, number, number];
 type RoomLayout = {
@@ -15,8 +15,9 @@ type RoomLayout = {
   calendar: number[];
   shelf: number[];
   shelfPlank: number;
+  covers?: RoomRect[];
   trophyStep?: number;
-  staffFloor?: { size: [number, number]; deskOffsetY?: number; chairTint?: string };
+  staffFloor?: { size: [number, number]; deskRowsFrom?: RoomArt; deskOffsetY?: number; chairTint?: string };
 };
 type Layout = Record<RoomArt, RoomLayout> & {
   size: number[]; unit: number; characters: { id: string; sex: string; frames: Record<string, number[]>; avatar: number[] }[];

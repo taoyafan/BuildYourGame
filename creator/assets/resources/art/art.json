@@ -732,5 +732,16 @@
   "shelf": [813, 45, 138, 196],
   "shelfPlank": 123,
   "trophyStep": 34
+ },
+ "campus": {
+  "size": [1050, 330],
+  "staffFloor": { "size": [1050, 390], "deskRowsFrom": "floor", "chairTint": "#918a69" },
+  "screen": [389, 149, 242, 97],
+  "plaque": [650, 130, 94, 55],
+  "calendar": [648, 181, 101, 66],
+  "shelf": [817, 213, 189, 76],
+  "shelfPlank": 250,
+  "trophyStep": 63,
+  "covers": [[828, 168, 42, 44], [884, 161, 54, 50], [954, 155, 58, 55]]
  }
 }
