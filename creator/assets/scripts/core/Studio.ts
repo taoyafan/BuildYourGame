@@ -10,7 +10,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.39';
+export const VERSION = '0.4.40';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1198,7 +1198,7 @@ const FOUNDER_FOCUS: any = { code: 'fluidity', design: 'creativity', art: 'pictu
 // being built, at evenly spaced progress points, so the opening wait is never a blank stretch.
 function openingLines(origin: any) {
   const out: string[] = [];
-  for (const line of [origin.firstCore, 'engine2d', 'pixelCharacters']) {
+  for (const line of [origin.firstCore, 'engine2d', 'artPixel']) {
     if (line && line !== origin.starter && !out.includes(line) && MODULES[line]) out.push(line);
   }
   return out.slice(0, 2);
@@ -5003,6 +5003,43 @@ export function restoreStudio(saved: any) {
     }
     next.board = { next: next.day, offers: [] };
     next.rulesRevision = 16;
+  }
+  if (next.rulesRevision < 17) {
+    // Art stopped splitting into characters and scenery: one library per style, one pick per title.
+    // Old unlocks fold into the style they belonged to, so nobody loses a library they had.
+    const artFold: any = { pixelCharacters: 'artPixel', pixelScenes: 'artPixel', handCharacters: 'artHand', handScenes: 'artHand' };
+    const foldArt = (list: any): string[] => {
+      const out: string[] = [];
+      for (const line of list || []) {
+        const now = artFold[line] || line;
+        if (MODULES[now] && !out.includes(now)) out.push(now);
+      }
+      return out;
+    };
+    for (const key of ['unlocked', 'openingLearned']) {
+      const map = next[key];
+      if (!map) continue;
+      const folded: any = {};
+      for (const [line, day] of Object.entries(map)) {
+        const now = artFold[line] || line;
+        if (!MODULES[now]) continue;
+        if (folded[now] === undefined || (day as any) < folded[now]) folded[now] = day;
+      }
+      next[key] = folded;
+    }
+    for (const item of [...next.projects, ...next.catalog]) {
+      if (item.axes) item.axes.art = foldArt(item.axes.art).slice(0, 1);
+      const levels = item.lineLevels;
+      if (levels) for (const [old, now] of Object.entries(artFold)) if (levels[old] !== undefined) { levels[now] = Math.max(levels[now] || 0, levels[old] as any); delete levels[old]; }
+    }
+    // Work already laid out names its parts as `line#level`; carry those over before the progress is recomputed.
+    const refold = (id: string) => {
+      const [line, level] = String(id).split('#');
+      return artFold[line] ? `${artFold[line]}#${level}` : id;
+    };
+    for (const item of [...next.projects, ...next.catalog]) if (Array.isArray(item.parts)) item.parts = Array.from(new Set<string>(item.parts.map(refold)));
+    for (const offer of next.board?.offers || []) { offer.line = artFold[offer.line] || offer.line; if (offer.module) offer.module = artFold[offer.module] || offer.module; }
+    next.rulesRevision = 17;
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });

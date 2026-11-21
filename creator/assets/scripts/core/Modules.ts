@@ -51,10 +51,10 @@ export const MODULES: any = {
   engine2d: { name: '2D 引擎', field: 'tech', shelf: '引擎', glyph: 'gear', axis: 'engine', work: { fluidity: 10 }, tags: ['2D'], desc: '画面、输入与关卡的底层，每一作都跑在它上面。' },
   engine3d: { name: '3D 引擎', field: 'tech', shelf: '引擎', glyph: 'gear', axis: 'engine', unlock: 4, work: { fluidity: 16 }, tags: ['3D'], desc: '三维场景、镜头与物理。' },
 
-  pixelCharacters: { name: '像素人物素材库', field: 'art', shelf: '人物素材库', style: '像素', glyph: 'person', axis: 'art', work: { picture: 10 }, tags: ['像素'], desc: '像素角色、动作帧与表情。' },
-  handCharacters: { name: '手绘人物素材库', field: 'art', shelf: '人物素材库', style: '手绘', glyph: 'person', axis: 'art', unlock: 1, work: { picture: 12 }, tags: ['手绘'], desc: '手绘角色立绘与动作。' },
-  pixelScenes: { name: '像素场景素材库', field: 'art', shelf: '场景素材库', style: '像素', glyph: 'mountain', axis: 'art', unlock: 1, work: { picture: 8 }, tags: ['像素'], desc: '像素地块、背景与道具。' },
-  handScenes: { name: '手绘场景素材库', field: 'art', shelf: '场景素材库', style: '手绘', glyph: 'mountain', axis: 'art', unlock: 1, work: { picture: 10 }, tags: ['手绘'], desc: '手绘背景与场景插画。' },
+  artPixel: { name: '像素画风素材库', field: 'art', shelf: '画风', style: '像素', glyph: 'person', axis: 'art', work: { picture: 18 }, tags: ['像素'], desc: '像素人物、地块与界面，一套统一的格子感。' },
+  artHand: { name: '手绘画风素材库', field: 'art', shelf: '画风', style: '手绘', glyph: 'person', axis: 'art', unlock: 1, work: { picture: 22 }, tags: ['手绘'], desc: '手绘立绘、背景与道具，笔触统一。' },
+  artCartoon: { name: '卡通风素材库', field: 'art', shelf: '画风', style: '卡通', glyph: 'person', axis: 'art', unlock: 2, work: { picture: 20 }, tags: ['卡通'], desc: '粗描边、平涂，角色和场景都鲜亮。' },
+  artWatercolor: { name: '水彩风素材库', field: 'art', shelf: '画风', style: '水彩', glyph: 'mountain', axis: 'art', unlock: 3, work: { picture: 19 }, tags: ['水彩'], desc: '晕染与留白，偏绘本的画面。' },
 
   retroMusic: { name: '复古配乐库', field: 'audio', shelf: '配乐库', style: '复古', glyph: 'note', axis: 'audio', work: { sound: 6 }, tags: ['复古'], desc: '芯片音色与短循环曲。' },
   lyricalMusic: { name: '抒情配乐库', field: 'audio', shelf: '配乐库', style: '抒情', glyph: 'note', axis: 'audio', unlock: 1, work: { sound: 8 }, tags: ['抒情'], desc: '钢琴与弦乐的情绪曲。' },
@@ -70,7 +70,7 @@ export const AXES: any[] = [
   { key: 'mechanic', field: 'design', name: '机制', min: 0, max: 2, unlock: 2 },
   { key: 'theme', field: 'design', name: '题材', min: 1, max: 1, unlock: 0 },
   { key: 'engine', field: 'tech', name: '引擎', min: 1, max: 1, unlock: 0 },
-  { key: 'art', field: 'art', name: '美术', min: 1, max: 2, unlock: 0 },
+  { key: 'art', field: 'art', name: '美术', min: 1, max: 1, unlock: 0 },
   { key: 'audio', field: 'audio', name: '音乐', min: 1, max: 2, unlock: 1 }
 ];
 // The second mechanic opens later than the first.
@@ -81,7 +81,7 @@ export const SECOND_MECHANIC = 4;
 export const ORIGINS: any = {
   code: { name: '程序', focus: '让游戏跑得顺、手感好。', starter: 'engine2d', firstCore: 'actionCombat', job: '一家小公司需要一个能用的 2D 引擎', pay: 4 },
   design: { name: '策划', focus: '想出好玩的点子和规则。', starter: 'branchingStory', firstCore: 'branchingStory', job: '一个团队需要一套分支叙事的结构设计', pay: 4 },
-  art: { name: '美术', focus: '让游戏好看、有自己的风格。', starter: 'pixelCharacters', firstCore: 'branchingStory', job: '一个独立游戏需要一套像素人物素材', pay: 4 }
+  art: { name: '美术', focus: '让游戏好看、有自己的风格。', starter: 'artPixel', firstCore: 'branchingStory', job: '一个独立游戏需要一套像素画风素材', pay: 4 }
 };
 
 // Checked once at load: a broken catalog must fail loudly, not as a strange score in the middle of a run.
