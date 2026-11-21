@@ -97,6 +97,13 @@ function star(pen: Pen, cx: number, cy: number, r: number, hex: string) {
   pen.poly(points, hex);
 }
 
+// Draw around the base so a press scales the trophy without lifting it off its shelf.
+export function drawTrophy(pen: Pen) {
+  pen.rect(-3, -3, 6, 3, '#b07b2a', 1);
+  pen.rect(-1, -7, 2, 4, '#e0a526', 0);
+  pen.circle(0, -10, 3.5, '#f2c14e');
+}
+
 export function drawRoom(pen: Pen, w: number, h: number, office: number, record: { cups: number; books: number; stars: number; starColor: string } = { cups: 0, books: 0, stars: 1, starColor: '#2f7d63' }, detailsOnly = false) {
   const formal = office >= 2;
   const props = roomProps(w, h, office);
@@ -111,10 +118,12 @@ export function drawRoom(pen: Pen, w: number, h: number, office: number, record:
     if (!formal) pen.circle(win.x + win.w * 0.7, win.y + 10, 6, '#ffe6a3');
     pen.frame(win.x, win.y, win.w, win.h, formal ? '#9fb7bf' : '#9a8466', 2, 3);
     pen.line(win.x + win.w / 2, win.y, win.x + win.w / 2, win.y + win.h, formal ? '#9fb7bf' : '#9a8466', 2);
-    // Big screen bezel; the work itself is drawn into it by the app.
-    const screen = props.screen;
-    pen.rect(screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 8, '#2b3532', 4);
-    pen.rect(screen.x + screen.w / 2 - 6, screen.y + screen.h + 4, 12, 4, '#2b3532', 0);
+    if (office !== 0) {
+      // The app draws artwork inside this frame.
+      const screen = props.screen;
+      pen.rect(screen.x - 4, screen.y - 4, screen.w + 8, screen.h + 8, '#2b3532', 4);
+      pen.rect(screen.x + screen.w / 2 - 6, screen.y + screen.h + 4, 12, 4, '#2b3532', 0);
+    }
   }
   // Star plaque.
   const plaque = props.plaque;
@@ -141,12 +150,6 @@ export function drawRoom(pen: Pen, w: number, h: number, office: number, record:
   const spineColors = ['#c8574f', '#497899', '#e0a526', '#2f7d63', '#9b6fb0', '#d9814f'];
   for (let index = 0; index < spines; index++) pen.rect(shelf.x + 3 + index * 5, plankY - 13, 4, 13, spineColors[index % spineColors.length], 1);
   const cups = Math.min(3, record.cups);
-  for (let index = 0; index < cups; index++) {
-    const x = shelf.x + shelf.w - 10 - index * 9;
-    pen.rect(x - 1, plankY - 3, 6, 3, '#b07b2a', 1);
-    pen.rect(x + 1, plankY - 7, 2, 4, '#e0a526', 0);
-    pen.circle(x + 2, plankY - 10, 3.5, '#f2c14e');
-  }
   if (!spines && !cups) pen.frame(shelf.x + 6, plankY - 14, 12, 14, '#b9a993', 1, 1);
 }
 

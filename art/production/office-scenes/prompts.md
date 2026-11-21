@@ -9,6 +9,14 @@ Complete beautiful1-seat HOME studio game concept, exactlyONE work desk andONE c
 All FIVE gameplay functions organically integrated in the upper domestic corner: visible small wall PROJECT PREVIEW DISPLAY showing original landscape, small star-rating plaque, separate little calendar board, empty small achievement/book shelf, and domestic window. Modest sizes appropriate to home, not giant corporate equipment. Faces and functions unobscured. No other seated person. Clear floor near desk, a notebook/mug/plant enough life, no object overload. No UI, no caption, no words or brand logos. This capacity1 stage can be one complete scene; do not add any workstation to balance composition.
 ```
 
+## 自家运行底图
+
+以内置 image_gen 编辑 [自家概念图](home-1.png)，等比缩放并居中裁成 1050×570。[运行底图](../../../creator/assets/resources/art/home.png)
+
+```text
+Perform a localized edit of this exact attached single-founder home studio concept. Preserve its full landscape framing, native aspect ratio, the same perspective on the left wooden window and golden sunlight, cream plaster, woven basket left, tall trophy shelf with plant at right, bed and small picture at the extreme right. Keep their placements and their scale. Remove precisely the only person and the entire workstation: chair, desk, laptop, mug, desktop plant, notebook, and contact shadows that belong to them. Fill only the revealed areas with continuous original plaster wall, baseboard and floorboards. Leave the entire central foreground empty so the game can composite its own founder and furniture. On the wall, keep the existing fantasy river, cliffs and bridge illustration exactly in its original rectangle but make it read as an ordinary mounted wooden framed print: replace the narrow black monitor bezel with a thin warm wood picture frame and remove the little hanging cable, do not add any screen, black rectangle, chalkboard, television or new object. Keep the calendar exactly where it is, with its existing faint guide grid. On the wooden star-rating plaque above it, remove the five star shapes only, leaving the wooden plaque blank for runtime stars. Keep the wooden trophy shelf empty. The already-present walls, window, bed and remaining decorations must not be moved, restyled or recolored. No people or workstation objects in the final, no furniture substitutes, no text.
+```
+
 ## 正式办公室
 
 ```text

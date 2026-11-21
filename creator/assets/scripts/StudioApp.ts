@@ -6,7 +6,7 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawBrick, drawWork, seatLayout, roomProps } from './ui/Art';
+import { Pen, drawRoom, drawTrophy, drawBrick, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
 import { ArtPack, Look } from './ui/People';
 
@@ -496,6 +496,19 @@ export class StudioApp extends Component {
     return node;
   }
 
+  private pressDecorations(hotspot: Node, decorations: Node[]) {
+    if (!decorations.length) return;
+    const scaleTo = (scale: number) => {
+      for (const decoration of decorations) {
+        Tween.stopAllByTarget(decoration);
+        tween(decoration).to(0.08, { scale: new Vec3(scale, scale, 1) }).start();
+      }
+    };
+    hotspot.on(Node.EventType.TOUCH_START, () => scaleTo(0.8));
+    hotspot.on(Node.EventType.TOUCH_END, () => scaleTo(1));
+    hotspot.on(Node.EventType.TOUCH_CANCEL, () => scaleTo(1));
+  }
+
   private button(parent: Node, title: string, x: number, y: number, width: number, height: number, callback: () => void, primary = false, disabled = false, icon?: string, anchor?: string, reason?: string) {
     const node = this.box(parent, title, x, y, width, height, disabled ? colors.pale : primary ? colors.green : colors.soft, 8);
     // A greyed button with a reason still takes the tap and says why, instead of staying silent.
@@ -950,9 +963,9 @@ export class StudioApp extends Component {
       contentTop = contentY + 44;
     }
     const project = shown;
-    // The cottage keeps its artwork ratio. Short screens scroll the panels below it into view.
+    // Illustrated rooms keep their artwork ratio. Short screens scroll the panels below into view.
     const shrink = Math.max(0, Math.min(70, (project ? 586 : 334) - (navY - contentTop - 10)));
-    const officeHeight = state.office === 1 ? inner * 190 / 350 : 190 - shrink;
+    const officeHeight = state.office <= 1 ? inner * 190 / 350 : 190 - shrink;
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
     let y = 0;
     const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
@@ -984,42 +997,38 @@ export class StudioApp extends Component {
     const cups = Math.min(3, Math.ceil(achievements.count / 6));
     let props: any = roomProps(inner, height, state.office);
     let seats: { x: number; y: number; k: number; decor?: string[] }[] | null = null;
-    if (art && state.office === 1) {
-      const room = art.layout!.cottage;
+    const trophies: Node[] = [];
+    const roomName = state.office === 0 ? 'home' : state.office === 1 ? 'cottage' : null;
+    const room = art && roomName ? art.layout![roomName] : null;
+    const background = art && roomName ? art.roomFrame(roomName) : null;
+    if (art && room && background) {
       const k = inner / room.size[0];
       const map = ([x, y, w, h]: number[]) => ({ x: x * k, y: y * k, w: w * k, h: h * k });
-      art.place(node, art.roomFrame(), 0, 0, inner, height);
-      props = { screen: map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
-      seats = room.seats.map(([x, top, scale, decor]: any[]) => ({ x: x * k, y: top * k, k: scale * k, decor }));
+      art.place(node, background, 0, 0, inner, height);
+      props = { screen: room.screen && map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
+      seats = room.seats.map(([x, top, scale, decor]) => ({ x: x * k, y: top * k, k: scale * k, decor }));
       ['trophy-gold', 'trophy-silver', 'trophy-bronze'].slice(0, cups).forEach((name, index) => {
         const rect = art.layout!.props[name];
         const tall = 34 * k;
         const wide = tall * rect[2] / rect[3];
-        art.place(node, art.prop(name), props.shelf.x + props.shelf.w / 2 + (index - 1) * 40 * k - wide / 2, room.shelfPlank * k - tall, wide, tall);
+        const center = props.shelf.x + props.shelf.w / 2 + (index - 1) * 40 * k;
+        const trophy = art.place(node, art.prop(name), center - wide / 2, room.shelfPlank * k - tall, wide, tall).node;
+        trophy.getComponent(UITransform)!.setAnchorPoint(0.5, 0);
+        trophy.setPosition(center, -room.shelfPlank * k);
+        trophies.push(trophy);
       });
     } else {
       const { pen } = this.canvasNode(node, 'Room', 0, 0, inner, height);
       drawRoom(pen, inner, height, state.office, { cups, books: state.catalog.length, stars: rating.tier + 1, starColor: tierColors[rating.tier] });
+      const { x, y, w, h } = props.shelf;
+      for (let index = 0; index < cups; index++) {
+        const trophy = this.canvasNode(node, 'Trophy', x + w - 8 - index * 9, y + h - 16, 0, 0);
+        drawTrophy(trophy.pen);
+        trophies.push(trophy.node);
+      }
     }
     this.clickable(node, () => { if (!this.officeSwiped) this.openMenu('team'); });
-    // Big screen with the work the main screen is looking at, or the last release. The work art is drawn
-    // at its design height and scaled down to the screen, and the screen clips anything at the edges.
-    const screen = props.screen;
-    const monitor = this.box(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
-    monitor.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
-    const zoom = screen.h / 96;
-    const { node: work, pen: screenPen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w / zoom, 96);
-    work.setScale(zoom, zoom, 1);
-    if (project) drawWork(screenPen, screen.w / zoom, 96, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
-    else if (state.catalog.length) drawWork(screenPen, screen.w / zoom, 96, state.catalog[0].type, 1, state.catalog[0].metrics.dimensions.picture, state.catalog[0].released);
-    else { screenPen.rect(0, 0, screen.w / zoom, 96, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
-    const caption = project ? '《' + project.name + '》' + (project.released ? ' 补丁' : '') : state.catalog.length ? '上一作《' + state.catalog[0].name + '》' : '';
-    if (caption) {
-      const tag = this.box(monitor, 'Caption', 4, 2, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
-      this.text(tag, caption, 5, 0, Math.min(screen.w - 18, caption.length * 10), 14, 9, '#ffffff');
-    }
-    this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu('project'));
-    this.anchors.set('work', monitor);
+    if (state.office !== 0 && props.screen) this.officeMonitor(node, props.screen, project, metrics);
     // Desks: people on the watched project first, then anyone resting or stressed, then by seniority.
     const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
     const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
@@ -1078,6 +1087,7 @@ export class StudioApp extends Component {
     };
     hotspot('board', props.board, '日历', () => this.openMenu('industry', 'schedule'));
     const shelf = hotspot('shelf', props.shelf, '成就', () => this.openMenu('achievements'));
+    this.pressDecorations(shelf, trophies);
     // A new achievement makes the shelf glow until the achievement page is opened.
     if (achievements.fresh > 0) {
       const glow = this.box(shelf, 'Glow', 0, 0, props.shelf.w, props.shelf.h);
@@ -1087,7 +1097,7 @@ export class StudioApp extends Component {
     }
     const plaque = this.box(node, 'Plaque', props.plaque.x, props.plaque.y, props.plaque.w, props.plaque.h);
     this.clickable(plaque, () => this.openMenu('rating'));
-    if (art && state.office === 1) {
+    if (art && background) {
       // Stars are centre-anchored children so a press visibly shrinks each one in place.
       const { w, h } = props.plaque;
       const size = Math.min(h * 0.8, w / 6.5);
@@ -1098,14 +1108,31 @@ export class StudioApp extends Component {
         sprite.node.setPosition(w / 2 + (index - 2) * size * 1.2, -h / 2);
         stars.push(sprite.node);
       }
-      const press = (scale: number) => stars.forEach(star => { Tween.stopAllByTarget(star); tween(star).to(0.08, { scale: new Vec3(scale, scale, 1) }).start(); });
-      plaque.on(Node.EventType.TOUCH_START, () => press(0.8));
-      plaque.on(Node.EventType.TOUCH_END, () => press(1));
-      plaque.on(Node.EventType.TOUCH_CANCEL, () => press(1));
+      this.pressDecorations(plaque, stars);
     }
     this.anchors.set('tier', plaque);
     if (rating.watch) this.text(plaque, '!', props.plaque.w - 12, 0, 10, props.plaque.h, 12, colors.danger, true);
     return height;
+  }
+
+  // The screen clips artwork drawn at its design height and scaled down into the room.
+  private officeMonitor(node: Node, screen: { x: number; y: number; w: number; h: number }, project: any, metrics: any) {
+    const { catalog } = this.state;
+    const monitor = this.box(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
+    monitor.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+    const zoom = screen.h / 96;
+    const { node: work, pen: screenPen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w / zoom, 96);
+    work.setScale(zoom, zoom, 1);
+    if (project) drawWork(screenPen, screen.w / zoom, 96, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
+    else if (catalog.length) drawWork(screenPen, screen.w / zoom, 96, catalog[0].type, 1, catalog[0].metrics.dimensions.picture, catalog[0].released);
+    else { screenPen.rect(0, 0, screen.w / zoom, 96, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
+    const caption = project ? '《' + project.name + '》' + (project.released ? ' 补丁' : '') : catalog.length ? '上一作《' + catalog[0].name + '》' : '';
+    if (caption) {
+      const tag = this.box(monitor, 'Caption', 4, 2, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
+      this.text(tag, caption, 5, 0, Math.min(screen.w - 18, caption.length * 10), 14, 9, '#ffffff');
+    }
+    this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu('project'));
+    this.anchors.set('work', monitor);
   }
 
   // One or two lines of industry news under the office, like a TV in the corner. Reading it is

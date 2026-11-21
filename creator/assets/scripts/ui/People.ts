@@ -1,31 +1,48 @@
 import { JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
 
-type Layout = {
+type RoomArt = 'home' | 'cottage';
+type RoomLayout = {
+  size: [number, number];
+  seats: [number, number, number, string[]?][];
+  screen?: number[];
+  plaque: number[];
+  calendar: number[];
+  shelf: number[];
+  shelfPlank: number;
+};
+type Layout = Record<RoomArt, RoomLayout> & {
   size: number[]; unit: number; characters: { id: string; sex: string; frames: Record<string, number[]>; avatar: number[] }[];
-  props: Record<string, number[]>; station: Record<string, any>; cottage: Record<string, any>;
+  props: Record<string, number[]>; station: Record<string, any>;
 };
 export type Look = { face: string; laptop: '' | 'open' | 'closed'; person: boolean; mug: boolean; symbols: string[] };
 
-// The approved character and cottage artwork: one atlas for people, furniture and symbols so a whole
-// office batches, plus the cottage room as its own image. Coordinates are top-left, y down.
+// People, furniture and symbols share one atlas. Illustrated rooms have their own backgrounds.
+// Coordinates are top-left, y down.
 export class ArtPack {
   layout: Layout | null = null;
   private atlas: Texture2D | null = null;
-  private room: Texture2D | null = null;
+  private rooms: Partial<Record<RoomArt, Texture2D>> = {};
   private frames = new Map<string, SpriteFrame>();
   private disposed = false;
   private actors: { sprite: Sprite; art: string; face: string; phase: number }[] = [];
   private clock = 0;
 
   load(done: () => void) {
-    let pending = 3;
-    const finish = () => { if (--pending === 0 && !this.disposed && this.layout && this.atlas && this.room) done(); };
+    const roomNames: RoomArt[] = ['home', 'cottage'];
+    let pending = 2 + roomNames.length;
+    const finish = () => { if (--pending === 0 && !this.disposed && this.ready) done(); };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
     resources.load('art/atlas/texture', Texture2D, (error, texture) => { if (error) console.warn('Art atlas:', error.message); else this.atlas = texture; finish(); });
-    resources.load('art/cottage/texture', Texture2D, (error, texture) => { if (error) console.warn('Cottage art:', error.message); else this.room = texture; finish(); });
+    for (const name of roomNames) {
+      resources.load(`art/${name}/texture`, Texture2D, (error, texture) => {
+        if (error) console.warn(`Room art (${name}):`, error.message);
+        else this.rooms[name] = texture;
+        finish();
+      });
+    }
   }
 
-  get ready() { return !!(this.layout && this.atlas && this.room); }
+  get ready() { return !!(this.layout && this.atlas); }
 
   private frame(key: string, texture: Texture2D, rect: number[]) {
     let frame = this.frames.get(key);
@@ -47,7 +64,10 @@ export class ArtPack {
     const cell = item.frames.portrait;
     return this.frame(item.id + ':avatar', this.atlas!, [cell[0] + x, cell[1] + y, w, h]);
   }
-  roomFrame() { return this.frame('cottage', this.room!, [0, 0, ...this.layout!.cottage.size]); }
+  roomFrame(name: RoomArt) {
+    const texture = this.rooms[name];
+    return texture ? this.frame(name, texture, [0, 0, ...this.layout![name].size]) : null;
+  }
 
   // A sprite in a top-left box. Anything below `clip` is cut off by filling only the top part.
   place(parent: Node, frame: SpriteFrame, x: number, y: number, width: number, height: number, clip = Infinity) {

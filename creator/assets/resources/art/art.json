@@ -592,6 +592,14 @@
    "cloud": 72
   }
  },
+ "home": {
+  "size": [1050, 570],
+  "seats": [[506, 447, 0.94, ["plant"]]],
+  "plaque": [537, 50, 207, 47],
+  "calendar": [536, 109, 207, 124],
+  "shelf": [756, 75, 172, 335],
+  "shelfPlank": 194
+ },
  "cottage": {
   "image": "cottage",
   "size": [
