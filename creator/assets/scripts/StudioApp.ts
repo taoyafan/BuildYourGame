@@ -2276,7 +2276,7 @@ export class StudioApp extends Component {
     pen.rect(left, top, right - left, bottom - top, '#fbf8f1', 4);
     pen.line(left, py(1), right, py(1), colors.line, 2);
     for (const [label, value] of [['热', 1.16], ['平', 1], ['冷', 0.84]] as [string, number][]) this.text(node, label, 0, py(value) - 8, left - 6, 16, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    this.text(node, '一年前', left, height - 20, 80, 16, 10, colors.muted);
+    this.text(node, block.fromLabel || '一年前', left, height - 20, 80, 16, 10, colors.muted);
     this.text(node, '现在', right - 40, height - 20, 40, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     for (const line of block.lines.filter((item: any) => item.shown)) {
       const points = line.series;
