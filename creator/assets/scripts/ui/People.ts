@@ -1,6 +1,6 @@
 import { JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
 
-type RoomArt = 'home' | 'cottage' | 'formal';
+type RoomArt = 'home' | 'cottage' | 'formal' | 'studio';
 type SeatAnchor = [number, number, number, string[]?];
 export type RoomRect = [number, number, number, number];
 type RoomLayout = {
@@ -13,6 +13,7 @@ type RoomLayout = {
   shelf: number[];
   shelfPlank: number;
   trophyStep?: number;
+  staffFloor?: { size: [number, number]; deskOffsetY: number };
 };
 type Layout = Record<RoomArt, RoomLayout> & {
   size: number[]; unit: number; characters: { id: string; sex: string; frames: Record<string, number[]>; avatar: number[] }[];
@@ -28,14 +29,15 @@ export class ArtPack {
   private atlas: Texture2D | null = null;
   private rooms: Partial<Record<RoomArt, Texture2D>> = {};
   private deskRowTexture: Texture2D | null = null;
+  private staffFloorTexture: Texture2D | null = null;
   private frames = new Map<string, SpriteFrame>();
   private disposed = false;
   private actors: { sprite: Sprite; art: string; face: string; phase: number }[] = [];
   private clock = 0;
 
   load(done: () => void) {
-    const roomNames: RoomArt[] = ['home', 'cottage', 'formal'];
-    let pending = 3 + roomNames.length;
+    const roomNames: RoomArt[] = ['home', 'cottage', 'formal', 'studio'];
+    let pending = 4 + roomNames.length;
     const finish = () => { if (--pending === 0 && !this.disposed && this.ready) done(); };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
     resources.load('art/atlas/texture', Texture2D, (error, texture) => { if (error) console.warn('Art atlas:', error.message); else this.atlas = texture; finish(); });
@@ -49,6 +51,11 @@ export class ArtPack {
     resources.load('art/formal-desk-row/texture', Texture2D, (error, texture) => {
       if (error) console.warn('Formal desk row:', error.message);
       else this.deskRowTexture = texture;
+      finish();
+    });
+    resources.load('art/studio-staff/texture', Texture2D, (error, texture) => {
+      if (error) console.warn('Studio staff floor:', error.message);
+      else this.staffFloorTexture = texture;
       finish();
     });
   }
@@ -82,6 +89,11 @@ export class ArtPack {
   formalDeskFrame() {
     const texture = this.deskRowTexture;
     return texture ? this.frame('formal-desk-row', texture, [0, 0, texture.width, texture.height]) : null;
+  }
+  staffFloorFrame() {
+    const texture = this.staffFloorTexture;
+    const floor = this.layout!.studio.staffFloor;
+    return texture && floor ? this.frame('studio-staff', texture, [0, 0, ...floor.size]) : null;
   }
 
   // A sprite in a top-left box. Anything below `clip` is cut off by filling only the top part.

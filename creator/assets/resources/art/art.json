@@ -690,5 +690,15 @@
   "shelf": [707, 95, 209, 119],
   "shelfPlank": 154,
   "trophyStep": 65
+ },
+ "studio": {
+  "size": [1050, 330],
+  "staffFloor": { "size": [1050, 390], "deskOffsetY": -180 },
+  "screen": [279, 73, 325, 151],
+  "plaque": [631, 57, 166, 42],
+  "calendar": [627, 112, 208, 120],
+  "shelf": [845, 38, 198, 216],
+  "shelfPlank": 140,
+  "trophyStep": 45
  }
 }

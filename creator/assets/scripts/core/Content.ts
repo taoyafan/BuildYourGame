@@ -1569,7 +1569,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       // "知道了" notes are optional everywhere, the main screen included: the highlighted control stays
       // live, so acting on it and dismissing the tip are both valid. Only the steps below are forced taps —
       // there, opening the page is the lesson itself.
-      () => project?.checkpoints.prototype && !seen.scene ? explain('scene', 'scene', '办公室也是入口：墙上的大屏幕是当前作品，点开进项目；星级铭牌是媒体评级；日历打开行业日程；奖杯架是成就；下方公告栏是行业新闻；点工位打开团队。') : null,
+      () => project?.checkpoints.prototype && !seen.scene ? explain('scene', 'scene', '办公室也是入口：墙上的大屏幕是当前作品，点开进项目；星级铭牌是媒体评级；日历打开行业日程；奖杯架是成就；公告栏是行业新闻；点工位打开团队。') : null,
       () => project?.checkpoints.demo && !seen.testing && !seen.navTesting ? { anchor: 'nav-project', text: '体验版完成：点「项目」，在里面打开「试玩」，先招一批玩家来找缺陷。', tap: 'navTesting' } : null,
       // Optional tip: 市场 stays live under the highlight, 知道了 dismisses it. Keep this an ack step —
       // a forced tap removes the 知道了 button and makes promoting feel compulsory.

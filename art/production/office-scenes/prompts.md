@@ -63,6 +63,14 @@ COUNT AND GEOMETRY: EXACTLY TWO rows with FIVE desks each, TEN desks TEN people 
 This employee page will appear under a fixed reception zone and be replaced when paging. Keep hands/human poses coherent. No letters, captions, UI/navigation/icons. Fully painted cohesive workplace, NOT a sprite sheet. Count10 desks and10 faces before finishing.
 ```
 
+## 独立工作室运行素材
+
+使用内置 image_gen。前台按概念图保留窗、灯、柜台和墙面入口，为程序叠加内容留出画框。员工区以完成的前台为材质和画风参考，单独构图。两张图等比缩放并居中裁切。
+
+```text
+Create an original background illustration on a new canvas for the EMPLOYEE WORKROOM of an indie game studio, seen straight-on, slightly elevated. Wide panoramic framing about 2.69:1 (1050×390 final). The supplied image is exclusively a style reference for the artist's hand-painted ink/gouache, warm oak, red-brown brick, sage accents and soft daylight. Draw a completely different, independently framed daylight workroom with its own complete perspective, rear wall and floor. The top edge begins with an open airy light cream painted wall and a few timber ceiling beams. Particularly large bright windows at the sides bring fresh daylight and a glimpse of greenery. Muted, light warm brick accents at the side walls, pale creamy plaster across the open central wall, simple slender dark-green window trim or a narrow olive cabinet at extreme edge only. A shallow skylight or two small restrained pendants appropriate to the high airy room. Soft sunny daylight and varied pale golden tones. The room wall-to-floor transition at about 40% down the frame, a bare, uninterrupted light honey-oak floor fills the lower 60% and the broad center is ready for two rows of five workstations. Keep detail subtle behind where heads will appear. The independent workroom feels spacious, open, bright and breathable like a real artist's loft. No full wall of dark green paneling, no architectural continuation of the reference reception or counter, no reception furnishings. No people, tables, desks, chairs, laptops, screens, trophies, foreground objects or writing; all workstations and props will be added by the game. Keep important window and beam forms away from extreme top and bottom crop edges. One continuous full-bleed illustration, no separators or frame, premium 2D isometric-adjacent frontal game art.
+```
+
 ## floor40上区
 
 ```text

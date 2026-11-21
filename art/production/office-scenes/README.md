@@ -7,7 +7,7 @@
 | 自家 | 1 | 1 | 1 | [概念图](home-1.png)，[底图原稿](home-background.png)，[运行底图](../../../creator/assets/resources/art/home.jpg) |
 | 起步小屋 | 4 | 4 | 1 | [完整场景](../../exploration/office-direction/cottage-four-seat-concept.png) |
 | 正式办公室 | 10 | 10 | 1 | [概念图](formal-10.png)，[运行底图](../../../creator/assets/resources/art/formal.jpg)，[五座连排桌](../../../creator/assets/resources/art/formal-desk-row.png) |
-| 独立工作室 | 20 | 10 | 2 | [固定前台](studio-20-upper.png)，员工区待制作 |
+| 独立工作室 | 20 | 10 | 2 | [前台概念](studio-20-upper.png)、[员工区概念](studio-20-lower.png)、[运行前台](../../../creator/assets/resources/art/studio.jpg)、[运行员工区](../../../creator/assets/resources/art/studio-staff.jpg) |
 | 写字楼整层 | 40 | 10 | 4 | [固定前台](floor-40-upper.png)，员工区待制作 |
 | 园区大楼 | 100 | 10 | 10 | [固定前台](campus-100-upper.png)，员工区待制作 |
 

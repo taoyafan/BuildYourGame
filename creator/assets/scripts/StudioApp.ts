@@ -18,6 +18,8 @@ const colors = {
 };
 // Lists longer than this build their off-screen cards only when scrolled to.
 const LAZY_MIN = 12;
+const BULLETIN_HEIGHT = 34;
+const OFFICE_DIVIDER_GAP = 4;
 const navigation = [
   ['project', '项目', 'FolderKanban'], ['team', '团队', 'Users'],
   ['market', '市场', 'ChartNoAxesCombined'], ['finance', '公司', 'Building2']
@@ -111,6 +113,7 @@ export class StudioApp extends Component {
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
   private officeSwiped = false;
+  private staffSwipe: { id: number; turn: (step: number) => void } | null = null;
   private art = new ArtPack();
   private brickTip: any = null;
   private activeTouches = new Set<number>();
@@ -203,6 +206,7 @@ export class StudioApp extends Component {
 
   private background() {
     this.activeTouches.clear();
+    this.staffSwipe = null;
     this.music?.pause();
     // Leaving the app always closes the soft keyboard; do not keep the input guard armed.
     this.editing = false;
@@ -219,7 +223,18 @@ export class StudioApp extends Component {
   }
 
   private touchFinished(event: EventTouch) {
-    this.activeTouches.delete(event.getID());
+    const id = event.getID();
+    const swipe = this.staffSwipe;
+    if (swipe?.id === id) {
+      // ScrollView cancels the pressed button first; the original touch still ends on the canvas.
+      if (event.simulate) return;
+      this.staffSwipe = null;
+      if (event.type === Node.EventType.TOUCH_END) {
+        const delta = event.getUILocation().subtract(event.getUIStartLocation());
+        if (Math.abs(delta.x) > Math.max(30, Math.abs(delta.y) * 1.25)) swipe.turn(delta.x < 0 ? 1 : -1);
+      }
+    }
+    this.activeTouches.delete(id);
     // If the player is typing, let editing-did-ended decide when to apply the deferred redraw.
     if (!this.activeTouches.size && this.renderPending && !this.editing) this.scheduleOnce(() => this.render(), 0);
   }
@@ -790,6 +805,7 @@ export class StudioApp extends Component {
 
   private clear() {
     this.art.clear();
+    this.staffSwipe = null;
     this.anchors.clear();
     this.groupTops.clear();
     this.lazy = [];
@@ -981,13 +997,10 @@ export class StudioApp extends Component {
     const project = shown;
     // Illustrated rooms keep their artwork ratio. Short screens scroll the panels below into view.
     const shrink = Math.max(0, Math.min(70, (project ? 586 : 334) - (navY - contentTop - 10)));
-    const officeHeight = state.office <= 2 ? inner * 190 / 350 : 190 - shrink;
+    const officeHeight = state.office === 3 ? inner * 240 / 350 : state.office <= 2 ? inner * 190 / 350 : 190 - shrink;
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
-    let y = 0;
     const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
-    y += this.office(body, y, officeHeight, project, metrics) + 4;
-    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, 0, inner, y - 4));
-    y += this.bulletin(body, y) + 8;
+    let y = this.office(body, officeHeight, project, metrics);
     if (project?.released) y = this.patchPanel(body, y, project);
     else if (project) y = this.projectPanel(body, y, metrics);
     else {
@@ -1003,31 +1016,47 @@ export class StudioApp extends Component {
   // The office is the main screen's picture and its doors: the big screen shows the current work, the
   // plaque the star rating, the calendar opens the schedule, the shelf the achievements and the desks
   // the team. Up to twenty desks fit one page; larger teams page horizontally.
-  private office(body: Node, y: number, height: number, project: any, metrics: any) {
+  private office(body: Node, height: number, project: any, metrics: any) {
     const state = this.state;
     const inner = this.width - 40;
-    const node = this.box(body, 'Office', 0, y, inner, height);
     const art = this.art.ready ? this.art : null;
+    const roomName = (['home', 'cottage', 'formal', 'studio'] as const)[state.office as number];
+    const room = art && roomName ? art.layout![roomName] : null;
+    const background = art && roomName ? art.roomFrame(roomName) : null;
+    const dividerHeight = room?.staffFloor && background ? BULLETIN_HEIGHT + 2 * OFFICE_DIVIDER_GAP : 0;
+    const sceneHeight = height + dividerHeight;
+    const node = this.box(body, 'Office', 0, 0, inner, sceneHeight);
+    let bulletinY = height + 4;
     const rating = core.ratingOf(state);
     const achievements = core.achievementsOf(state);
     const cups = Math.min(3, Math.ceil(achievements.count / 6));
     let props: any = roomProps(inner, height, state.office);
     let seats: { x: number; y: number; k: number; decor?: string[] }[] | null = null;
+    let staffArea: Node | null = null;
+    let staffHeight = height;
     const deskRows: { desk: RoomRect; count: number }[] = [];
     const trophies: Node[] = [];
-    const roomName = (['home', 'cottage', 'formal'] as const)[state.office as number];
-    const room = art && roomName ? art.layout![roomName] : null;
-    const background = art && roomName ? art.roomFrame(roomName) : null;
     if (art && room && background) {
       const k = inner / room.size[0];
       const map = ([x, y, w, h]: number[]) => ({ x: x * k, y: y * k, w: w * k, h: h * k });
-      art.place(node, background, 0, 0, inner, height);
+      const lobbyHeight = room.size[1] * k;
+      art.place(node, background, 0, 0, inner, lobbyHeight);
+      if (room.staffFloor) {
+        staffHeight = room.staffFloor.size[1] * k;
+        this.box(node, 'OfficeDivider', 0, lobbyHeight, inner, dividerHeight, '#ffffff');
+        bulletinY = lobbyHeight + OFFICE_DIVIDER_GAP;
+        staffArea = this.box(node, 'StaffFloor', 0, lobbyHeight + dividerHeight, inner, staffHeight, '#b28a60');
+        const floor = art.staffFloorFrame();
+        if (floor) art.place(staffArea, floor, 0, 0, inner, staffHeight);
+      }
       props = { screen: room.screen && map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
-      const mapSeat = ([x, top, scale, decor]: [number, number, number, string[]?]) => ({ x: x * k, y: top * k, k: scale * k, decor });
-      if (room.deskRows) {
-        seats = room.deskRows.flatMap(row => row.seats.map(mapSeat));
-        for (const { desk: [x, y, w, h], seats: row } of room.deskRows) {
-          deskRows.push({ desk: [x * k, y * k, w * k, h * k], count: row.length });
+      const offset = room.staffFloor?.deskOffsetY ?? 0;
+      const rows = room.staffFloor ? art.layout!.formal.deskRows : room.deskRows;
+      const mapSeat = ([x, top, scale, decor]: [number, number, number, string[]?]) => ({ x: x * k, y: (top + offset) * k, k: scale * k, decor });
+      if (rows) {
+        seats = rows.flatMap(row => row.seats.map(mapSeat));
+        for (const { desk: [x, y, w, h], seats: row } of rows) {
+          deskRows.push({ desk: [x * k, (y + offset) * k, w * k, h * k], count: row.length });
         }
       } else if (room.seats) seats = room.seats.map(mapSeat);
       ['trophy-gold', 'trophy-silver', 'trophy-bronze'].slice(0, cups).forEach((name, index) => {
@@ -1056,15 +1085,18 @@ export class StudioApp extends Component {
     const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
     const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
     const sorted = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0));
-    // Up to 20 desks fit one picture; a bigger team pages sideways, the watched project's people first.
-    const pages = Math.max(1, Math.ceil(sorted.length / 20));
-    const page = Math.min(this.officePage, pages - 1);
-    const shown = sorted.slice(page * 20, page * 20 + 20);
-    seats = seats || seatLayout(Math.min(20, Math.max(shown.length, core.seats(state) - page * 20)), inner, height).map(seat => ({ x: seat.x, y: seat.y - 13 * seat.scale, k: seat.scale * 0.2 }));
+    const pageSize = state.office === 3 ? 10 : 20;
+    const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
+    let page = Math.min(this.officePage, pages - 1);
+    const stationLayer = staffArea ? this.box(staffArea, 'Workstations', 0, 0, inner, staffHeight) : node;
     // Each person is one whole picture: the face says working, idle or tired; the laptop and the mug say
     // whether there is work; a sweat drop and a cloud above the head mark tired and wanting to leave.
-    if (art) {
-      const stations: Station[] = seats.map((seat, index) => {
+    const drawStations = () => {
+      if (!art) return;
+      const shown = sorted.slice(page * pageSize, (page + 1) * pageSize);
+      const count = Math.min(pageSize, Math.max(shown.length, core.seats(state) - page * pageSize));
+      const anchors = seats || seatLayout(count, inner, staffHeight).map(seat => ({ x: seat.x, y: seat.y - 13 * seat.scale, k: seat.scale * 0.2 }));
+      const stations: Station[] = anchors.map((seat, index) => {
         const person = shown[index];
         let look: Look | null = null;
         if (person && person.leaveUntil > state.day) look = { face: '', person: false, laptop: 'closed', mug: false, symbols: [] };
@@ -1082,32 +1114,52 @@ export class StudioApp extends Component {
         let start = 0;
         for (const row of deskRows) {
           const end = start + row.count;
-          art.stationRow(node, stations.slice(start, end), sharedDesk, row.desk, height);
+          art.stationRow(stationLayer, stations.slice(start, end), sharedDesk, row.desk, staffHeight);
           start = end;
         }
       } else {
-        for (const seat of stations) art.station(node, seat, height);
+        for (const seat of stations) art.station(stationLayer, seat, staffHeight);
       }
+    };
+    drawStations();
+    if (staffArea) {
+      const staffTap = this.box(staffArea, 'StaffTap', 0, 0, inner, staffHeight);
+      this.clickable(staffTap, () => this.openMenu('team'));
     }
     if (pages > 1) {
-      let startX = 0;
-      node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { startX = event.getUILocation().x; this.officeSwiped = false; });
-      node.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => { if (Math.abs(event.getUILocation().x - startX) > 30) this.officeSwiped = true; });
-      node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-        const dx = event.getUILocation().x - startX;
-        if (Math.abs(dx) <= 30) return;
-        this.officePage = (page + (dx < 0 ? 1 : pages - 1)) % pages;
-        this.scheduleOnce(() => this.render(), 0);
-      });
-      const pager = '‹ ' + (page + 1) + '/' + pages + ' ›';
-      const pageChip = this.box(node, 'Pager', 6, height - 22, 54, 18, colors.night, 9, 200);
-      this.text(pageChip, pager, 0, 0, 54, 18, 10, '#ffffff').horizontalAlign = HorizontalTextAlignment.CENTER;
-      this.clickable(pageChip, () => { this.officePage = (page + 1) % pages; this.render(); });
+      const pageText = () => '‹ ' + (page + 1) + '/' + pages + ' ›';
+      const pageChip = this.box(staffArea || node, 'Pager', 6, staffHeight - 22, 54, 18, colors.night, 9, 200);
+      const pager = this.text(pageChip, pageText(), 0, 0, 54, 18, 10, '#ffffff');
+      pager.horizontalAlign = HorizontalTextAlignment.CENTER;
+      const turn = (step: number) => {
+        page = (page + step + pages) % pages;
+        this.officePage = page;
+        if (staffArea) {
+          this.art.clear();
+          for (const child of [...stationLayer.children]) { child.removeFromParent(); child.destroy(); }
+          drawStations();
+          pager.string = pageText();
+        } else this.render();
+      };
+      if (staffArea) {
+        staffArea.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+          this.staffSwipe = { id: event.getID(), turn };
+        }, this, true);
+      } else {
+        let startX = 0;
+        node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { startX = event.getUILocation().x; this.officeSwiped = false; });
+        node.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => { if (Math.abs(event.getUILocation().x - startX) > 30) this.officeSwiped = true; });
+        node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+          const dx = event.getUILocation().x - startX;
+          if (Math.abs(dx) > 30) this.scheduleOnce(() => turn(dx < 0 ? 1 : -1), 0);
+        });
+      }
+      this.clickable(pageChip, () => turn(1));
     }
     // One chip in the bottom corner: room, people and seats.
     const label = core.OFFICES[state.office].name + ' ' + state.staff.length + '/' + core.seats(state);
     const chipWidth = label.length * 10 + 14;
-    const chip = this.box(node, 'Room', inner - chipWidth - 6, height - 22, chipWidth, 18, colors.night, 9, 200);
+    const chip = this.box(node, 'Room', inner - chipWidth - 6, sceneHeight - 22, chipWidth, 18, colors.night, 9, 200);
     this.text(chip, label, 7, 0, chipWidth - 14, 18, 10, '#ffffff');
     this.clickable(chip, () => this.openMenu('team'));
     const hotspot = (name: string, area: any, text: string, open: () => void) => {
@@ -1148,7 +1200,9 @@ export class StudioApp extends Component {
     }
     this.anchors.set('tier', plaque);
     if (rating.watch) this.text(plaque, '!', props.plaque.w - 12, 0, 10, props.plaque.h, 12, colors.danger, true);
-    return height;
+    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, 0, inner, sceneHeight));
+    this.bulletin(body, bulletinY);
+    return Math.max(sceneHeight, bulletinY + BULLETIN_HEIGHT) + 8;
   }
 
   // The screen clips artwork drawn at its design height and scaled down into the room.
@@ -1171,12 +1225,11 @@ export class StudioApp extends Component {
     this.anchors.set('work', monitor);
   }
 
-  // One or two lines of industry news under the office, like a TV in the corner. Reading it is
-  // optional; anything the player must act on still gets its own banner.
+  // Optional industry news. Items the player must act on get their own banner.
   private bulletin(body: Node, y: number) {
     const inner = this.width - 40;
     const items = core.bulletinOf(this.state);
-    const node = this.box(body, 'Bulletin', 0, y, inner, 34, colors.night, 8);
+    const node = this.box(body, 'Bulletin', 0, y, inner, BULLETIN_HEIGHT, colors.night, 8);
     this.navIcon(node, 'Newspaper', 8, 8, 18, '#ffd166');
     // Rotate on the wall clock, not game days, so high speed never flashes items past.
     const item = items.length ? items[Math.floor(Date.now() / 6000) % items.length] : null;
@@ -1186,7 +1239,6 @@ export class StudioApp extends Component {
     label.overflow = Label.Overflow.CLAMP;
     this.clickable(node, () => this.openMenu('industry', 'news'));
     this.anchors.set('bulletin', node);
-    return 34;
   }
 
   // Four stats beside the radar instead of under it, so the scoring block costs no extra row.
