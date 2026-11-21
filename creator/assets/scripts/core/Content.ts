@@ -96,7 +96,7 @@ export function advice(state: any, projectId?: string) {
     const days = Math.max(...pipeline.bottlenecks.map((key: string) => pipeline.rows.find((row: any) => row.key === key)?.days || 0));
     return { title: '推进《' + project.name + '》', text: `最慢的是${names.join('、')}，约 ${days} 天。`, menu: 'project', id: project.id };
   }
-  return { title: '推进《' + project.name + '》', text: '查看各评分项还要几天做完，点开可给对应的人分工。', menu: 'project', id: project.id };
+  return { title: '推进《' + project.name + '》', text: '各项预期还要几天做完，点开可调整分工。', menu: 'project', id: project.id };
 }
 
 function recruitMenu(state: any, id: string) {
@@ -328,7 +328,7 @@ function projectMenu(state: any, id?: string) {
         { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
         { type: 'lines', items: [['完成度', metrics.progress.toFixed(0) + '%'], ['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
         { type: 'radar', metrics, genre: project.type, projectId: project.id },
-        { type: 'section', title: '六项评分（点开可看详情并分工）' },
+        { type: 'section', title: '各项预期时间与六项评分' },
         { type: 'dimensions', items: rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
@@ -355,13 +355,12 @@ function projectMenu(state: any, id?: string) {
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
-    // Six zeroes and a lot of empty space are not a score: the radar and the six rows appear with the
-    // prototype, the same point the main screen starts showing them.
-    ...(project.checkpoints?.prototype
-      ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id },
-         { type: 'section', title: '六项评分（点开可看详情并分工）' },
-         { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id }]
-      : [{ type: 'text', text: '完成 25% 原型后，这里显示六维评分、瓶颈与各项进度。现在先开始时间或调整分工。', muted: true }]),
+    // Six zeroes drawn as a shape are not a score: the radar waits for the prototype. The six rows do
+    // not: they already say who is on each dimension and how many days it still needs, which is the
+    // whole point of the page before the prototype lands.
+    ...(project.checkpoints?.prototype ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id }] : []),
+    { type: 'section', title: '各项预期时间与六项评分' },
+    { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'help', key: 'project-help', title: '怎样算做完', text: '六项都做完才算完成，测试也要安排人；测得越满，「稳定」越高。做满后参与的人会自动去修已发现的缺陷。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '共投入 ' + money(project.promoted) : '未推广'], ...(updates.work > 0.001 ? [['模块自动更新', '还需约 ' + updates.work.toFixed(1) + ' 人日']] : []), [core.TYPES[project.type].audience + '最看重', core.audienceFocus(project.type)]] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
@@ -595,11 +594,11 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
   const assignedPeople = finished ? [] : state.staff.filter((person: any) => core.personWorks(state, project, person).some((key: string) => workKeys.includes(key)));
   const weight = core.TYPES[project.type].weights[dimKey];
   const score = metrics.dimensions[dimKey] || 0;
-  const finish = !row ? '—' : row.remaining <= 0.0001 ? '已完成' : row.days === null ? '无人负责' : '约 ' + row.days + ' 天';
   const remainingText = row && row.remaining > 0.0001
     ? (row.days === null ? '无人负责' : '约 ' + row.days + ' 天')
     : '已做满';
-  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['现有 ' + state.staff.length + ' 人', remainingText], ['预计完成', finish]] }];
+  // Two figures, not three: "expected time" and "finish date" were the same number under two labels.
+  const head: any[] = [{ type: 'stats', tone: 'plain', items: [['当前评分', dimKey === 'stability' && metrics.untested ? '未测' : score.toFixed(0) + ' 分'], ['预期时间', remainingText]] }];
   if (dimKey === 'stability') {
     const found = project.defects.filter((defect: any) => defect.found).length;
     const fixed = project.defects.filter((defect: any) => defect.fixed).length;
@@ -1603,7 +1602,7 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
       if (project.kind !== 'game') return null;
       // Before sending the player to the assignment page, show what the six rows are for. Stay with
       // what is on screen — work left and the estimated day — instead of systems taught later.
-      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项评分：每一行都写着这一项还剩约几天做完。点开某一项还能看详情，并直接调整谁来做。', ack: 'dimensionsEta' };
+      if (!seen.dimensionsEta && !core.activeProject(state, route.id)?.released) return { anchor: 'project-dimensions', text: '这里是作品的六项：每一行写着这一项预期还要几天做完，最慢的标成瓶颈。点开某一项能直接调整谁来做。', ack: 'dimensionsEta' };
       if (!seen.assign) return { anchor: 'assign', text: '点「调整分工」，把人分到各项工作上；没有人做的工作会一直停在原地。', tap: 'assignPage' };
       if (hasTeammate && !seen.reassign && !project.released) return { anchor: 'assign', text: '新同事还没安排上：点「调整分工」，看看' + mateHe + '现在做什么。', tap: 'assignPage' };
       if (project.checkpoints.demo && !seen.testing && !seen.testingEntry) return { anchor: 'testing', text: '点「试玩」，招一批玩家来找缺陷、听评价。', tap: 'testingEntry' };
