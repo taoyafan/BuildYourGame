@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.41';
+export const VERSION = '0.4.42';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -508,6 +508,11 @@ export function market(state: any, tag: string) {
 // Demand of one option on a given day: its axis' swing, the direction picked for this round, plus a small
 // daily wobble. Relative to the other options of the same axis, so a busy market never drags all of them.
 export function tagDemand(state: any, tag: string) {
+  return tagDemandOn(state, tag, state.day);
+}
+// The same reading for any past day: the chart is filled from the clocks, not only from what was sampled
+// since the studio opened.
+export function tagDemandOn(state: any, tag: string, day: number) {
   const axis = TAG_GROUP[tag];
   if (!axis) return 1;
   const cycle = ensureMarketCycle(state);
@@ -523,10 +528,13 @@ export function tagDemand(state: any, tag: string) {
   // Several hot options peak one after another instead of together. A later one starts that many days in
   // and fits its own rise and fall into the rest of the round, so nothing is cut off when the round turns.
   const lag = at > 0 ? Math.min(clock.len - 2, Math.round(at * rise / 2)) : 0;
-  const raw = state.day - clock.from;
+  let raw = day - clock.from;
+  // Before the clocks started there is no history, but the chart claims a year of it: read the round
+  // backwards, wrapped, so the first day shows the same shape instead of a flat line at 1.00.
+  if (raw < 0) raw = ((raw % clock.len) + clock.len) % clock.len;
   const age = lag > 0 ? (raw <= lag ? 0 : (raw - lag) * clock.len / (clock.len - lag)) : raw;
   const strength = strengthAt(clock, age);
-  const wobbleValue = wobble(state.day, axisIndex(axis)) * 0.005;
+  const wobbleValue = wobble(day, axisIndex(axis)) * 0.005;
   return heatRound(1 + axisAmplitude(axis) * axisSwing(state, axis) * direction * strength + wobbleValue);
 }
 // A title's heat: one multiplier per axis it uses, multiplied, then only six tenths of the deviation is
@@ -552,6 +560,19 @@ function recordHeat(state: any) {
   const sample: any = {};
   for (const tag of ALL_TAGS) sample[tag] = tagDemand(state, tag);
   state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_SAMPLES);
+}
+// A year of curve from the first day: replaying the clocks backwards is what the chart draws before the
+// studio has lived long enough to sample anything. Without it the page opened on a single dot.
+export function seedHeatLog(state: any) {
+  ensureMarketCycle(state);
+  const samples: any[] = [];
+  for (let back = HEAT_SAMPLES; back >= 1; back--) {
+    const day = state.day - back * HEAT_EVERY;
+    const sample: any = {};
+    for (const tag of ALL_TAGS) sample[tag] = tagDemandOn(state, tag, day);
+    samples.push({ day, v: sample });
+  }
+  state.heatLog = samples;
 }
 export function heatSeries(state: any, tag: string) {
   const past = (state.heatLog || []).map((item: any) => ({ day: item.day, value: item.v[tag] ?? 1 }));
@@ -759,6 +780,18 @@ export function recommendPlan(state: any) {
 export function firstGameCore(state: any) {
   return !releases(state) && ORIGINS[state.founder] ? ORIGINS[state.founder].firstCore : '';
 }
+// Every opened axis takes at least one module, so a sequel copied from an older title still picks a
+// mechanic once that axis has opened. Missing axes are filled from the recommendation, never invented.
+export function fillPlanAxes(state: any, axes: any) {
+  const recommended = recommendPlan(state).axes;
+  const next: any = { ...(axes || {}) };
+  for (const axis of AXES) {
+    if (!axisOpen(state, axis)) continue;
+    const list = Array.isArray(next[axis.key]) ? next[axis.key].filter((id: string) => !!MODULES[id]) : [];
+    next[axis.key] = list.length >= Math.max(1, axis.min) ? list.slice(0, axisMax(state, axis)) : (recommended[axis.key] || list).slice(0, axisMax(state, axis));
+  }
+  return next;
+}
 
 // The axes that open with the next release, for the one-line teaser under the form.
 export function nextUnlocks(state: any) {
@@ -850,7 +883,10 @@ export function planIssue(state: any, plan: any) {
     const ids = plan.axes[axis.key] || [];
     if (!axisOpen(state, axis)) { if (ids.length) return `${axis.name}还没有开放。`; continue; }
     if (ids.some((id: string) => MODULES[id]?.axis !== axis.key || !moduleOpen(state, id))) return `${axis.name}里有还不能用的模块。`;
-    if (ids.length < axis.min) return `请选择${axis.name}。`;
+    // An opened axis takes at least one module — but only once there is one to take, or a save whose
+    // unlock never landed could not start any title at all.
+    const options = Object.keys(MODULES).filter((id: string) => MODULES[id].axis === axis.key && moduleOpen(state, id));
+    if (ids.length < Math.max(1, axis.min) && (ids.length || options.length)) return `请选择${axis.name}。`;
     if (ids.length > axisMax(state, axis)) return `${axis.name}最多选 ${axisMax(state, axis)} 个。`;
   }
   if (first && (plan.axes.core || [])[0] !== first) return '首作的玩法由出身决定。';
@@ -1148,6 +1184,7 @@ export function createStudio(seed = Date.now()) {
   // calendar backwards, and a clock created then would start hundreds of days behind.
   ensureMarketCycle(state);
   seedIndustry(state);
+  seedHeatLog(state);
   return state;
 }
 
@@ -5090,6 +5127,9 @@ export function restoreStudio(saved: any) {
     next.rulesRevision = 18;
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
+  // A save written before the clocks were replayed has a short record (or none): fill the year again so
+  // the 行情 page never opens on a blank chart.
+  if (!Array.isArray(next.heatLog) || next.heatLog.length < HEAT_SAMPLES / 2) seedHeatLog(next);
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;

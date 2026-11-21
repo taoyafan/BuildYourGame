@@ -88,6 +88,7 @@ export class StudioApp extends Component {
   private lazy: { y: number; h: number; build: () => void }[] = [];
   private lazyWindow: [number, number] | null = null;
   private savedAt = 0;
+  private savePending = false;
   private celebrations: any[] = [];
   private celebrating = false;
   private paidOut = '';
@@ -172,6 +173,7 @@ export class StudioApp extends Component {
   }
 
   onDestroy() {
+    this.flushSave();
     this.art.destroy();
     screen.off('window-resize', this.resize, this);
     engineGame.off(Game.EVENT_HIDE, this.background, this);
@@ -321,9 +323,23 @@ export class StudioApp extends Component {
   }
 
   private save() {
+    this.savePending = false;
     this.savedAt = Date.now();
     try { platform.write(JSON.stringify(this.state), core.SAVE_SLOT_KEY(this.slot)); }
     catch { this.storageIssue = '保存失败，请检查设备存储空间。'; }
+  }
+
+  // Writing the save is a synchronous storage call, and doing it before the redraw was what made a tap
+  // on 分工 / 评分 feel a second late. Redraw first, write a moment later; leaving the page or the app
+  // flushes it at once.
+  private saveSoon() {
+    if (this.savePending) return;
+    this.savePending = true;
+    this.scheduleOnce(this.flushSave, 0.4);
+  }
+
+  private flushSave() {
+    if (this.savePending) this.save();
   }
 
   private writeSlotIndex() {
@@ -1215,7 +1231,7 @@ export class StudioApp extends Component {
       ['综合', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['待修', Math.max(0, forecast.targets - forecast.fixed) + ' 项', colors.blue, -1, 'stat-defects'],
       ['口碑', book ? book.reviewScore.toFixed(1) : '—', colors.amber, -1, 'stat-review'],
-      ['日销', book ? book.lastDayUnits + ' 份' : '—', colors.ink, -1, 'stat-daily']
+      ['日销', book ? content.number(book.lastDayUnits) + ' 份' : '—', colors.ink, -1, 'stat-daily']
     ], () => this.openMenu('project', project.id));
     y += Math.max(height, 164) + 6;
     this.text(body, '补丁做完自动上线；口碑与销量随之后的玩家评价逐步变化。', 0, y, inner, 18, 11, colors.muted);
@@ -1731,7 +1747,10 @@ export class StudioApp extends Component {
     cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
     const coming = core.nextUnlocks(state);
     if (coming.length) cursor += this.paragraph(body, '下一作发售后开放：' + coming.join('、'), cursor, true, 0, inner, 12);
-    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!core.planIssue(state, this.draft));
+    // A grey button with no reason reads as a bug: the missing choice is named right above it.
+    const issue = core.planIssue(state, this.draft);
+    if (issue) cursor += this.paragraph(body, issue, cursor, false, 0, inner, 12, colors.amber);
+    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!issue);
     return cursor + 66;
   }
 
@@ -2092,6 +2111,9 @@ export class StudioApp extends Component {
         this.text(card, block.detail, 12, 28, width - 24, detailHeight, 11, colors.muted);
         if (flags.length) this.text(card, '产出下降：' + flags.join(' · '), 12, 28 + detailHeight, width - 24, 16, 10, colors.danger);
         const cell = (width - 24 - (columns - 1) * 8) / columns;
+        // One Graphics for all six boxes on the card. Six separate ones meant six draw calls per person,
+        // and a tap on this page rebuilt every card before anything moved.
+        const chips = new Pen(this.box(card, 'WorkChips', 0, 0, width, header + rows * 50).addComponent(Graphics));
         block.works.forEach((work: any, index: number) => {
           const on = work.on;
           // A finished item keeps its box (so the assignment is still visible) but stops looking like
@@ -2099,7 +2121,10 @@ export class StudioApp extends Component {
           const done = !!work.done;
           const column = index % columns;
           const line = Math.floor(index / columns);
-          const node = this.box(card, 'Work-' + work.key, 12 + column * (cell + 8), header + line * 50, cell, 42, done ? colors.pale : on ? colors.green : colors.soft, 8);
+          const x = 12 + column * (cell + 8);
+          const top = header + line * 50;
+          chips.rect(x, top, cell, 42, done ? colors.pale : on ? colors.green : colors.soft, 8);
+          const node = this.box(card, 'Work-' + work.key, x, top, cell, 42);
           const shortName = work.key === 'discover' ? '找缺陷' : work.key === 'repair' ? '修缺陷' : work.name;
           this.text(node, shortName, 2, 2, cell - 4, 22, 12, on && !done ? colors.paper : colors.muted, true).horizontalAlign = HorizontalTextAlignment.CENTER;
           const sub = done ? '已完成' : '能力 ' + (work.ability ?? '—');
@@ -2118,10 +2143,10 @@ export class StudioApp extends Component {
             // 且跨项目看人时按钮全灰。统一来源后提示才正确，点击也能把人真正调过来。
             const next = core.toggleAssign(this.state, projectId, person.id, work.key);
             const after = core.assignedWorks(core.activeProject(next, projectId) || { id: projectId }, person);
-            this.apply(next);
             // Turning the last box off no longer bounces back to the home trade: the person idles.
-            if (!after.length) this.notify(person.name + '：已空闲，不做任何工作，工资照付。');
-            else this.notify(person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
+            // The message rides along with the redraw: notifying afterwards rebuilt the whole page twice.
+            if (!after.length) this.apply(next, person.name + '：已空闲，不做任何工作，工资照付。');
+            else this.apply(next, person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
           });
         });
         // The lesson is "everyone picks their work", so the ring has to hug the whole grid. Anchoring
@@ -2140,16 +2165,14 @@ export class StudioApp extends Component {
           // Best of the trade, not the first home key: coders and designers have two trades.
           const best = core.homeWork(target);
           const name = core.WORKS.find((entry: any) => entry.key === best)?.name || best;
-          this.apply(core.assign(this.state, project.id, target.id, [best]));
-          this.notify(target.name + '：只做擅长的一项（' + name + '）。');
+          this.apply(core.assign(this.state, project.id, target.id, [best]), target.name + '：只做擅长的一项（' + name + '）。');
         }, false);
         this.button(card, '全部都做', chipX(1), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
           if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
-          this.apply(core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]));
-          this.notify(target.name + '：所有工作都接手。');
+          this.apply(core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]), target.name + '：所有工作都接手。');
         }, false);
         // No idle shortcut: the two buttons above fill the row exactly. A third one used to sit at
         // chipX(2), which started past the card's right edge and showed up as a sliver of a button.
@@ -2631,7 +2654,7 @@ export class StudioApp extends Component {
 
   private apply(next: any, message?: string) {
     this.state = this.drain(next);
-    this.save();
+    this.saveSoon();
     if (next.event) { this.playing = false; this.resumeAfterMenu = false; this.routes = [{ menu: 'event' }]; }
     if (next.over) { this.playing = false; this.resumeAfterMenu = false; }
     if (!next.over) this.overScreenShown = false;
@@ -2702,7 +2725,7 @@ export class StudioApp extends Component {
           const book = this.state.catalog.find((item: any) => item.id === data.id);
           if (!book) throw new Error('原作不存在。');
           this.openMenu('new-project');
-          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, axes: JSON.parse(JSON.stringify(book.axes)), rent: [...(book.rent || [])], lineLevels: { ...(book.lineLevels || {}) }, sequel: book.id };
+          this.draft = { name: (book.name + ' 2').slice(0, 24), scale: book.scale, axes: core.fillPlanAxes(this.state, JSON.parse(JSON.stringify(book.axes))), rent: [...(book.rent || [])], lineLevels: { ...(book.lineLevels || {}) }, sequel: book.id };
           this.render();
           break;
         }

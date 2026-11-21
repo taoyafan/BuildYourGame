@@ -355,9 +355,13 @@ function projectMenu(state: any, id?: string) {
   const blocks: any[] = [
     { type: 'lines', items: [['《' + project.name + '》', core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name], ['阶段', stage(project)], ['完成度', metrics.progress.toFixed(0) + '%']] },
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
-    { type: 'radar', metrics, genre: project.type, projectId: project.id },
-    { type: 'section', title: '六项评分（点开可看详情并分工）' },
-    { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
+    // Six zeroes and a lot of empty space are not a score: the radar and the six rows appear with the
+    // prototype, the same point the main screen starts showing them.
+    ...(project.checkpoints?.prototype
+      ? [{ type: 'radar', metrics, genre: project.type, projectId: project.id },
+         { type: 'section', title: '六项评分（点开可看详情并分工）' },
+         { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id }]
+      : [{ type: 'text', text: '完成 25% 原型后，这里显示六维评分、瓶颈与各项进度。现在先开始时间或调整分工。', muted: true }]),
     { type: 'help', key: 'project-help', title: '怎样算做完', text: '六项都做完才算完成，测试也要安排人；测得越满，「稳定」越高。做满后参与的人会自动去修已发现的缺陷。' },
     { type: 'lines', items: [['预计做完', etaText], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ['推广', project.promoCover > 0 ? '共投入 ' + money(project.promoted) : '未推广'], ...(updates.work > 0.001 ? [['模块自动更新', '还需约 ' + updates.work.toFixed(1) + ' 人日']] : []), [core.TYPES[project.type].audience + '最看重', core.audienceFocus(project.type)]] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
@@ -453,7 +457,7 @@ function patchProjectMenu(state: any, project: any) {
         ['人手', crew.length ? crew.map((person: any) => person.name).join('、') : '无']
       ] },
       { type: 'radar', metrics: core.projectMetrics(project), genre: project.type, projectId: project.id },
-      ...(book ? [{ type: 'lines', items: [['当前口碑', book.reviewScore.toFixed(1)], ['最近一日销量', book.lastDayUnits + ' 份']] }] : []),
+      ...(book ? [{ type: 'lines', items: [['当前口碑', book.reviewScore.toFixed(1)], ['最近一日销量', number(book.lastDayUnits) + ' 份']] }] : []),
       { type: 'help', key: 'patch-run-help', title: '补丁怎么算', text: '范围在开工时定下：只修开工时已报告的缺陷' + (rework ? '，再返工' + rework : '') + '。之后新报告的问题留给下一个补丁；做完自动上线。' },
       ...(order.length > 1 ? [{ type: 'buttons', columns: 2, items: [
         { text: '提高优先级', action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
@@ -809,7 +813,7 @@ function marketMenu(state: any, id?: string) {
   }), ['评选', core.dueText(state, Math.ceil(state.day / 180) * 180)]] });
   blocks.push({ type: 'buttons', anchor: 'exhibitions', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
   blocks.push({ type: 'actions', items: [
-    { text: '日历', detail: '展会、评选、媒体评级与对手发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry', id: 'schedule' } },
+    { text: '日历', detail: '展会、评选、媒体评级与对手发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry' } },
     { text: '行业', detail: '榜单、对手、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
     { text: '展会与媒体', detail: '历届参展名次与报道。', icon: 'Award', action: 'menu', data: { menu: 'exhibitions' } }
   ] });
@@ -852,7 +856,7 @@ function bookMenu(state: any, id: string) {
         ['玩家评价', book.reviewScore.toFixed(1) + ' · ' + number(book.reviewCount) + ' 人'],
         ['首发', number(book.openingUnits) + ' 份 · ' + money(book.openingReceipt)],
         ['累计销量', number(book.units) + ' 份'],
-        ['最近一日', book.lastDayUnits + ' 份'],
+        ['最近一日', number(book.lastDayUnits) + ' 份'],
         ['发售时知道它的人', number(book.openingFollowers) + ' 人'],
         ['发售售价', price(book.price)],
         ['发售时市场', book.trend],
@@ -865,7 +869,7 @@ function bookMenu(state: any, id: string) {
       { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['玩家期待', book.expectation ? '评分 −' + book.expectation : '无'], ['补丁', (book.updates || 0) + ' 次']] },
       ...(book.weekOne?.lost.length ? [{ type: 'lines', title: '首周撞档', items: [...book.weekOne.lost.map((item: any) => ['被《' + item.name + '》分流', '约 ' + number(item.units) + ' 份']), ['不撞档大约能卖', number(book.weekOne.without) + ' 份']] }] : []),
       ...(book.promo ? [{ type: 'lines', title: '推广复盘', items: [['共投入', money(book.promo.cost)], ['比不投多卖', number(book.promo.extraUnits || 0) + ' 份 · 约 ' + money(book.promo.receipt)]] }] : []),
-      ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + last.dailyBefore + ' → ' + last.dailyAt + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + book.lastDayUnits + ' 份。'; })(), muted: true }] : []),
+      ...((book.patches || []).length ? [{ type: 'section', title: '补丁记录' }, { type: 'lines', items: [...book.patches].reverse().map((patch: any) => [core.dateText(patch.day) + (patch.rework ? ' · 返工' + core.DIMENSIONS.find(item => item.key === patch.rework)?.name : ''), '修复 ' + patch.fixed + '/' + patch.targets + ' · 综合 ' + Math.round(patch.overallBefore) + '→' + Math.round(patch.overallAfter)]) }, { type: 'text', text: (() => { const last = book.patches[book.patches.length - 1]; return '最近一次补丁上线时：口碑 ' + (last.reviewBefore ?? book.reviewScore).toFixed(1) + ' → ' + (last.reviewAt ?? book.reviewScore).toFixed(1) + '，日销 ' + number(last.dailyBefore) + ' → ' + number(last.dailyAt) + ' 份；现在口碑 ' + book.reviewScore.toFixed(1) + '，日销 ' + number(book.lastDayUnits) + ' 份。'; })(), muted: true }] : []),
       { type: 'section', title: '作品运营' },
       { type: 'actions', anchor: 'book-ops', items: [
         project?.patch
@@ -1355,7 +1359,10 @@ function exhibitionsMenu(state: any) {
 // level the company currently pays attention to; every level stays one tap away.
 function industryMenu(state: any, id?: string) {
   const focus = state.focus || 0;
-  const [tab = 'board', kind = 'first', levelText] = String(id || '').split(':');
+  // An empty id means "the page as the player left it": it opens on 行情, the tab that answers "what is
+  // hot right now". Every other tab is still one tap away.
+  const [tabText = '', kind = 'first', levelText] = String(id || '').split(':');
+  const tab = tabText || 'market';
   const level = levelText === undefined || levelText === '' ? focus : Number(levelText) || 0;
   const route = (nextTab: string, nextKind = kind, nextLevel = level) => ({ menu: 'industry', id: nextTab + ':' + nextKind + ':' + nextLevel });
   const blocks: any[] = [
@@ -1422,7 +1429,7 @@ function marketBlocks(state: any, id?: string) {
     return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.tagHeat(series[series.length - 1].value).label, shown: !tag || tag === name };
   });
   return [
-    ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name + (core.activeMarketFields(state).includes(item.field) ? ' · 关注' : ''), route: route(item.key, ''), active: item.key === group.key })) }] : []),
+    ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name, route: route(item.key, ''), active: item.key === group.key })) }] : []),
     { type: 'heat', lines, start: state.day - 360, end: state.day, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },
     { type: 'text', text: '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。', muted: true }
   ];

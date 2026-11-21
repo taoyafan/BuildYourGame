@@ -67,7 +67,7 @@ export const MODULES: any = {
 // how many lines an axis takes; `unlock` is how many released titles it waits for.
 export const AXES: any[] = [
   { key: 'core', field: 'design', name: '类型', min: 1, max: 1, unlock: 0 },
-  { key: 'mechanic', field: 'design', name: '机制', min: 0, max: 2, unlock: 2 },
+  { key: 'mechanic', field: 'design', name: '机制', min: 1, max: 2, unlock: 2 },
   { key: 'theme', field: 'design', name: '题材', min: 1, max: 1, unlock: 0 },
   { key: 'engine', field: 'tech', name: '引擎', min: 1, max: 1, unlock: 0 },
   { key: 'art', field: 'art', name: '美术', min: 1, max: 1, unlock: 0 },
