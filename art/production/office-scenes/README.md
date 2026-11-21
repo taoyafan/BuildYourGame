@@ -4,7 +4,7 @@
 
 | 场景 | 总容量 | 标准每页 | 满员页数 | 场景文件 |
 | --- | --- | --- | --- | --- |
-| 自家 | 1 | 1 | 1 | [概念图](home-1.png)，[运行底图](../../../creator/assets/resources/art/home.png) |
+| 自家 | 1 | 1 | 1 | [概念图](home-1.png)，[底图原稿](home-background.png)，[运行底图](../../../creator/assets/resources/art/home.jpg) |
 | 起步小屋 | 4 | 4 | 1 | [完整场景](../../exploration/office-direction/cottage-four-seat-concept.png) |
 | 正式办公室 | 10 | 10 | 1 | [完整场景](formal-10.png) |
 | 独立工作室 | 20 | 10 | 2 | [固定前台](studio-20-upper.png)，员工区待制作 |
