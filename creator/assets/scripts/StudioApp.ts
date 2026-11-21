@@ -950,13 +950,13 @@ export class StudioApp extends Component {
       contentTop = contentY + 44;
     }
     const project = shown;
-    // Fixed rows below and above the scene; the scene absorbs any shortage on short screens.
-    // Content heights below the header: office, bulletin, project panel and the next-step card.
+    // The cottage keeps its artwork ratio. Short screens scroll the panels below it into view.
     const shrink = Math.max(0, Math.min(70, (project ? 586 : 334) - (navY - contentTop - 10)));
+    const officeHeight = state.office === 1 ? inner * 190 / 350 : 190 - shrink;
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
     let y = 0;
     const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
-    y += this.office(body, y, 190 - shrink, project, metrics) + 4;
+    y += this.office(body, y, officeHeight, project, metrics) + 4;
     this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, 0, inner, y - 4));
     y += this.bulletin(body, y) + 8;
     if (project?.released) y = this.patchPanel(body, y, project);
@@ -985,23 +985,17 @@ export class StudioApp extends Component {
     let props: any = roomProps(inner, height, state.office);
     let seats: { x: number; y: number; k: number; decor?: string[] }[] | null = null;
     if (art && state.office === 1) {
-      // The cottage keeps its width inside the crop-safe sides; on short screens the room squashes
-      // vertically while people and furniture keep their proportions at the height's scale.
       const room = art.layout!.cottage;
-      const [sourceWidth, sourceHeight] = room.size;
-      const sy = height / sourceHeight;
-      const shown = Math.min(sourceWidth, Math.max(sourceWidth - room.safe * 2, inner / sy));
-      const sx = inner / shown;
-      const left = Math.round((sourceWidth - shown) / 2);
-      const map = (rect: number[]) => ({ x: (rect[0] - left) * sx, y: rect[1] * sy, w: rect[2] * sx, h: rect[3] * sy });
-      art.place(node, art.roomFrame(left, Math.round(shown)), 0, 0, inner, height);
-      props = { floor: room.upper * sy, screen: map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
-      seats = room.seats.map(([x, top, scale, decor]: any[]) => ({ x: (x - left) * sx, y: top * sy, k: scale * sy, decor }));
+      const k = inner / room.size[0];
+      const map = ([x, y, w, h]: number[]) => ({ x: x * k, y: y * k, w: w * k, h: h * k });
+      art.place(node, art.roomFrame(), 0, 0, inner, height);
+      props = { screen: map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
+      seats = room.seats.map(([x, top, scale, decor]: any[]) => ({ x: x * k, y: top * k, k: scale * k, decor }));
       ['trophy-gold', 'trophy-silver', 'trophy-bronze'].slice(0, cups).forEach((name, index) => {
         const rect = art.layout!.props[name];
-        const tall = 34 * sy;
+        const tall = 34 * k;
         const wide = tall * rect[2] / rect[3];
-        art.place(node, art.prop(name), props.shelf.x + props.shelf.w / 2 + (index - 1) * 40 * sx - wide / 2, room.shelfPlank * sy - tall, wide, tall);
+        art.place(node, art.prop(name), props.shelf.x + props.shelf.w / 2 + (index - 1) * 40 * k - wide / 2, room.shelfPlank * k - tall, wide, tall);
       });
     } else {
       const { pen } = this.canvasNode(node, 'Room', 0, 0, inner, height);

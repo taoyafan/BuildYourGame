@@ -47,7 +47,7 @@ export class ArtPack {
     const cell = item.frames.portrait;
     return this.frame(item.id + ':avatar', this.atlas!, [cell[0] + x, cell[1] + y, w, h]);
   }
-  roomFrame(x: number, width: number) { return this.frame('room:' + x + ':' + width, this.room!, [x, 0, width, this.layout!.cottage.size[1]]); }
+  roomFrame() { return this.frame('cottage', this.room!, [0, 0, ...this.layout!.cottage.size]); }
 
   // A sprite in a top-left box. Anything below `clip` is cut off by filling only the top part.
   place(parent: Node, frame: SpriteFrame, x: number, y: number, width: number, height: number, clip = Infinity) {
