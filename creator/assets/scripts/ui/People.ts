@@ -1,20 +1,25 @@
 import { JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
 
-type RoomArt = 'home' | 'cottage';
+type RoomArt = 'home' | 'cottage' | 'formal';
+type SeatAnchor = [number, number, number, string[]?];
+export type RoomRect = [number, number, number, number];
 type RoomLayout = {
   size: [number, number];
-  seats: [number, number, number, string[]?][];
+  seats?: SeatAnchor[];
+  deskRows?: { desk: RoomRect; seats: SeatAnchor[] }[];
   screen?: number[];
   plaque: number[];
   calendar: number[];
   shelf: number[];
   shelfPlank: number;
+  trophyStep?: number;
 };
 type Layout = Record<RoomArt, RoomLayout> & {
   size: number[]; unit: number; characters: { id: string; sex: string; frames: Record<string, number[]>; avatar: number[] }[];
   props: Record<string, number[]>; station: Record<string, any>;
 };
 export type Look = { face: string; laptop: '' | 'open' | 'closed'; person: boolean; mug: boolean; symbols: string[] };
+export type Station = { x: number; y: number; k: number; art: string; look: Look | null; phase: number; decor?: string[] };
 
 // People, furniture and symbols share one atlas. Illustrated rooms have their own backgrounds.
 // Coordinates are top-left, y down.
@@ -22,14 +27,15 @@ export class ArtPack {
   layout: Layout | null = null;
   private atlas: Texture2D | null = null;
   private rooms: Partial<Record<RoomArt, Texture2D>> = {};
+  private deskRowTexture: Texture2D | null = null;
   private frames = new Map<string, SpriteFrame>();
   private disposed = false;
   private actors: { sprite: Sprite; art: string; face: string; phase: number }[] = [];
   private clock = 0;
 
   load(done: () => void) {
-    const roomNames: RoomArt[] = ['home', 'cottage'];
-    let pending = 2 + roomNames.length;
+    const roomNames: RoomArt[] = ['home', 'cottage', 'formal'];
+    let pending = 3 + roomNames.length;
     const finish = () => { if (--pending === 0 && !this.disposed && this.ready) done(); };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
     resources.load('art/atlas/texture', Texture2D, (error, texture) => { if (error) console.warn('Art atlas:', error.message); else this.atlas = texture; finish(); });
@@ -40,6 +46,11 @@ export class ArtPack {
         finish();
       });
     }
+    resources.load('art/formal-desk-row/texture', Texture2D, (error, texture) => {
+      if (error) console.warn('Formal desk row:', error.message);
+      else this.deskRowTexture = texture;
+      finish();
+    });
   }
 
   get ready() { return !!(this.layout && this.atlas); }
@@ -68,6 +79,10 @@ export class ArtPack {
     const texture = this.rooms[name];
     return texture ? this.frame(name, texture, [0, 0, ...this.layout![name].size]) : null;
   }
+  formalDeskFrame() {
+    const texture = this.deskRowTexture;
+    return texture ? this.frame('formal-desk-row', texture, [0, 0, texture.width, texture.height]) : null;
+  }
 
   // A sprite in a top-left box. Anything below `clip` is cut off by filling only the top part.
   place(parent: Node, frame: SpriteFrame, x: number, y: number, width: number, height: number, clip = Infinity) {
@@ -91,27 +106,32 @@ export class ArtPack {
     return sprite;
   }
 
-  // One workstation, back to front: chair, person, desk, ornaments, laptop and mug, then the head symbols.
-  // (x, y) is the desk line under the person's centre; k converts character pixels to the screen.
-  station(parent: Node, x: number, y: number, k: number, art: string, look: Look | null, clip: number, phase: number, decor: string[] = []) {
+  private stationPart(parent: Node, { x, y, k }: Station, key: string, frame: SpriteFrame, clip: number) {
+    const [dx, dy, w, h] = this.layout!.station[key];
+    return this.place(parent, frame, x + dx * k, y + dy * k, w * k, h * k, clip);
+  }
+
+  private stationBack(parent: Node, seat: Station, clip: number) {
+    const { x, y, k, art, look, phase } = seat;
     const station = this.layout!.station;
-    const at = (key: string, frame: SpriteFrame) => {
-      const [dx, dy, w, h] = station[key];
-      return this.place(parent, frame, x + dx * k, y + dy * k, w * k, h * k, clip);
-    };
-    at('chair', this.prop('chair'));
+    this.stationPart(parent, seat, 'chair', this.prop('chair'), clip);
     if (look?.person) {
-      const sprite = at('person', this.face(art, look.face));
+      const sprite = this.stationPart(parent, seat, 'person', this.face(art, look.face), clip);
       // Breathing scales from the desk line, so the body never lifts off the desk.
       const transform = sprite.node.getComponent(UITransform)!;
       transform.setAnchorPoint(0.5, 0);
       sprite.node.setPosition(x, -(y + (station.person[1] + station.person[3]) * k));
       this.actors.push({ sprite, art, face: look.face, phase });
     }
-    at('desk', this.prop('desk'));
-    for (const name of decor) at(name, this.prop(name));
-    if (look?.laptop) at('laptop-' + look.laptop, this.prop('laptop-' + look.laptop));
-    if (look?.mug) at('mug', this.prop('mug'));
+  }
+
+  private stationFront(parent: Node, seat: Station, clip: number) {
+    const { x, y, k, look, decor = [] } = seat;
+    const station = this.layout!.station;
+    const at = (name: string) => this.stationPart(parent, seat, name, this.prop(name), clip);
+    for (const name of decor) at(name);
+    if (look?.laptop) at('laptop-' + look.laptop);
+    if (look?.mug) at('mug');
     (look?.symbols || []).forEach((name, index) => {
       const [dx, dy, slot] = station.symbols[index];
       const size = station.symbolSize?.[name] ?? slot;
@@ -120,6 +140,19 @@ export class ArtPack {
       const height = width * rect[3] / rect[2];
       this.place(parent, this.prop(name), x + dx * k - width / 2, y + dy * k - height / 2, width, height);
     });
+  }
+
+  station(parent: Node, seat: Station, clip: number) {
+    this.stationBack(parent, seat, clip);
+    this.stationPart(parent, seat, 'desk', this.prop('desk'), clip);
+    this.stationFront(parent, seat, clip);
+  }
+
+  // All chairs and people go behind the shared desktop. Laptops and ornaments go in front.
+  stationRow(parent: Node, stations: Station[], frame: SpriteFrame, desk: RoomRect, clip: number) {
+    for (const seat of stations) this.stationBack(parent, seat, clip);
+    this.place(parent, frame, ...desk, clip);
+    for (const seat of stations) this.stationFront(parent, seat, clip);
   }
 
   clear() { this.actors.length = 0; }

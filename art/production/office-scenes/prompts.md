@@ -26,6 +26,18 @@ ALL FIVE upper-zone functions mandatory and unobscured: large project preview sc
 A few books/mugs/plants for studio personality, restrained, no detail overload. Floor understated, not empty sea of timber. Exact10 workstations, not 6/8/12; count both rows five before finishing. This stage can be presented as one complete scene because total is10, it is NOT an employee-only page. No captions or annotations.
 ```
 
+## 正式办公室运行底图与连排桌
+
+内置 image_gen 以 [正式办公室概念图](formal-10.png) 为参考。底图等比缩放并居中裁成 1050×570。五座连排桌保留生成的透明通道，程序复用到前后两排。
+
+```text
+Precise local edit of the supplied exact 10-person formal office concept. Keep native wide framing and exactly the same view, windows, afternoon sunlight, pale timber floor, city outside, ceiling beams, glass meeting-room wall on the right, and all wall fixture positions and sizes. Remove the entire ten-workstation arrangement, both rows, with all ten people, chairs, desktops, desks, partitions, laptop computers and desktop objects. Fill the exposed surfaces with natural continuous flooring and plaster with the same floor perspective and sunlight from the left. The entire bottom 60% must be vacant, ready for the game to assemble its own furniture. Keep the upper decorative windowsill plant. Make the wall display neutral blank dark charcoal while preserving its entire frame and exact edges. Remove the five stars from the wooden plaque without altering its frame. Leave the wall calendar's grid intact. Empty the achievement rack's top three trophy compartments, keep lower static books, box and plant. No new objects, no zoom or reframe, no desk chair or character of any sort. Retain the exact hand-painted storybook-game style and composition of the reference.
+```
+
+```text
+Generate ONE brand-new 2D game furniture sprite on actual transparent alpha. The supplied office concept is a STYLE reference only, do not cut out, copy, or trace pixels. Draw a SINGLE continuous assembled five-seat desk bank seen perfectly straight-on from a slightly elevated viewpoint. It has EXACTLY FIVE equal side-by-side stations, arranged left to right as a straight horizontal row with four regularly spaced shared separators and two narrow outer end supports. Five equal honey-oak desktop sections at the same height with simple low narrow end and partition ridges at division points only; each has a continuous solid wooden modesty panel hanging underneath that will cover the seated character's lower torso. Five visible front panel rectangles, identical width, and a completely flat horizontal top and lower edge. Width about seven times overall height, wide and shallow like a landscape banner with at least 30 pixels of clear transparent padding around the object. Matte warm oak, tidy golden edge light from left, restrained olive on the low narrow dividers, detailed hand-ink and gouache, same rendered appearance as the row of desks in the supplied picture. One sprite represents one entire row of five stations. Show the whole assembly left to right. Leave the empty work surface clear for laptops and objects the game will place. No room, wall, floor, floorshadow, people, chairs, laptops, plants, books, mug, other furniture, lettering, watermark, checkerboard, border, or opaque fill outside sprite. The visible asset contains only the row of five desks. Use true PNG alpha; six desktop divisions would be wrong.
+```
+
 ## 小屋上区
 
 ```text

@@ -8,7 +8,7 @@ import * as core from './core/Studio';
 import * as content from './core/Content';
 import { Pen, drawRoom, drawTrophy, drawBrick, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
-import { ArtPack, Look } from './ui/People';
+import { ArtPack, Look, RoomRect, Station } from './ui/People';
 
 const { ccclass } = _decorator;
 const colors = {
@@ -965,7 +965,7 @@ export class StudioApp extends Component {
     const project = shown;
     // Illustrated rooms keep their artwork ratio. Short screens scroll the panels below into view.
     const shrink = Math.max(0, Math.min(70, (project ? 586 : 334) - (navY - contentTop - 10)));
-    const officeHeight = state.office <= 1 ? inner * 190 / 350 : 190 - shrink;
+    const officeHeight = state.office <= 2 ? inner * 190 / 350 : 190 - shrink;
     const { body, finish } = this.scroller(contentTop, navY - contentTop - 10);
     let y = 0;
     const metrics = project ? (project.released ? core.projectMetrics(project) : core.visibleMetrics(project)) : null;
@@ -997,8 +997,9 @@ export class StudioApp extends Component {
     const cups = Math.min(3, Math.ceil(achievements.count / 6));
     let props: any = roomProps(inner, height, state.office);
     let seats: { x: number; y: number; k: number; decor?: string[] }[] | null = null;
+    const deskRows: { desk: RoomRect; count: number }[] = [];
     const trophies: Node[] = [];
-    const roomName = state.office === 0 ? 'home' : state.office === 1 ? 'cottage' : null;
+    const roomName = (['home', 'cottage', 'formal'] as const)[state.office as number];
     const room = art && roomName ? art.layout![roomName] : null;
     const background = art && roomName ? art.roomFrame(roomName) : null;
     if (art && room && background) {
@@ -1006,12 +1007,18 @@ export class StudioApp extends Component {
       const map = ([x, y, w, h]: number[]) => ({ x: x * k, y: y * k, w: w * k, h: h * k });
       art.place(node, background, 0, 0, inner, height);
       props = { screen: room.screen && map(room.screen), plaque: map(room.plaque), board: map(room.calendar), shelf: map(room.shelf) };
-      seats = room.seats.map(([x, top, scale, decor]) => ({ x: x * k, y: top * k, k: scale * k, decor }));
+      const mapSeat = ([x, top, scale, decor]: [number, number, number, string[]?]) => ({ x: x * k, y: top * k, k: scale * k, decor });
+      if (room.deskRows) {
+        seats = room.deskRows.flatMap(row => row.seats.map(mapSeat));
+        for (const { desk: [x, y, w, h], seats: row } of room.deskRows) {
+          deskRows.push({ desk: [x * k, y * k, w * k, h * k], count: row.length });
+        }
+      } else if (room.seats) seats = room.seats.map(mapSeat);
       ['trophy-gold', 'trophy-silver', 'trophy-bronze'].slice(0, cups).forEach((name, index) => {
         const rect = art.layout!.props[name];
         const tall = 34 * k;
         const wide = tall * rect[2] / rect[3];
-        const center = props.shelf.x + props.shelf.w / 2 + (index - 1) * 40 * k;
+        const center = props.shelf.x + props.shelf.w / 2 + (index - 1) * (room.trophyStep ?? 40) * k;
         const trophy = art.place(node, art.prop(name), center - wide / 2, room.shelfPlank * k - tall, wide, tall).node;
         trophy.getComponent(UITransform)!.setAnchorPoint(0.5, 0);
         trophy.setPosition(center, -room.shelfPlank * k);
@@ -1040,19 +1047,32 @@ export class StudioApp extends Component {
     seats = seats || seatLayout(Math.min(20, Math.max(shown.length, core.seats(state) - page * 20)), inner, height).map(seat => ({ x: seat.x, y: seat.y - 13 * seat.scale, k: seat.scale * 0.2 }));
     // Each person is one whole picture: the face says working, idle or tired; the laptop and the mug say
     // whether there is work; a sweat drop and a cloud above the head mark tired and wanting to leave.
-    if (art) seats.forEach((seat, index) => {
-      const person = shown[index];
-      let look: Look | null = null;
-      if (person && person.leaveUntil > state.day) look = { face: '', person: false, laptop: 'closed', mug: false, symbols: [] };
-      else if (person) {
-        const assigned = core.projectOf(state, person);
-        const busy = !!assigned && core.personWorks(state, assigned, person).length > 0;
-        const tired = person.stressTags.includes('tired');
-        const leaving = person.stressTags.includes('leaving');
-        look = { face: tired ? 'tired' : busy || leaving ? 'neutral' : 'idle', person: true, laptop: busy ? 'open' : 'closed', mug: !busy, symbols: [...(leaving ? ['cloud'] : []), ...(tired ? ['sweat'] : [])] };
+    if (art) {
+      const stations: Station[] = seats.map((seat, index) => {
+        const person = shown[index];
+        let look: Look | null = null;
+        if (person && person.leaveUntil > state.day) look = { face: '', person: false, laptop: 'closed', mug: false, symbols: [] };
+        else if (person) {
+          const assigned = core.projectOf(state, person);
+          const busy = !!assigned && core.personWorks(state, assigned, person).length > 0;
+          const tired = person.stressTags.includes('tired');
+          const leaving = person.stressTags.includes('leaving');
+          look = { face: tired ? 'tired' : busy || leaving ? 'neutral' : 'idle', person: true, laptop: busy ? 'open' : 'closed', mug: !busy, symbols: [...(leaving ? ['cloud'] : []), ...(tired ? ['sweat'] : [])] };
+        }
+        return { ...seat, art: person ? core.artOf(person) : '', look, phase: index * 1.7 };
+      });
+      const sharedDesk = deskRows.length ? art.formalDeskFrame() : null;
+      if (sharedDesk) {
+        let start = 0;
+        for (const row of deskRows) {
+          const end = start + row.count;
+          art.stationRow(node, stations.slice(start, end), sharedDesk, row.desk, height);
+          start = end;
+        }
+      } else {
+        for (const seat of stations) art.station(node, seat, height);
       }
-      art.station(node, seat.x, seat.y, seat.k, person ? core.artOf(person) : '', look, height, index * 1.7, seat.decor);
-    });
+    }
     if (pages > 1) {
       let startX = 0;
       node.on(Node.EventType.TOUCH_START, (event: EventTouch) => { startX = event.getUILocation().x; this.officeSwiped = false; });
@@ -1535,7 +1555,9 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const { pen } = this.canvasNode(body, 'Room', 0, 0, inner, 150);
     drawRoom(pen, inner, 150, 0);
-    if (this.art.ready) seatLayout(1, inner, 150).forEach(seat => this.art.station(body, seat.x, seat.y - 13 * seat.scale, seat.scale * 0.2, '', null, 150, 0));
+    if (this.art.ready) seatLayout(1, inner, 150).forEach(({ x, y, scale }) => {
+      this.art.station(body, { x, y: y - 13 * scale, k: scale * 0.2, art: '', look: null, phase: 0 }, 150);
+    });
     let cursor = 166;
     cursor += this.paragraph(body, '一间小屋、一张桌子和 ' + content.money(this.state.cash) + ' 积蓄。先接一份委托，再做自己的游戏。', cursor);
     this.draft.suggested = this.draft.suggested || content.randomStudioName();

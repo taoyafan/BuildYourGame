@@ -18,7 +18,7 @@ H5 产物需通过本地 HTTP 服务打开，不能双击 HTML。抖音发布前
 - [assets/scripts/core/Content.ts](assets/scripts/core/Content.ts)：菜单、下一步建议与首作教程步骤。
 - [assets/scripts/StudioApp.ts](assets/scripts/StudioApp.ts)：原生节点界面与操作，教程按锚点计算高亮位置。
 - [assets/scripts/ui/Art.ts](assets/scripts/ui/Art.ts)：代码绘制办公室、人物与作品画面。
-- [assets/scripts/ui/People.ts](assets/scripts/ui/People.ts)：自家与起步小屋分别使用 `home.jpg` 和 `cottage.png`。底图采用固定比例，程序按 `art.json` 从 `atlas.png` 叠加工位、人物与状态符号。自家的墙面风景画是静态装饰，短屏可纵向滚动。其余办公室的背景使用代码绘制。
+- [assets/scripts/ui/People.ts](assets/scripts/ui/People.ts)：自家、起步小屋与正式办公室使用固定比例底图，短屏可纵向滚动。程序按 `art.json` 叠加 `atlas.png` 中的椅子、人物、摆件和状态符号。正式办公室用一张五座连排桌图分别合成前后两排，自家的墙面风景画是静态装饰。其余办公室的背景使用代码绘制。
 - [assets/scripts/Platform.ts](assets/scripts/Platform.ts)：微信 `wx`、抖音 `tt`、H5 的存储、剪贴板与安全区。
 - 图标、音效与背景音乐由 [tools/prepare.cjs](tools/prepare.cjs) 在构建前生成，不联网下载，也不进 git；换机器后运行 `prepare:assets` 即可。
 
