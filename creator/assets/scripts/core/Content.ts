@@ -1426,6 +1426,8 @@ function marketBlocks(state: any, id?: string) {
   const [, groupText = '', rawTag = ''] = String(id || '').split(':');
   const groups = core.heatGroups(state);
   const group = groups.find((item: any) => item.key === groupText) || groups.find((item: any) => item.field === core.lensOf(state)) || groups[0];
+  // Nothing to compare yet: every axis has fewer than two unlocked options, so there is no chart to read.
+  if (!group) return [{ type: 'text', text: '还没有可以对比的选项。同一类里解锁两项以上，这里才会显示它们各自的冷热。', muted: true }];
   // Only a name that really is one of this group's options narrows the chart to one line. Anything else
   // (an empty segment, a tier index left over from another tab) means "draw all of them": filtering on a
   // value that matches no line left the chart blank with nothing to explain why.

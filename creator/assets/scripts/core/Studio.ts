@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.49';
+export const VERSION = '0.4.50';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -576,11 +576,20 @@ export function heatSeries(state: any, tag: string) {
   if (last && last.day >= state.day) return past;
   return [...past, { day: state.day, value: tagDemand(state, tag) }];
 }
-// The tags a player compares against each other: one group per axis. Only the fields learned are shown.
+// The tags a player compares against each other: one group per axis. Only the fields learned are shown,
+// and only the options the player can actually put in a title: reading the heat of a genre that is not
+// unlocked yet is comparing against something the studio cannot make.
 const HEAT_GROUPS: any[] = MARKET_AXES.map(axis => ({ key: axis, name: AXIS_NAME[axis], field: AXIS_FIELD[axis] }));
+export function tagOpen(state: any, tag: string) {
+  return Object.keys(MODULES).some(line => (MODULES[line].tags || []).includes(tag) && moduleOpen(state, line));
+}
 export function heatGroups(state: any) {
   const learned = marketFields(state);
-  return HEAT_GROUPS.filter(group => learned.includes(group.field)).map(group => ({ ...group, tags: axisTags(group.key) })).filter(group => group.tags.length > 1);
+  return HEAT_GROUPS
+    .filter(group => learned.includes(group.field))
+    .map(group => ({ ...group, tags: axisTags(group.key).filter(tag => tagOpen(state, tag)) }))
+    // One option is not a comparison: an axis with a single open option is left out until a second arrives.
+    .filter(group => group.tags.length > 1);
 }
 
 // The field the news and the 行情 page currently lead with: the focus axis, or every learned field once
