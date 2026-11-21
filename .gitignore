@@ -19,23 +19,5 @@ creator/assets/resources/sounds.meta
 /dist/
 /web/
 
-# 未通过美术验收的试稿与重复概念；文件留在本地
-/art/production/cottage-kit/
-/art/exploration/office-direction/cottage-concept.png
-/art/exploration/office-direction/office-stages-concept.png
-/art/exploration/office-direction/prompts.md
-/art/production/office-scenes/cottage-4.png
-/art/production/office-scenes/studio-20-lower.png
-/art/production/office-scenes/floor-40-lower.png
-/art/production/office-scenes/campus-100-lower.png
-
-# 小屋拼合试稿仅保留六个可复用母件
-/art/production/cottage-runtime/*
-!/art/production/cottage-runtime/masters/
-/art/production/cottage-runtime/masters/*
-!/art/production/cottage-runtime/masters/desk.png
-!/art/production/cottage-runtime/masters/chair.png
-!/art/production/cottage-runtime/masters/laptop-open.png
-!/art/production/cottage-runtime/masters/laptop-closed.png
-!/art/production/cottage-runtime/masters/mug.png
-!/art/production/cottage-runtime/masters/notebook.png
+# 旧美术素材：只留概念图，分层重出；归档只在本机
+/art/archive/
