@@ -2171,8 +2171,8 @@ export class StudioApp extends Component {
     const right = width - 12;
     const top = 10;
     const bottom = height - 26;
-    const low = 0.78;
-    const high = 1.22;
+    const low = 0.76;
+    const high = 1.28;
     const px = (day: number) => left + (right - left) * Math.max(0, Math.min(1, (day - block.start) / Math.max(1, block.end - block.start)));
     const py = (value: number) => bottom - (bottom - top) * (Math.max(low, Math.min(high, value)) - low) / (high - low);
     const { node, pen } = this.canvasNode(parent, 'Heat', 0, y, width, height);

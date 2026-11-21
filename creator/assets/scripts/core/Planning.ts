@@ -2,8 +2,6 @@
 // One source for the economic model's work, office staffing, salary speed and market reference time.
 export const STANDARD_SPEED = 100;
 export const LABOR_PARAMETERS = { wageDay: 400, standardQ: 60, wageExp: 3 };
-export const MARKET_LEARNING = { dualReviews: 2 };
-
 export function salaryFactor(quality) {
   const ratio = Math.max(0, quality) / LABOR_PARAMETERS.standardQ;
   return ratio <= 1 ? ratio : Math.pow(ratio, LABOR_PARAMETERS.wageExp);
@@ -18,13 +16,6 @@ export function moduleUpdateWork(work, oldQuality, target) {
 export function moduleUpdatedQuality(work, oldQuality, target, effort) {
   if (work <= 0 || target <= oldQuality) return oldQuality;
   return Math.max(oldQuality, Math.min(target, qualityFromFactor(salaryFactor(oldQuality) + Math.max(0, effort) / work * salaryFactor(target))));
-}
-export function marketComplexity(reviews, dualReviews) {
-  return reviews >= 4 ? (dualReviews >= MARKET_LEARNING.dualReviews ? 4 : 2) : 1;
-}
-export function combinedDemand(changes, weights) {
-  const total = weights.reduce((n, v) => n + v, 0);
-  return total > 0 ? 1 + changes.reduce((n, v, i) => n + v * weights[i], 0) / total : 1;
 }
 export const PLANNING_OFFICES = [
   { name: '自家', seats: 1, rent: 0, cost: 0, crew: 1, peak: 45 },
@@ -48,14 +39,9 @@ export function scaleOfWork(work) {
   return index < 0 ? SCALE_BOUNDS.length : index;
 }
 
-// The phase ratios are design choices; work and productivity above are model inputs.
-export const ROTATION_PARAMETERS = {
-  rise: 0.5, hold: 2, fall: 0.5,
-  amplitude: 0.20, quiet: 0.05, crowd: 0.04, crowdWeight: 0.20,
-  // The most a title's combined demand may move the market, by scale: big bets ride bigger waves.
-  scaleAmplitude: [0.15, 0.25, 0.40, 0.50],
-  otherWeight: 0.20
-};
+// The shape of one market round: a quarter rising, half holding, a quarter falling. The length of a round
+// and how far each axis swings are decided in Studio.ts, where the module table is known.
+export const ROTATION_PARAMETERS = { rise: 0.5, hold: 2, fall: 0.5 };
 
 export function referenceProduction(scale, crew, speed = STANDARD_SPEED) {
   const plan = PLANNING_SCALES[scale];

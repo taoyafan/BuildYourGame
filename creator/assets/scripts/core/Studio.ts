@@ -2,15 +2,14 @@
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, AXES, FIELDS, ORIGINS, SECOND_MECHANIC } from './Modules';
-import { ROTATION, rotationSpan, rotationPhase, extendedAge, legacyRotationSpan, retimedAge } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, marketComplexity, combinedDemand, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
-export { ROTATION, rotationSpan, rotationPhase } from './MarketCycle';
+import { rotationSpan, legacyRotationSpan, retimedAge } from './MarketCycle';
+import { moduleUpdateWork, moduleUpdatedQuality, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { MODULES, AXES, FIELDS, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.40';
+export const VERSION = '0.4.41';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -311,221 +310,268 @@ export function random(state: any) {
   return state.seed / 4294967296;
 }
 
-// The market leans by tags. Each tag has a demand around 1: every release carrying it (the player's or a
-// rival's) crowds it a little, and on quiet days it drifts back. The genre's own tag reads as the trend.
+// The market swings by axis. Each tag belongs to one axis; every axis runs its own clock, and the player
+// reads the heat of each option against the others on the same axis. Heat is the sales multiplier on the
+// day a title ships: the axes multiply, and only part of that swing is paid out.
 export const ALL_TAGS: string[] = Array.from(new Set(Object.values(MODULES).flatMap((module: any) => module.tags || [])));
-// Which tags compete with each other: genres, mechanics, themes, and each other axis on its own.
+// Which tags compete with each other: genres, mechanics, themes, and every other axis on its own.
 const TAG_GROUP: any = {};
 for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_GROUP[tag]) TAG_GROUP[tag] = module.axis === 'core' ? 'genre' : module.axis;
-const TAG_RELEASE = 0.07;
 // The tag a title's genre reads as; old saves without a genre line fall back to the audience.
 export const genreTag = (project: any) => MODULES[(project?.axes?.core || [])[0]]?.tags?.[0] || ({ action: '动作', story: '叙事', think: '策略' } as any)[project?.type] || '';
 // The field of each tag: genres, mechanics and themes are gameplay, styles are art, and so on.
 export const TAG_FIELD: any = {};
 for (const module of Object.values(MODULES) as any[]) for (const tag of module.tags || []) if (!TAG_FIELD[tag]) TAG_FIELD[tag] = module.field;
 
-// One field at a time, on a calendar clock independent of hiring and release success.
+// Six axes, each with its own clock. The focus axis swings twice as far, the others half; once all five
+// axes that carry modules have had their turn as the focus, every axis runs at its full swing.
+export const MARKET_AXES = ['genre', 'mechanic', 'theme', 'engine', 'art', 'audio'];
+const FOCUS_AXES = ['genre', 'mechanic', 'theme', 'audio', 'art'];
+export const AXIS_NAME: any = { genre: '类型', mechanic: '机制', theme: '题材', engine: '引擎', art: '美术', audio: '音乐' };
+const AXIS_FIELD: any = { genre: 'design', mechanic: 'design', theme: 'design', engine: 'tech', art: 'art', audio: 'audio' };
+export const FOCUS_SWING = 2;
+export const QUIET_SWING = 0.5;
+export const HANDOVER_DAYS = 60;
+export const HEAT_REDEEM = 0.6;
+export const HEAT_FLOOR = 0.75;
+export const HEAT_CEIL = 1.45;
+export const axisTags = (axis: string): string[] => ALL_TAGS.filter(tag => TAG_GROUP[tag] === axis);
+// Nine options fill the 12% swing; fewer options swing less, in proportion, rounded to a whole percent.
+export const axisAmplitude = (axis: string) => Math.round(Math.min(1, axisTags(axis).length / 9) * 12) / 100;
+const heatRound = (value: number) => Math.round(value * 1000) / 1000;
+
+// One field at a time leads the news; a field opens in the 行情 page once a title has shipped with it.
 export const LENS_ORDER = ['design', 'art', 'audio', 'tech'];
 export const LENS_ABILITY: any = { design: 'creativity', art: 'picture', audio: 'sound', tech: 'fluidity' };
-export const lensOf = (state: any) => LENS_ORDER[state.marketCycle?.index || 0];
-const cycleClocks = (cycle: any): any[] => cycle.clocks || [cycle];
-export const activeMarketFields = (state: any): string[] => state.marketCycle ? cycleClocks(state.marketCycle).map(clock => LENS_ORDER[clock.index]) : ['design'];
 
-function chooseDirections(state: any, cycle: any) {
-  const field = LENS_ORDER[cycle.index];
-  const groups = Array.from(new Set(ALL_TAGS.filter(tag => TAG_FIELD[tag] === field).map(tag => TAG_GROUP[tag])));
-  cycle.hot = {};
-  for (const group of groups) {
-    const tags = ALL_TAGS.filter(tag => TAG_GROUP[tag] === group);
-    const choices = tags.filter(tag => tags.length === 1 || tag !== cycle.last[group]);
-    choices.sort((a, b) => (state.tags[a] ?? 1) - (state.tags[b] ?? 1));
-    // Greater raw demand means fewer recent releases, hence more room for this direction.
-    const best = choices[choices.length - 1];
-    cycle.hot[group] = best;
-    cycle.last[group] = best;
-  }
+// A small wobble that never repeats and never needs saving: same day and axis, same offset, in this run
+// and the next. It only keeps a curve from looking drawn with a ruler.
+function wobble(day: number, index: number) {
+  let h = Math.imul(day | 0, 0x27d4eb2d) ^ Math.imul(index + 1, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x2545f491);
+  h ^= h >>> 13;
+  return (h >>> 0) / 2147483648 - 1;
 }
-
-function ensureMarketCycle(state: any) {
-  if (state.marketCycle) {
-    const c = state.marketCycle;
-    if (!Array.isArray(c.reviews)) c.reviews = (c.seen || []).filter((field: string) => state.catalog.some((book: any) => !book.parentId && book.firstRanks && (book.tags || []).some((tag: string) => TAG_FIELD[tag] === field)));
-    c.dualReviews = c.dualReviews || 0;
-    c.parallel = c.parallel || 1;
-    return;
+const axisIndex = (axis: string) => Math.max(0, MARKET_AXES.indexOf(axis));
+// One round is 1.2 to 1.8 titles long and is re-rolled every round, so no two axes stay in step.
+function axisLength(state: any, scale: number) {
+  const production = Math.max(12, rotationSpan(scale).production);
+  return Math.max(9, Math.round(production * (1.2 + random(state) * 0.6)));
+}
+// At least one option runs hot, at most half of them; the rest share the opposite side so the axis still
+// averages out. The order in `hot` staggers their peaks, so two hot options never form one wide crest.
+function rollHot(state: any, axis: string) {
+  const tags = axisTags(axis);
+  const most = Math.max(1, Math.floor(tags.length / 2));
+  const count = 1 + Math.floor(random(state) * most);
+  const pool = [...tags];
+  const hot: any = {};
+  for (let i = 0; i < count && pool.length; i++) {
+    const at = Math.floor(random(state) * pool.length);
+    hot[pool[at]] = i;
+    pool.splice(at, 1);
   }
-  const scale = Math.max(0, ...state.projects.filter((p: any) => p.kind === 'game' && !p.parentId && !p.port).map((p: any) => p.scale), ...state.catalog.filter((b: any) => !b.parentId).map((b: any) => b.scale));
-  const oldIndex = LENS_ORDER.indexOf(state.lens);
-  const index = Math.max(0, oldIndex);
-  state.marketCycle = { scale, index, from: state.day, hot: {}, last: {}, seen: state.lens === null ? [...LENS_ORDER] : LENS_ORDER.slice(0, index + 1), reported: false };
-  chooseDirections(state, state.marketCycle);
-  state.marketCycle.reviews = [];
-  state.marketCycle.dualReviews = 0;
-  state.marketCycle.parallel = 1;
+  return hot;
+}
+function freshAxis(state: any, axis: string, scale: number, phase: number) {
+  const len = axisLength(state, scale);
+  return { len, from: state.day - Math.round(len * phase), hot: rollHot(state, axis) };
+}
+function strengthAt(clock: any, age: number) {
+  if (age < 0 || age >= clock.len) return 0;
+  const rise = Math.max(1, Math.round(clock.len * 0.25));
+  const hold = Math.max(1, Math.round(clock.len * 0.5));
+  const fall = Math.max(1, clock.len - rise - hold);
+  const smooth = (t: number) => t * t * (3 - 2 * t);
+  if (age < rise) return smooth(age / rise);
+  if (age < rise + hold) return 1;
+  return smooth(Math.max(0, 1 - (age - rise - hold) / fall));
+}
+export function axisStrength(clock: any, day: number) {
+  return strengthAt(clock, day - clock.from);
+}
+export const axisTarget = (cycle: any, axis: string) => cycle.late || !cycle.focus ? 1 : (cycle.focus === axis ? FOCUS_SWING : QUIET_SWING);
+// The swing a handover is worth today: the focus changes only the amplitude, never the clock's phase, so
+// a curve keeps moving while it grows or shrinks, and the change takes two months instead of one switch.
+export function axisSwing(state: any, axis: string) {
+  const cycle = state.marketCycle;
+  if (!cycle || !cycle.axes) return 1;
+  const target = axisTarget(cycle, axis);
+  const hand = cycle.handover;
+  if (!hand) return target;
+  const t = clamp((state.day - hand.start) / HANDOVER_DAYS, 0, 1);
+  if (t >= 1) return target;
+  const from = hand.from && hand.from[axis] !== undefined ? hand.from[axis] : target;
+  const s = t * t * (3 - 2 * t);
+  return from + (target - from) * s;
+}
+function startHandover(state: any) {
+  const cycle = state.marketCycle;
+  const from: any = {};
+  for (const axis of MARKET_AXES) from[axis] = axisSwing(state, axis);
+  cycle.handover = { start: state.day, from };
+}
+function newMarketCycle(state: any) {
+  const scale = Math.max(0, ...state.projects.filter((project: any) => project.kind === 'game' && !project.parentId && !project.port).map((project: any) => project.scale), ...state.catalog.filter((book: any) => !book.parentId).map((book: any) => book.scale));
+  const seen = Array.isArray(state.marketCycle?.seen) && state.marketCycle.seen.length ? state.marketCycle.seen.filter((field: string) => LENS_ORDER.includes(field)) : ['design'];
+  const cycle: any = { scale, axes: {}, focus: FOCUS_AXES[0], done: [FOCUS_AXES[0]], focusAt: releases(state), late: false, handover: null, seen: seen.length ? seen : ['design'] };
+  MARKET_AXES.forEach((axis, index) => { cycle.axes[axis] = freshAxis(state, axis, scale, index / MARKET_AXES.length); });
+  state.marketCycle = cycle;
   delete state.lens;
   delete state.lensFrom;
+  delete state.tags;
+  return cycle;
 }
-
+function ensureMarketCycle(state: any) {
+  const cycle = state.marketCycle;
+  if (cycle && cycle.axes && MARKET_AXES.every(axis => cycle.axes[axis])) {
+    if (!Array.isArray(cycle.seen) || !cycle.seen.length) cycle.seen = ['design'];
+    if (!Array.isArray(cycle.done)) cycle.done = cycle.focus ? [cycle.focus] : [];
+    if (cycle.focusAt === undefined || cycle.focusAt === null) cycle.focusAt = releases(state);
+    if (typeof cycle.late !== 'boolean') cycle.late = false;
+    return cycle;
+  }
+  return newMarketCycle(state);
+}
 function extendMarketCycle(state: any, scale: number) {
-  ensureMarketCycle(state);
-  const c = state.marketCycle;
-  if (scale <= c.scale) return;
-  for (const clock of cycleClocks(c)) {
-    const age = extendedAge(c.scale, scale, Math.max(0, state.day - clock.from));
-    clock.from = state.day - age;
-    if (clock.activated !== undefined) {
-      const warm = clamp((state.day - clock.activated) / rotationSpan(c.scale).rise, 0, 1);
-      clock.activated = state.day - warm * rotationSpan(scale).rise;
+  const cycle = ensureMarketCycle(state);
+  if (scale <= cycle.scale) return;
+  const ratio = rotationSpan(scale).total / Math.max(1, rotationSpan(cycle.scale).total);
+  for (const axis of MARKET_AXES) {
+    const clock = cycle.axes[axis];
+    const phase = (state.day - clock.from) / Math.max(1, clock.len);
+    clock.len = Math.max(9, Math.round(clock.len * ratio));
+    clock.from = state.day - Math.round(phase * clock.len);
+  }
+  cycle.scale = scale;
+}
+// A focus lasts at least two shipped titles: long enough to meet a peak on the axis being pushed, short
+// enough that the attention visibly moves. The clock itself never restarts when the focus changes.
+function advanceFocus(state: any) {
+  const cycle = state.marketCycle;
+  const left = FOCUS_AXES.filter(axis => !cycle.done.includes(axis));
+  if (!left.length) {
+    // Everyone gets the same full swing, but the last focus eases down and the quiet ones ease up: the
+    // amplitudes still meet their targets over two months instead of switching on one day.
+    startHandover(state);
+    cycle.late = true;
+    cycle.focus = null;
+    announce(state, { kind: 'unlock', title: '行情不再有唯一风口', text: '五个方向都当过焦点。现在每个方向都有自己的起落，靠组合判断时机，而不是跟着一条线走。', amount: 0 });
+    return;
+  }
+  cycle.focus = left[0];
+  cycle.done = [...cycle.done, cycle.focus];
+  cycle.focusAt = releases(state);
+  startHandover(state);
+  announce(state, { kind: 'unlock', title: '行业关注转向', text: `接下来一段时间，新东西集中在${AXIS_NAME[cycle.focus]}方向，这一类的行情也最起伏。`, field: AXIS_FIELD[cycle.focus], amount: 0 });
+}
+function marketCycleDay(state: any) {
+  const cycle = ensureMarketCycle(state);
+  for (const axis of MARKET_AXES) {
+    const clock = cycle.axes[axis];
+    let guard = 0;
+    while (state.day - clock.from >= clock.len && guard++ < 8) {
+      clock.from += clock.len;
+      clock.len = axisLength(state, cycle.scale);
+      clock.hot = rollHot(state, axis);
+      if (axis === cycle.focus && !cycle.late) {
+        const tags = Object.keys(clock.hot).join('、');
+        news(state, state.focus || 0, false, `${AXIS_NAME[axis]}方向出现新窗口`, `最近的讨论集中在${tags}。行情只在发售当天结算，做完那天的冷热才算数。`, null, true);
+      }
     }
   }
-  c.scale = scale;
-  if (c.clocks) Object.assign(c, c.clocks[0]);
+  if (!cycle.late && cycle.focus && releases(state) - cycle.focusAt >= 2) advanceFocus(state);
+  if (cycle.handover && state.day - cycle.handover.start >= HANDOVER_DAYS) cycle.handover = null;
 }
-
 function reviewMarket(state: any, book: any) {
   if (book.parentId) return;
-  ensureMarketCycle(state);
-  const c = state.marketCycle;
-  c.reviews = Array.from(new Set([...c.reviews, ...(book.marketFields || [])]));
-  if (book.marketParallel === 2) c.dualReviews += 1;
-  const next = marketComplexity(c.reviews.length, c.dualReviews);
-  if (next <= c.parallel) return;
-  const span = rotationSpan(c.scale);
-  const clocks = cycleClocks(c).map(clock => ({ index: clock.index, from: clock.from, hot: { ...clock.hot }, last: { ...clock.last }, reported: clock.reported, activated: clock.activated }));
-  const occupied = clocks.map(clock => clock.index);
-  for (let i = clocks.length; i < next; i++) {
-    const index = LENS_ORDER.findIndex((_, n) => !occupied.includes(n));
-    occupied.push(index);
-    const offset = next === 2 ? span.total / 2 : (i === 2 ? span.total / 4 : span.total * 3 / 4);
-    const age = ((state.day - c.from + offset) % span.total + span.total) % span.total;
-    const clock: any = { index, from: state.day - age, hot: {}, last: {}, reported: false, activated: state.day };
-    chooseDirections(state, clock);
-    clocks.push(clock);
-  }
-  c.clocks = clocks;
-  c.parallel = next;
-  announce(state, { kind: 'unlock', title: '看懂了更多市场变化', text: next === 2 ? '四类都经历过发售复盘了。接下来可以同时观察两类行情，各类仍有完整的研发窗口。' : '已经完成两次双类行情复盘。现在各类行情独立变化，每作可以按需要组合。', field: lensOf(state), amount: 0 });
+  const cycle = ensureMarketCycle(state);
+  const fresh = (book.marketFields || []).filter((field: string) => LENS_ORDER.includes(field) && !cycle.seen.includes(field));
+  if (!fresh.length) return;
+  cycle.seen = [...cycle.seen, ...fresh];
+  announce(state, { kind: 'unlock', title: '看懂了更多市场变化', text: `行情页现在能看${fresh.map((field: string) => FIELDS[field].name).join('与')}了。每个方向都有自己的起落，不走同一条线。`, field: fresh[0], amount: 0 });
 }
-
-function marketCycleDay(state: any) {
-  ensureMarketCycle(state);
-  const c = state.marketCycle;
-  const span = rotationSpan(c.scale);
-  const clocks = cycleClocks(c);
-  for (const clock of clocks) {
-    if (state.day - clock.from >= span.total) {
-      clock.from += span.total;
-      if (c.parallel < 4) {
-        const occupied = clocks.filter(item => item !== clock).map(item => item.index);
-        do { clock.index = (clock.index + 1) % LENS_ORDER.length; } while (occupied.includes(clock.index));
-      }
-      clock.reported = false;
-      const field = LENS_ORDER[clock.index];
-      if (!c.seen.includes(field)) c.seen.push(field);
-      chooseDirections(state, clock);
-      if (c.parallel === 1) announce(state, { kind: 'unlock', title: '行业关注变化', text: `最近大家开始更多讨论${FIELDS[field].name}。新闻和榜单会突出这一类的表现。`, field, amount: 0 });
-    }
-    const warm = clock.activated === undefined || state.day - clock.activated >= span.rise;
-    if (!clock.reported && warm && state.day - clock.from >= span.rise) {
-      clock.reported = true;
-      const tags = Object.values(clock.hot).join('、');
-      news(state, state.focus || 0, false, `${FIELDS[LENS_ORDER[clock.index]].name}成为近期话题`, `近期${tags}方向受到关注。同类新作的表现值得留意，作品品质与宣传仍会影响销量。`, null, true);
-    }
-  }
-  if (c.clocks) Object.assign(c, c.clocks[0]);
-}
-export function tagHeat(value: number) {
-  return value >= 1.12 ? { label: '热门', tone: 'up' } : value <= 0.88 ? { label: '拥挤', tone: 'down' } : { label: '平稳', tone: 'flat' };
+export function tagHeat(value: number, amplitude = 0.12) {
+  const edge = Math.max(0.012, amplitude * 0.6);
+  return value >= 1 + edge ? { label: '热门', tone: 'up' } : value <= 1 - edge ? { label: '冷门', tone: 'down' } : { label: '平稳', tone: 'flat' };
 }
 export function market(state: any, tag: string) {
   const value = tagDemand(state, tag);
-  const heat = tagHeat(value);
+  const heat = tagHeat(value, axisAmplitude(TAG_GROUP[tag]));
   const text: any = {
-    热门: { label: '关注上升', description: '近期同类作品少、话题多，但热度不一定持续到发售。' },
+    热门: { label: '需求上行', description: '这一类正在升温，热度不一定撑到发售那天。' },
     平稳: { label: '需求平稳', description: '没有明显风口，作品本身更重要。' },
-    拥挤: { label: '市场拥挤', description: '近期同类作品较多，需要更谨慎地控制投入。' }
+    冷门: { label: '需求下行', description: '这一类正在退潮，同样的作品卖得更少。' }
   };
-  return { multiplier: round(clamp(value, 0.7, 1.3)), ...text[heat.label] };
+  return { multiplier: round(clamp(value, HEAT_FLOOR, HEAT_CEIL)), ...text[heat.label] };
 }
-// Demand is relative to the tag's own group (genres against genres, styles against styles): a tag is hot
-// when it is crowded less than its alternatives, so the market filling up never drags every title down.
+// Demand of one option on a given day: its axis' swing, the direction picked for this round, plus a small
+// daily wobble. Relative to the other options of the same axis, so a busy market never drags all of them.
 export function tagDemand(state: any, tag: string) {
-  const group = ALL_TAGS.filter(item => TAG_GROUP[item] === TAG_GROUP[tag]);
-  const mean = sum(group.map(item => (state.tags || {})[item] ?? 1)) / Math.max(1, group.length);
-  const raw = ((state.tags || {})[tag] ?? 1) / Math.max(0.1, mean);
-  const crowd = clamp((raw - 1) * ROTATION.crowdWeight, -ROTATION.crowd, ROTATION.crowd);
-  const c = state.marketCycle;
-  const clock = c && cycleClocks(c).find(item => LENS_ORDER[item.index] === TAG_FIELD[tag]);
-  if (!clock) return round(1 + clamp(crowd, -ROTATION.quiet, ROTATION.quiet));
-  const warm = clock.activated === undefined ? 1 : clamp((state.day - clock.activated) / rotationSpan(c.scale).rise, 0, 1);
-  const strength = rotationPhase(c.scale, state.day - clock.from).strength * warm;
-  const bias = group.length <= 1 ? 0 : clock.hot[TAG_GROUP[tag]] === tag ? ROTATION.amplitude : -ROTATION.amplitude / (group.length - 1);
-  return round(1 + clamp(bias * strength + crowd, -ROTATION.amplitude, ROTATION.amplitude));
+  const axis = TAG_GROUP[tag];
+  if (!axis) return 1;
+  const cycle = ensureMarketCycle(state);
+  const clock = cycle.axes[axis];
+  if (!clock) return 1;
+  const tags = axisTags(axis);
+  const hot = Object.keys(clock.hot || {}).filter(item => tags.includes(item));
+  const hotCount = hot.length;
+  const coldCount = Math.max(1, tags.length - hotCount);
+  const at = hot.indexOf(tag);
+  const direction = at >= 0 ? 1 : -(hotCount / coldCount);
+  const rise = Math.max(1, Math.round(clock.len * 0.25));
+  // Several hot options peak one after another instead of together. A later one starts that many days in
+  // and fits its own rise and fall into the rest of the round, so nothing is cut off when the round turns.
+  const lag = at > 0 ? Math.min(clock.len - 2, Math.round(at * rise / 2)) : 0;
+  const raw = state.day - clock.from;
+  const age = lag > 0 ? (raw <= lag ? 0 : (raw - lag) * clock.len / (clock.len - lag)) : raw;
+  const strength = strengthAt(clock, age);
+  const wobbleValue = wobble(state.day, axisIndex(axis)) * 0.005;
+  return heatRound(1 + axisAmplitude(axis) * axisSwing(state, axis) * direction * strength + wobbleValue);
 }
-function seedTags(state: any) {
-  state.tags = {};
-  for (const tag of ALL_TAGS) state.tags[tag] = round(0.88 + random(state) * 0.24);
-}
-function tagRelease(state: any, tags: string[], weight = 1) {
-  state.tags = state.tags || {};
-  for (const tag of tags) if (has(state.tags, tag)) state.tags[tag] = round(clamp(state.tags[tag] - TAG_RELEASE * weight, 0.55, 1.45));
-}
-function tagDay(state: any) {
-  state.tags = state.tags || {};
-  for (const tag of ALL_TAGS) {
-    const value = state.tags[tag] ?? 1;
-    state.tags[tag] = Math.round(clamp(value + (1 - value) * 0.012 + (random(state) - 0.5) * 0.012, 0.55, 1.45) * 1000) / 1000;
-  }
-}
-// Average within each field, then use fixed weights: adding a quiet tag cannot dilute the focus.
+// A title's heat: one multiplier per axis it uses, multiplied, then only six tenths of the deviation is
+// paid out, so market timing is worth chasing without ever overpowering how good the title is.
 export function tagFactor(state: any, tags: string[], scale = 0) {
-  const unique = Array.from(new Set(tags));
-  const fields = LENS_ORDER.map(field => {
-    const groups = Array.from(new Set(unique.filter(tag => TAG_FIELD[tag] === field).map(tag => TAG_GROUP[tag])));
-    if (!groups.length) return 0;
-    const changes = groups.map(group => {
-      const matching = unique.filter(tag => TAG_GROUP[tag] === group);
-      return sum(matching.map(tag => tagDemand(state, tag) - 1)) / matching.length;
-    });
-    return groups.length ? sum(changes) / changes.length : 0;
-  });
-  const active = activeMarketFields(state);
-  const strong = active.map(field => fields[LENS_ORDER.indexOf(field)]);
-  const weights = active.map(field => {
-    if (!state.marketCycle) return 1;
-    const clock = cycleClocks(state.marketCycle).find(item => LENS_ORDER[item.index] === field);
-    return clock.activated === undefined ? 1 : clamp((state.day - clock.activated) / rotationSpan(state.marketCycle.scale).rise, 0, 1);
-  });
-  const main = combinedDemand(strong, weights);
-  const background = sum(LENS_ORDER.filter(field => !active.includes(field)).map(field => fields[LENS_ORDER.indexOf(field)])) * ROTATION.otherWeight;
-  const raw = clamp(main + background, 1 - ROTATION.amplitude, 1 + ROTATION.amplitude);
-  // The same hot or cold read moves a big title's market further than a small one's.
-  const limit = ROTATION.scaleAmplitude[scale] ?? ROTATION.amplitude;
-  return round(1 + clamp((raw - 1) * limit / ROTATION.amplitude, -limit, limit));
+  const axes: any = {};
+  for (const tag of Array.from(new Set(tags))) {
+    const axis = TAG_GROUP[tag];
+    if (!axis) continue;
+    if (!axes[axis]) axes[axis] = [];
+    axes[axis].push(tagDemand(state, tag));
+  }
+  let product = 1;
+  for (const axis of Object.keys(axes)) product *= sum(axes[axis]) / axes[axis].length;
+  return round(clamp(1 + (product - 1) * HEAT_REDEEM, HEAT_FLOOR, HEAT_CEIL));
 }
 
-// Past demand of every tag, one sample a month for a year: what the 行情 chart draws. Only the past is kept.
-const HEAT_MONTHS = 12;
+// Past demand of every tag, one sample every few days for a year: what the 行情 chart draws. Only the past
+// is kept; a round of three weeks needs more than one point to be visible.
+const HEAT_EVERY = 6;
+const HEAT_SAMPLES = 60;
 function recordHeat(state: any) {
   const sample: any = {};
   for (const tag of ALL_TAGS) sample[tag] = tagDemand(state, tag);
-  state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_MONTHS);
+  state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_SAMPLES);
 }
 export function heatSeries(state: any, tag: string) {
   const past = (state.heatLog || []).map((item: any) => ({ day: item.day, value: item.v[tag] ?? 1 }));
   return [...past, { day: state.day, value: tagDemand(state, tag) }];
 }
-// The tags a player compares against each other, grouped like the market does: genres with genres, styles
-// with styles. Only the fields already learned are shown.
-const HEAT_GROUPS: any[] = [
-  { key: 'genre', name: '类型', field: 'design' }, { key: 'mechanic', name: '机制', field: 'design' }, { key: 'theme', name: '题材', field: 'design' },
-  { key: 'engine', name: '引擎', field: 'tech' }, { key: 'art', name: '美术', field: 'art' }, { key: 'audio', name: '音乐', field: 'audio' }
-];
+// The tags a player compares against each other: one group per axis. Only the fields learned are shown.
+const HEAT_GROUPS: any[] = MARKET_AXES.map(axis => ({ key: axis, name: AXIS_NAME[axis], field: AXIS_FIELD[axis] }));
 export function heatGroups(state: any) {
   const learned = marketFields(state);
-  return HEAT_GROUPS.map(group => ({ ...group, tags: ALL_TAGS.filter(tag => TAG_GROUP[tag] === group.key) }))
-    .filter(group => learned.includes(group.field) && group.tags.length > 1);
+  return HEAT_GROUPS.filter(group => learned.includes(group.field)).map(group => ({ ...group, tags: axisTags(group.key) })).filter(group => group.tags.length > 1);
 }
+
+// The field the news and the 行情 page currently lead with: the focus axis, or every learned field once
+// the focus has run its course.
+export const activeMarketFields = (state: any): string[] => {
+  const cycle = state.marketCycle;
+  if (!cycle || !cycle.axes || cycle.late || !cycle.focus) return marketFields(state);
+  return [AXIS_FIELD[cycle.focus]];
+};
+export const lensOf = (state: any) => activeMarketFields(state)[0] || 'design';
 
 // Testing is the whole game's work, not a module: a share of all the content, reused parts included.
 export const TEST_SHARE = 0.18;
@@ -1088,8 +1134,8 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 16, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
-    staff: [], projects: [], catalog: [], candidates: {}, modules: {}, tags: {}, licenses: {}, unlocked: {}, rentLog: {},
+    version: 9, rulesRevision: 18, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    staff: [], projects: [], catalog: [], candidates: {}, modules: {}, licenses: {}, unlocked: {}, rentLog: {},
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
@@ -1098,9 +1144,10 @@ export function createStudio(seed = Date.now()) {
     eventNext: 60, eventSeen: {}, schedule: [], talents: [], flags: {}, achievements: {}, playSeconds: 0,
     rating: { score: 0, watch: false, promotedAt: 0, history: [] }
   };
-  seedTags(state);
-  seedIndustry(state);
+  // The market clocks are anchored before the industry backfills its history: that backfill walks the
+  // calendar backwards, and a clock created then would start hundreds of days behind.
   ensureMarketCycle(state);
+  seedIndustry(state);
   return state;
 }
 
@@ -3109,11 +3156,9 @@ export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PL
 export const PLAYTEST_GAIN = [0.4, 2.3];
 export const PLAYTEST_DECAY = 0.7;
 export const playtestGain = (players: number, taken = 0) => PLAYTEST_GAIN.map(share => Math.round(players * share * Math.pow(PLAYTEST_DECAY, taken)));
-// Today's demand for the title's tags as a word, relative to how far this scale's market can swing.
+// Today's demand for the title's tags as a word: the same combined multiplier the sale will use.
 export function demandHeat(state: any, project: any) {
-  const limit = ROTATION.scaleAmplitude[project.scale] ?? ROTATION.amplitude;
-  const lean = tagFactor(state, planTags(project), project.scale);
-  return lean >= 1 + limit * 0.35 ? '热门' : lean <= 1 - limit * 0.35 ? '拥挤' : '平稳';
+  return tagHeat(tagFactor(state, planTags(project), project.scale)).label;
 }
 
 export function playtestOffer(state: any, project: any) {
@@ -3392,12 +3437,11 @@ export function launchProject(state: any, projectId: string) {
     sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [], flawless: metrics.defects === 0, clash: clash.works.length,
     attention, demand: lean, share, capacity: marketSize, left: Math.max(0, marketSize - units), sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0,
     tags, lean, royalty: 0, rent: [...(project.rent || [])],
-    marketFields: activeMarketFields(next), marketParallel: next.marketCycle?.parallel || 1
+    marketFields: Array.from(new Set(tags.map((tag: string) => TAG_FIELD[tag]).filter(Boolean)))
   };
   next.cash = round(next.cash + receipt);
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
-  tagRelease(next, tags);
   const gained = keepModules(next, project);
   // Whatever this title was going to learn and has not yet, it learns now.
   while ((project.unlockAt || []).length) { project.unlockAt.shift(); learnLine(next, project); }
@@ -3761,7 +3805,6 @@ export function stepDay(state: any) {
   for (const job of next.projects.filter((project: any) => project.job && project.progress >= 100 && !jobMissing(next, project).length)) if (!job.job.opening || !next.event) finishJob(next, job);
   for (const project of next.projects.filter((item: any) => item.kind === 'module' && !item.job && item.progress >= 100)) finishModuleProject(next, project);
   shareDefects(next);
-  tagDay(next);
   salesDay(next);
   playerReports(next);
   stressDay(next);
@@ -3774,16 +3817,16 @@ export function stepDay(state: any) {
   refreshBoard(next);
   if (!next.event) rollRandomEvent(next);
   checkAchievements(next);
+  // Every few days, so a round of three weeks is drawn as a shape instead of a single point.
+  if (next.day % HEAT_EVERY === 0) recordHeat(next);
   if (next.day % 30 === 0) {
-    recordHeat(next);
-    // Licensed lines pay by their tier every month, and other studios using them crowd their tags.
+    // Licensed lines pay by their tier every month.
     for (const line of Object.keys(next.licenses || {})) {
       const level = lineInfo(next, line).level;
       if (!level) { delete next.licenses[line]; continue; }
       const income = round(LICENSE_INCOME * level);
       next.cash = round(next.cash + income);
       next.ledger.income = round(next.ledger.income + income);
-      tagRelease(next, MODULES[line].tags || [], 0.4);
     }
     const payroll = round(next.accrued);
     next.cash = round(next.cash - payroll);
@@ -4161,7 +4204,6 @@ function industryTick(state: any, quiet: boolean) {
     work.leaned = tagFactor(state, work.tags || [], work.scale);
     work.firstWeek = Math.max(20, Math.round(work.firstWeek * work.leaned));
   }
-  for (const work of state.works) if (work.released === day) tagRelease(state, work.tags || [], 0.15 + work.tier * 0.1);
   for (const work of state.works) if (work.released === day - 7) finishRivalWork(state, work, quiet);
 }
 
@@ -4778,14 +4820,14 @@ export function restoreStudio(saved: any) {
   }
   // Lines learned during the opening job stay learned across saves.
   if (next && next.openingLearned) next.unlocked = { ...(next.unlocked || {}), ...next.openingLearned };
-  // Tags can move between groups or disappear when the catalog changes; drop the stale market picks.
-  const cleanClock = (clock: any) => {
-    for (const key of ['hot', 'last']) {
-      if (!clock || !clock[key] || typeof clock[key] !== 'object') continue;
-      for (const [group, tag] of Object.entries(clock[key]) as any) if (TAG_GROUP[tag] !== group || (key === 'hot' && TAG_FIELD[tag] !== LENS_ORDER[clock.index])) delete clock[key][group];
-    }
-  };
-  if (next?.marketCycle) { cleanClock(next.marketCycle); for (const clock of next.marketCycle.clocks || []) cleanClock(clock); }
+  // Older saves had one shared market lens; the six-axis cycle replaces it before validation, keeping the
+  // fields the player has already seen. Tags that moved between axes are dropped from the hot picks.
+  if (next?.marketCycle && Array.isArray(next.projects) && Array.isArray(next.catalog)) ensureMarketCycle(next);
+  for (const axis of MARKET_AXES) {
+    const clock = next?.marketCycle?.axes?.[axis];
+    if (!clock || !clock.hot) continue;
+    for (const tag of Object.keys(clock.hot)) if (TAG_GROUP[tag] !== axis) delete clock.hot[tag];
+  }
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
   if ((next.rulesRevision || 0) < 1) {
     for (const project of next.projects) {
@@ -4964,7 +5006,7 @@ export function restoreStudio(saved: any) {
   const hadMarketCycle = !!next.marketCycle;
   ensureMarketCycle(next);
   if (next.rulesRevision < 12) {
-    if (hadMarketCycle) {
+    if (hadMarketCycle && Number.isFinite(next.marketCycle.from)) {
       const cycle = next.marketCycle;
       cycle.from = next.day - retimedAge(legacyRotationSpan(cycle.scale), rotationSpan(cycle.scale), next.day - cycle.from);
     }
@@ -4986,7 +5028,6 @@ export function restoreStudio(saved: any) {
       project.parts = (project.parts || []).filter((id: string) => partOf(id));
       for (const id of Object.keys(project.moduleUpdates || {})) if (!partOf(id)) delete project.moduleUpdates[id];
     }
-    for (const clock of cycleClocks(next.marketCycle)) chooseDirections(next, clock);
     next.rulesRevision = 14;
   }
   if (next.rulesRevision < 15) {
@@ -5040,6 +5081,13 @@ export function restoreStudio(saved: any) {
     for (const item of [...next.projects, ...next.catalog]) if (Array.isArray(item.parts)) item.parts = Array.from(new Set<string>(item.parts.map(refold)));
     for (const offer of next.board?.offers || []) { offer.line = artFold[offer.line] || offer.line; if (offer.module) offer.module = artFold[offer.module] || offer.module; }
     next.rulesRevision = 17;
+  }
+  if (next.rulesRevision < 18) {
+    // 0.4.41: the market swings on six independent axes. The old crowding field and the samples drawn
+    // from it no longer describe anything, so they go; the cycle itself was rebuilt before validation.
+    delete next.tags;
+    next.heatLog = [];
+    next.rulesRevision = 18;
   }
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
@@ -5148,22 +5196,18 @@ function validStudio(state: any) {
   const tags = (value: any) => Array.isArray(value) && value.every((tag: any) => tag && (has(ABILITY_TAGS, tag.key) || has(PERSONALITY_TAGS, tag.key) || has(RARE_TAGS, tag.key)));
   const person = (value: any) => value && text(value.name) && has(ROLES, value.role) && abilities(value.abilities) && number(value.speed) && value.speed > 0 && value.speed <= 200 && number(value.wage) && value.wage >= 0 && Array.isArray(value.stressTags) && tags(value.tags);
   const work = (value: any) => object(value) && DIM_KEYS.every(key => value[key] && nonnegative(value[key].total) && nonnegative(value[key].done) && nonnegative(value[key].value));
-  if (!state || state.version !== 9 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || !object(state.modules) || !object(state.tags)) return false;
+  if (!state || state.version !== 9 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || !object(state.modules)) return false;
   const cycle = state.marketCycle;
   if (cycle && (!Number.isInteger(cycle.scale) || cycle.scale < 0 || cycle.scale >= SCALES.length
-    || !Number.isInteger(cycle.index) || cycle.index < 0 || cycle.index >= LENS_ORDER.length
-    || !number(cycle.from) || cycle.from > state.day || state.day - cycle.from > ((state.rulesRevision || 0) < 12 ? legacyRotationSpan(cycle.scale) : rotationSpan(cycle.scale)).total
-    || !object(cycle.hot) || !object(cycle.last) || typeof cycle.reported !== 'boolean'
-    || !Array.isArray(cycle.seen) || !cycle.seen.includes(LENS_ORDER[cycle.index]) || !cycle.seen.every((field: string) => LENS_ORDER.includes(field))
-    || Object.entries(cycle.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_FIELD[tag] !== LENS_ORDER[cycle.index]))) return false;
-  if (cycle?.clocks && (!Array.isArray(cycle.clocks) || ![2, 4].includes(cycle.parallel) || cycle.clocks.length !== cycle.parallel
-    || new Set(cycle.clocks.map((clock: any) => clock.index)).size !== cycle.parallel
-    || cycle.clocks.some((clock: any) => !Number.isInteger(clock.index) || clock.index < 0 || clock.index >= LENS_ORDER.length
-      || !number(clock.from) || clock.from > state.day || state.day - clock.from > rotationSpan(cycle.scale).total
-      || !object(clock.hot) || !object(clock.last) || typeof clock.reported !== 'boolean'
-      || clock.activated !== undefined && (!number(clock.activated) || clock.activated > state.day)
-      || Object.entries(clock.hot).some(([group, tag]: any) => TAG_GROUP[tag] !== group || TAG_FIELD[tag] !== LENS_ORDER[clock.index])))) return false;
-  if (cycle?.reviews && (!Array.isArray(cycle.reviews) || !cycle.reviews.every((field: string) => LENS_ORDER.includes(field)))) return false;
+    || !object(cycle.axes) || !Array.isArray(cycle.seen) || !cycle.seen.every((field: string) => LENS_ORDER.includes(field))
+    || typeof cycle.late !== 'boolean' || !Array.isArray(cycle.done)
+    || cycle.focus !== null && (!MARKET_AXES.includes(cycle.focus) || !cycle.done.includes(cycle.focus))
+    || cycle.handover && (!number(cycle.handover.start) || !object(cycle.handover.from))
+    || MARKET_AXES.some((axis: string) => {
+      const clock = cycle.axes[axis];
+      return !object(clock) || !number(clock.len) || clock.len <= 0 || !number(clock.from) || clock.from > state.day
+        || !object(clock.hot) || Object.keys(clock.hot).some((tag: string) => TAG_GROUP[tag] !== axis);
+    }))) return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;

@@ -1187,7 +1187,7 @@ function libraryMenu(state: any, id?: string) {
   const score = (line: string) => { const info = core.lineInfo(state, line); return info.level + info.next; };
   const byLevel = (left: string, right: string) => score(right) - score(left);
   const blocks: any[] = [tabs, { type: 'bricks', items: [...lines].sort(byLevel).map(line => editableBrick(state, line)) }];
-  blocks.push({ type: 'help', key: 'library-help', title: '模块怎么更新', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一级' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按等级收钱，但用它的同行多了，它的标签会变得拥挤。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。') });
+  blocks.push({ type: 'help', key: 'library-help', title: '模块怎么更新', text: '已有模块会在作品使用时由负责的员工自动更新质量，差距越小工期越短；更新要占研发工时。点模块可研发下一级' + (state.office >= core.LICENSE_OFFICE ? '，也可以授权给同行：每月按等级收钱，不影响行情。' : '。搬进' + core.OFFICES[core.LICENSE_OFFICE].name + '后还能授权给同行。') });
   return { title: '模块库', blocks };
 }
 
@@ -1424,7 +1424,7 @@ function marketBlocks(state: any, id?: string) {
   return [
     ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name + (core.activeMarketFields(state).includes(item.field) ? ' · 关注' : ''), route: route(item.key, ''), active: item.key === group.key })) }] : []),
     { type: 'heat', lines, start: state.day - 360, end: state.day, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },
-    { type: 'text', text: '近一年各选项的需求冷热，越高越热、越低越拥挤；只回顾，不预告。作品发售后，档案里写着它赶上的行情。', muted: true }
+    { type: 'text', text: '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。', muted: true }
   ];
 }
 
