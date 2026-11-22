@@ -1143,6 +1143,16 @@ export class StudioApp extends Component {
     if (staffArea) {
       const staffTap = this.box(staffArea, 'StaffTap', 0, 0, inner, staffHeight);
       this.clickable(staffTap, () => this.openMenu('team'));
+      this.anchors.set('staff-area', staffTap);
+    } else {
+      // The first two rooms have no separate staff floor, so the tour frames the desks themselves with one
+      // box instead of pointing at a single person.
+      const layout = seats || seatLayout(Math.max(1, core.seats(state)), inner, staffHeight);
+      const left = Math.max(0, Math.min(...layout.map(seat => seat.x)) - 56);
+      const right = Math.min(inner, Math.max(...layout.map(seat => seat.x)) + 56);
+      const top = Math.max(0, Math.min(...layout.map(seat => seat.y)) - 66);
+      const bottom = Math.min(sceneHeight, Math.max(...layout.map(seat => seat.y)) + 18);
+      this.anchors.set('staff-area', this.box(node, 'StaffArea', left, top, right - left, bottom - top));
     }
     if (pages > 1) {
       const selectPage = roomName === 'campus';
@@ -1224,7 +1234,6 @@ export class StudioApp extends Component {
     }
     this.anchors.set('tier', plaque);
     if (rating.watch) this.text(plaque, '!', props.plaque.w - 12, 0, 10, props.plaque.h, 12, colors.danger, true);
-    this.anchors.set('scene', this.box(body, 'SceneAnchor', 0, 0, inner, sceneHeight));
     this.bulletin(body, bulletinY);
     return Math.max(sceneHeight, bulletinY + BULLETIN_HEIGHT) + 8;
   }
@@ -1370,7 +1379,7 @@ export class StudioApp extends Component {
     const heading = this.box(body, 'Heading', 0, y, inner, 24);
     this.clickable(heading, () => this.openMenu('project', project.id));
     this.text(heading, '《' + project.name + '》', 0, 0, inner - 150, 24, 16, colors.ink, true);
-    this.text(heading, core.TYPES[project.type].name + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, 0, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    this.text(heading, core.titleName(project) + ' · ' + core.SCALES[project.scale].name + '   ' + metrics.progress.toFixed(0) + '%', inner - 150, 0, 150, 24, 12, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     y += 28;
     y += this.milestones(body, y, project, metrics, forecast) + 6;
     // A module or commission has no prototype to wait for: its six scores and the client's floors are the
@@ -1394,9 +1403,7 @@ export class StudioApp extends Component {
       ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
     ], () => this.openMenu('project', project.id));
     y += Math.max(height, 164) + 6;
-    const insight = core.TYPES[project.type].audience + '最看重：' + core.audienceFocus(project.type);
-    this.anchors.set('insight', this.text(body, insight, 0, y, inner, 18, 11, colors.muted).node);
-    return y + 26;
+    return y + 6;
   }
 
   // Six-axis radar: the solid layer is the current score, the dashed one is where today's team would
@@ -1739,7 +1746,7 @@ export class StudioApp extends Component {
       const fixed = !!this.draft.sequel;
       const expanded = !!open[axis.key];
       const color = core.FIELDS[axis.field].color;
-      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）' + (axis.key === 'core' ? ' · ' + core.TYPES[core.MODULES[key].type].name : '')).join('、') || '未选';
+      const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）').join('、') || '未选';
       const row = this.box(body, 'Axis', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
       new Pen(this.box(row, 'Rim', 0, 0, inner, 52).addComponent(Graphics)).frame(0, 0, inner, 52, expanded ? colors.green : colors.line, expanded ? 2 : 1, 10);
       chosen.slice(0, 2).forEach((key: string, index: number) => {
@@ -1876,7 +1883,6 @@ export class StudioApp extends Component {
         return y + 48;
       }
       case 'text': return y + this.paragraph(parent, block.text, y, block.muted, 0, width, block.muted ? 13 : 14);
-      case 'help': return y;
       case 'dropdown': {
         // One control replaces a wall of sort tabs: the label shows the current choice and the list
         // of ways to sort opens in place, exactly where the old tabs used to be.
@@ -1905,6 +1911,9 @@ export class StudioApp extends Component {
         this.text(parent, block.title, 0, y + 8, width - (block.help ? 44 : 0), 26, 16, colors.ink, true);
         if (block.help) this.button(parent, '', width - 38, y + 4, 34, 34, () => this.showTip(block.title, block.help), false, false, 'CircleHelp');
         return y + 42;
+      case 'divider':
+        this.box(parent, 'Divider', 0, y + 8, width, 1, colors.line);
+        return y + 18;
       case 'note': {
         const node = this.box(parent, 'Note', 0, y, width, 40);
         const height = this.paragraph(node, block.text, 10, false, 40, width - 52, 13) + 10;
@@ -1975,6 +1984,24 @@ export class StudioApp extends Component {
         for (const item of block.items) y += this.choice(parent, y, item.text, item.detail, () => this.dispatch(item.action, item.data), { icon: item.icon || 'ChevronRight', tag: item.tag, tagColor: colors.green, disabled: item.disabled, anchor: item.anchor, emphasis: item.emphasis, compact: String(item.detail || '').length <= 24 }) + 8;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, start, width, y - start - 8));
         return y + 6;
+      }
+      case 'plan-axes': {
+        // One row per axis, the same brick-and-label row the plan form collapses to: what the title is
+        // built from, without the form's switches.
+        for (const axis of block.items) {
+          const row = this.box(parent, 'AxisRow', 0, y, width, 52, colors.paper, 10);
+          new Pen(this.box(row, 'Rim', 0, 0, width, 52).addComponent(Graphics)).frame(0, 0, width, 52, colors.line, 1, 10);
+          const color = core.FIELDS[axis.field]?.color || colors.green;
+          axis.lines.slice(0, 2).forEach((line: any, index: number) => {
+            drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, line.glyph, line.level, 'have', false, 1);
+          });
+          const left = 8 + Math.max(1, Math.min(2, axis.lines.length)) * 34 + 4;
+          this.text(row, axis.name, left, 6, width - left - 16, 20, 13, colors.ink, true);
+          const summary = axis.lines.map((line: any) => line.name + (line.rented ? '（租用）' : line.level > 1 ? ' ' + line.level + ' 级' : '')).join('、');
+          this.text(row, summary, left, 26, width - left - 16, 20, 11, colors.muted);
+          y += 60;
+        }
+        return y + 4;
       }
       case 'tabs': {
         const columns = Math.min(3, block.items.length);
@@ -2169,29 +2196,35 @@ export class StudioApp extends Component {
       case 'dimensions': {
         // Each dimension shows the current crew and the days it needs; the slowest staffed one is the
         // bottleneck, and dimensions nobody works on are called out instead of pencilled in.
+        // Three to a row: the six rows were a full-width list that pushed the page's own actions off
+        // the first screen for the sake of two words per row.
         const start = y;
-        for (const item of block.items) {
+        const gap = 8;
+        const columns = Math.min(3, block.items.length);
+        const cell = (width - gap * (columns - 1)) / columns;
+        const height = 54;
+        block.items.forEach((item: any, index: number) => {
           const dimension = core.DIMENSIONS.find(entry => entry.key === item.key);
           const idle = item.remaining > 0.0001 && item.days === null;
           const slow = (block.bottlenecks || []).includes(item.key);
-          const row = this.box(parent, 'Dim', 0, y, width, 46, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
+          const left = (index % columns) * (cell + gap);
+          const top = y + Math.floor(index / columns) * (height + 8);
+          const row = this.box(parent, 'Dim', left, top, cell, height, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
           const crewText = item.text || (item.remaining > 0
             ? (item.days === null ? '无人负责' : '预期 ' + item.days + ' 天')
             : '已完成');
-          this.text(row, dimension?.name || item.key, 12, 4, width - 190, 18, 13, colors.ink, true);
-          this.text(row, crewText, width - 170, 4, 158, 18, 11, item.remaining > 0 ? colors.muted : colors.green).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          // An idle row already says "无人负责" on the right; a second label would be noise.
-          const note = slow && item.key === 'stability' ? '测试最慢' : '';
-          if (note) this.text(row, note, 12, 24, width - 180, 16, 11, colors.amber);
-          if (slow) this.text(row, '瓶颈', width - 72, 24, 60, 16, 11, colors.amber, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          else if (idle) this.text(row, '缺人', width - 72, 24, 60, 16, 11, colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          // Tap a row to open its detail page (score, who's on it, and a shortcut to assign).
+          this.text(row, dimension?.name || item.key, 8, 4, cell - 60, 18, 13, colors.ink, true);
+          this.text(row, crewText, 8, 26, cell - 16, 18, 11, item.remaining > 0 ? colors.muted : colors.green);
+          const note = slow ? '瓶颈' : idle ? '缺人' : '';
+          if (note) this.text(row, note, cell - 48, 5, 40, 16, 10, slow ? colors.amber : colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+          // Tap a cell to open its detail page (score, who's on it, and a shortcut to assign).
           this.clickable(row, () => this.openMenu('dimension', block.projectId, false, item.key));
-          y += 50;
-        }
-        // One ring for all six rows: the tutorial explains the whole scoreboard, not just the first row.
-        this.anchors.set('project-dimensions', this.box(parent, 'DimensionsAnchor', 0, start, width, y - start - 4));
-        return y + 4;
+        });
+        const rows = Math.ceil(block.items.length / columns);
+        y += rows * (height + 8) - 8;
+        // One ring for all six cells: the tutorial explains the whole scoreboard, not just the first one.
+        this.anchors.set('project-dimensions', this.box(parent, 'DimensionsAnchor', 0, start, width, y - start));
+        return y + 8;
       }
       case 'person-assign': {
         const flags = [...(block.stress || []), ...(block.fame ? ['磨合期'] : [])];
@@ -2291,7 +2324,7 @@ export class StudioApp extends Component {
     drawWork(pen, width, 150, book.type, 1, book.metrics.dimensions.picture, book.released);
     pen.rect(0, 100, width, 50, colors.night, 0, 170);
     this.text(node, '《' + book.name + '》', 14, 104, width - 28, 26, 19, '#ffffff', true);
-    this.text(node, core.TYPES[book.type].name + ' · ' + core.SCALES[book.scale].name + ' · ' + this.state.company, 14, 128, width - 28, 18, 11, '#d7e2d9');
+    this.text(node, core.titleName(book) + ' · ' + core.SCALES[book.scale].name + ' · ' + this.state.company, 14, 128, width - 28, 18, 11, '#d7e2d9');
     return 150;
   }
 

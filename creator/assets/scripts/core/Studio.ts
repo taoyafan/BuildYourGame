@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.54';
+export const VERSION = '0.4.60';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -3244,6 +3244,17 @@ export function testDemo(state: any, projectId: string) {
 export function audienceFocus(type: string) {
   const weights = TYPES[type].weights;
   return [...DIM_KEYS].sort((left, right) => weights[right] - weights[left]).map(key => DIMENSIONS.find(item => item.key === key)?.name).join(' > ');
+}
+
+// A title is known by the gameplay line the player picked, not by the template that line belongs to:
+// "横版动作" is a choice, "操作型" is bookkeeping. The template stays internal.
+export function titleName(project: any) {
+  const line = (project?.axes?.core || [])[0] || (project?.only || [])[0];
+  return MODULES[line]?.name || TYPES[project?.type]?.name || '';
+}
+// Rivals carry only a template, so they are described by its mood word rather than by a line they never chose.
+export function typeWord(type: string) {
+  return ({ action: '动作', think: '策略', story: '叙事' } as any)[type] || '';
 }
 
 // Player quotes live in the book's archive only — no inbox, no customer service. Launch quotes point
