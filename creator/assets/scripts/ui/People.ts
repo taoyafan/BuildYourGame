@@ -3,8 +3,7 @@ import { assetManager, Color, JsonAsset, Node, Rect, Sprite, SpriteFrame, Textur
 export const officeRooms = ['home', 'cottage', 'formal', 'studio', 'floor', 'campus'] as const;
 type RoomArt = typeof officeRooms[number];
 type RoomTexture = RoomArt | `${RoomArt}-staff` | `${RoomArt}-desk-row`;
-// The two rooms a studio can afford at the start stay in the main package. Everything from the
-// ten-desk office up is a separate subpackage, so the first package stays under WeChat's 4 MB.
+// The first two offices stay in the main package. Larger rooms warm up after the first screen.
 const baseRooms: RoomTexture[] = ['home', 'cottage'];
 const packedRooms: RoomTexture[] = ['formal', 'formal-desk-row', 'studio', 'studio-staff', 'floor', 'floor-staff', 'floor-desk-row', 'campus', 'campus-staff', 'campus-desk-row'];
 const ROOM_BUNDLE = 'rooms';
@@ -50,6 +49,12 @@ export class ArtPack {
   private disposed = false;
   private actors: { sprite: Sprite; art: string; face: string; phase: number }[] = [];
   private clock = 0;
+  private packedLoaded = false;
+  private packedStarted = false;
+  private packedRetryAt = 0;
+  private packedWaiters: (() => void)[] = [];
+  // Surfaced on screen so a package that never arrives is not just a room without its picture.
+  packedError = false;
 
   load(done: () => void) {
     resources.load('art/module-icons/texture', Texture2D, (error, texture) => {
@@ -61,7 +66,13 @@ export class ArtPack {
       }
     });
     let pending = 2 + baseRooms.length;
-    const finish = () => { if (pending > 0 && --pending === 0 && !this.disposed && this.ready) done(); };
+    const finish = () => {
+      if (pending <= 0 || --pending !== 0 || this.disposed || !this.ready) return;
+      done();
+      // Start downloading and creating room textures after the initial room can be shown.
+      // The same callback redraws whichever screen is open when the background load finishes.
+      if (!this.disposed) this.loadPacked(done);
+    };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
     resources.load('art/atlas/texture', Texture2D, (error, texture) => { if (error) console.warn('Art atlas:', error.message); else this.atlas = texture; finish(); });
     for (const name of baseRooms) {
@@ -71,22 +82,35 @@ export class ArtPack {
         finish();
       });
     }
-    // The bigger rooms arrive in the background; `done` runs a second time so the office redraws
-    // with them instead of waiting for the subpackage before the first screen.
-    this.loadRooms(() => { if (!this.disposed) done(); });
   }
 
-  private loadRooms(done: () => void) {
-    let pending = packedRooms.length;
-    const finish = () => { if (pending > 0 && --pending === 0) done(); };
+  // A failed package can be retried without restarting or replacing the player's save.
+  loadPacked(done: () => void) {
+    if (this.disposed) return;
+    if (this.packedLoaded) { done(); return; }
+    if (this.packedStarted) return;
+    if (Date.now() < this.packedRetryAt) return;
+    this.packedStarted = true;
+    this.packedError = false;
+    this.packedWaiters.push(done);
+    const complete = () => {
+      this.packedLoaded = packedRooms.every(name => !!this.textures[name]);
+      this.packedStarted = false;
+      this.packedError = !this.packedLoaded;
+      this.packedRetryAt = this.packedLoaded ? 0 : Date.now() + 30000;
+      const waiters = this.packedWaiters;
+      this.packedWaiters = [];
+      for (const waiter of waiters) if (!this.disposed) waiter();
+    };
     assetManager.loadBundle(ROOM_BUNDLE, (error, bundle) => {
-      if (error) {
-        console.warn('Room bundle:', error.message);
-        for (let i = 0; i < packedRooms.length; i++) finish();
-        return;
-      }
+      if (this.disposed) return;
+      if (error) { console.error('Room bundle:', error.message); complete(); return; }
+      let pending = packedRooms.length;
+      const finish = () => { if (--pending === 0) complete(); };
       for (const name of packedRooms) {
+        if (this.textures[name]) { finish(); continue; }
         bundle.load(`art/${name}/texture`, Texture2D, (err, texture) => {
+          if (this.disposed) return;
           if (err) console.warn(`Room art (${name}):`, err.message);
           else this.textures[name] = texture;
           finish();
@@ -95,7 +119,13 @@ export class ArtPack {
     });
   }
 
+  retryPacked(done: () => void) {
+    this.packedRetryAt = 0;
+    this.loadPacked(done);
+  }
+
   get ready() { return !!(this.layout && this.atlas); }
+  hasRoom(name: RoomArt) { return !!this.textures[name]; }
 
   private frame(key: string, texture: Texture2D, rect: number[]) {
     let frame = this.frames.get(key);
@@ -229,6 +259,7 @@ export class ArtPack {
 
   destroy() {
     this.disposed = true;
+    this.packedWaiters = [];
     this.clear();
     for (const frame of this.frames.values()) frame.destroy();
     this.frames.clear();

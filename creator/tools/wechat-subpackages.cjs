@@ -19,9 +19,10 @@ function findBundle(dest, name) {
 }
 
 // WeChat reads the first `game.js` under a subpackage root as that package's entry and refuses to
-// compile without one. Nothing in the room bundle needs an entry, so it stays empty on purpose.
+// compile without one. Cocos also imports the bundle prerequisite module before returning the
+// bundle: index.js must run here to register it with SystemJS.
 function writeEntry(folder) {
-  fs.writeFileSync(path.join(folder, 'game.js'), '// WeChat subpackage entry: the room bundle only carries textures.\n');
+  fs.writeFileSync(path.join(folder, 'game.js'), "// Register the Cocos bundle prerequisite module when WeChat loads this package.\nrequire('./index.js');\n");
 }
 
 function move(dest) {
@@ -30,12 +31,13 @@ function move(dest) {
     const to = path.join(dest, 'subpackages', name);
     const from = findBundle(dest, name);
     if (!from) {
-      if (!fs.existsSync(path.join(to, 'config.json'))) { console.log(`Subpackage ${name}: bundle not found, skipped.`); continue; }
+      if (!fs.existsSync(path.join(to, 'config.json'))) throw new Error('Missing subpackage bundle: ' + name);
     } else {
       fs.rmSync(to, { recursive: true, force: true });
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.renameSync(from, to);
     }
+    if (!fs.existsSync(path.join(to, 'index.js'))) throw new Error('Missing bundle entry: ' + name);
     writeEntry(to);
     moved.push(name);
   }

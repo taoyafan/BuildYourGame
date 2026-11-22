@@ -1056,6 +1056,11 @@ export class StudioApp extends Component {
     const inner = this.width - 40;
     const art = this.art.ready ? this.art : null;
     const roomName = officeRooms[state.office as number];
+    // Ten-desk and larger offices arrive in a subpackage: fetch them when the studio grows into them,
+    // then redraw once so the room switches from the drawn version to the illustrated one.
+    if (state.office >= 2 && roomName && this.art.ready && !this.art.hasRoom(roomName)) {
+      this.art.loadPacked(() => { if (this.isValid) this.render(); });
+    }
     const splitOffice = state.office >= 3 && !!roomName;
     const height = splitOffice ? inner * 240 / 350 : state.office <= 2 ? inner * 190 / 350 : 190 - shrink;
     const room = art && roomName ? art.layout![roomName] : null;
@@ -1063,6 +1068,12 @@ export class StudioApp extends Component {
     const dividerHeight = room?.staffFloor && background ? BULLETIN_HEIGHT + 2 * OFFICE_DIVIDER_GAP : 0;
     const sceneHeight = height + dividerHeight;
     const node = this.box(body, 'Office', 0, 0, inner, sceneHeight);
+    // A package that fails to arrive leaves the drawn room in place; say why instead of looking broken.
+    if (art && roomName && !background && this.art.packedError) {
+      const retry = this.text(node, '场景插画没加载出来 · 点这里重试', 8, height - 30, inner - 16, 22, 12, colors.muted, false);
+      retry.horizontalAlign = HorizontalTextAlignment.RIGHT;
+      this.clickable(retry.node, () => { this.art.retryPacked(() => { if (this.isValid) this.render(); }); });
+    }
     let bulletinY = height + 4;
     const rating = core.ratingOf(state);
     const achievements = core.achievementsOf(state);
@@ -1690,7 +1701,8 @@ export class StudioApp extends Component {
     const singleChoiceEvent = route.menu === 'event' && (this.state.event?.choices?.length || 0) === 1;
     if (this.state.company && (route.menu !== 'event' || singleChoiceEvent)) this.button(this.stage, '', this.width - 60, y, 40, 40, () => this.closeMenu(), false, false, 'X');
     this.box(this.stage, 'Divider', 20, y + 54, this.width - 40, 1, colors.line);
-    const scroll = this.scroller(y + 68, this.height - y - 68 - this.bottom);
+    const setupFooter = route.menu === 'setup' ? 64 : 0;
+    const scroll = this.scroller(y + 68, this.height - y - 68 - this.bottom - setupFooter);
     // One Graphics for every static rectangle on this page. It is the first child of the scroll body,
     // so all labels and buttons drawn afterwards stay on top of it. Body-relative coordinates start
     // at zero here, which is what box() records on every descendant as ax/ay.
@@ -1719,44 +1731,62 @@ export class StudioApp extends Component {
 
   private renderSetup(body: Node) {
     const inner = this.width - 40;
-    const { pen } = this.canvasNode(body, 'Room', 0, 0, inner, 150);
-    drawRoom(pen, inner, 150, 0);
-    if (this.art.ready) seatLayout(1, inner, 150).forEach(({ x, y, scale }) => {
-      this.art.station(body, { x, y: y - 13 * scale, k: scale * 0.2, art: '', look: null, phase: 0 }, 150);
-    });
-    let cursor = 166;
-    cursor += this.paragraph(body, '一间小屋、一张桌子和 ' + content.money(this.state.cash) + ' 积蓄。先接一份委托，再做自己的游戏。', cursor);
-    this.draft.suggested = this.draft.suggested || content.randomStudioName();
-    this.input(body, this.draft.suggested, this.draft.name, cursor, 48, value => { this.draft.name = value; });
-    cursor += 62;
-    this.text(body, '你的出身', 0, cursor, inner, 24, 15, colors.ink, true);
-    cursor += 30;
     const founder = core.ORIGINS[this.draft.founder] ? this.draft.founder : 'code';
-    for (const role of Object.keys(core.ORIGINS)) {
-      const origin = core.ORIGINS[role];
-      cursor += this.choice(body, cursor, origin.name, origin.focus + '\n第一份委托：' + core.MODULES[origin.starter].name, () => { this.draft.founder = role; this.render(); }, { highlight: founder === role, tag: founder === role ? '已选' : '', tagColor: colors.green, brick: core.MODULES[origin.starter] }) + 8;
-    }
-    // The founder is one of the ten characters; the pick also sets the founder's gender.
     const picks = [...core.CHARACTERS.m, ...core.CHARACTERS.f];
     const art = picks.includes(this.draft.art) ? this.draft.art : (this.draft.art = picks[0]);
-    cursor += 6;
-    this.text(body, '你的样子', 0, cursor, inner, 24, 15, colors.ink, true);
-    cursor += 30;
-    const cell = (inner - 4 * 8) / 5;
+    this.draft.suggested ||= '幺零工作室';
+    this.text(body, '一间小屋、一张桌子和10万积蓄，你的开始', 0, 0, inner, 24, 14, colors.ink);
+    this.text(body, '输入你的工作室的名字', 0, 26, inner, 22, 13, colors.danger, true);
+    this.input(body, this.draft.suggested, this.draft.name, 50, 42, value => { this.draft.name = value; });
+    let cursor = 100;
+    const height = inner * 190 / 350;
+    const preview = this.box(body, 'SetupRoom', 0, cursor, inner, height);
+    const room = this.art.ready ? this.art.layout!.home : null;
+    const background = room ? this.art.roomFrame('home') : null;
+    if (room && background) {
+      const k = inner / room.size[0];
+      this.art.place(preview, background, 0, 0, inner, height);
+      for (const [x, y, scale, decor] of room.seats || []) {
+        this.art.station(preview, { x: x * k, y: y * k, k: scale * k, art, decor, phase: 0,
+          look: { face: 'neutral', person: true, laptop: 'open', mug: false, symbols: [] } }, height);
+      }
+    } else {
+      const { pen } = this.canvasNode(preview, 'Room', 0, 0, inner, height);
+      drawRoom(pen, inner, height, 0);
+    }
+    cursor += height + 8;
+    this.text(body, '你的样子', 0, cursor, inner, 22, 15, colors.ink, true);
+    cursor += 26;
+    const gap = 8;
+    const cell = Math.min(52, (inner - 4 * gap) / 5);
+    const left = (inner - (cell * 5 + gap * 4)) / 2;
     picks.forEach((id, index) => {
-      const x = (index % 5) * (cell + 8);
-      const top = cursor + Math.floor(index / 5) * (cell + 8);
+      const x = left + (index % 5) * (cell + gap);
+      const top = cursor + Math.floor(index / 5) * (cell + gap);
       const node = this.box(body, 'Look', x, top, cell, cell, id === art ? colors.green : colors.soft, 10);
       this.portrait(node, id, 3, 3, cell - 6);
       this.clickable(node, () => { this.draft.art = id; this.render(); });
     });
-    cursor += 2 * (cell + 8) + 8;
-    this.button(body, '成立工作室', 0, cursor, inner, 48, () => {
+    cursor += 2 * cell + gap + 8;
+    this.text(body, '你的出身', 0, cursor, inner, 22, 15, colors.ink, true);
+    cursor += 26;
+    const roles = Object.keys(core.ORIGINS);
+    const width = (inner - gap * (roles.length - 1)) / roles.length;
+    roles.forEach((role, index) => {
+      const origin = core.ORIGINS[role];
+      const selected = founder === role;
+      const option = this.box(body, 'Origin', index * (width + gap), cursor, width, 76, selected ? colors.green : colors.soft, 10);
+      this.text(option, origin.name, 6, 6, width - 12, 24, 15, selected ? '#ffffff' : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.text(option, origin.focus, 7, 32, width - 14, 36, 11, selected ? '#ffffff' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+      this.clickable(option, () => { this.draft.founder = role; this.render(); });
+    });
+    // Keep the action above the home indicator while the form remains scrollable on short screens.
+    this.button(this.stage, '成立工作室', 20, this.height - this.bottom - 56, inner, 48, () => {
       this.apply(core.nameCompany(this.state, this.draft.name.trim() || this.draft.suggested, founder, art));
       this.resumeAfterMenu = false;
       this.closeMenu();
     }, true);
-    return cursor + 66;
+    return cursor + 84;
   }
 
   private renderNewProject(body: Node) {
