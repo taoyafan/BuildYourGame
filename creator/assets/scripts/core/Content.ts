@@ -330,12 +330,12 @@ function projectMenu(state: any, id?: string) {
         { type: 'actions', items: [
           { text: '调整分工', detail: project.job ? '默认做你最拿手的那一项。' : '', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' }
         ] },
-        { type: 'actions', items: [
-          { text: '新项目', detail: '', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' },
-          ...jobAction(state)
-        ] },
+        { type: 'actions', items: [abandonAction(project)] },
         { type: 'divider' },
-        { type: 'actions', items: [abandonAction(project)] }
+        { type: 'actions', items: [
+          ...jobAction(state),
+          { text: '新项目', detail: '', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+        ] }
       ]
     };
   }
@@ -377,14 +377,14 @@ function projectMenu(state: any, id?: string) {
       ...(fix.known || project.fixFirst ? [{ text: project.fixFirst ? '正在先修复缺陷 · 点击恢复做内容' : '先修复缺陷', detail: '待修 ' + fix.known + ' 项' + (fix.days ? '，约 ' + fix.days + ' 天修完' : '') + (fix.unstaffed.length ? '；' + fix.unstaffed.join('、') + '没人修' : '') + '。各项负责人暂停做内容，修完自动恢复。', icon: 'Hammer', action: 'fix-first', data: { id: project.id, on: !project.fixFirst } }] : []),
       { text: project.progress >= 100 ? '正式发售' : project.progress >= 55 ? (metrics.unfinished.length ? '提前发售' : '正式发售') : '发售', detail: project.progress >= 55 ? (metrics.unfinished.length ? '还没做满，带着短板上市换回款。' : '已做满，带着当前表现上市。') : '体验版完成后才能发售', icon: 'Rocket', action: 'launch', data: { id: project.id }, disabled: metrics.progress < 55, anchor: 'launch', tag: project.progress >= 100 ? '可发售' : '', emphasis: project.progress >= 100 && !defectsByDimension(project) }
     ] },
-    // Starting something else and dropping this title are the two ways out of the page, so they sit
-    // together at the bottom, separated from the irreversible one by a rule.
+    // Dropping this title stays with the work above; the two ways to move on are the very last row,
+    // cut off from it by a rule.
+    { type: 'actions', items: [abandonAction(project)] },
+    { type: 'divider' },
     { type: 'actions', items: [
       ...jobAction(state),
       { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
-    ] },
-    { type: 'divider' },
-    { type: 'actions', items: [abandonAction(project)] }
+    ] }
   ];
   return { title: '项目', blocks };
 }
@@ -465,11 +465,12 @@ function patchProjectMenu(state: any, project: any) {
         { text: '立即上线', detail: '先发出已完成的部分', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
         { text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }
       ] },
-      { type: 'actions', items: [
-        { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
-      ] },
+      { type: 'actions', items: [abandonAction(project)] },
       { type: 'divider' },
-      { type: 'actions', items: [abandonAction(project)] }
+      { type: 'actions', items: [
+        ...jobAction(state),
+        { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
+      ] }
     ]
   };
 }
