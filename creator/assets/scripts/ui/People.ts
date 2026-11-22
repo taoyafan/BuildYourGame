@@ -1,9 +1,13 @@
-import { Color, JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
+import { assetManager, Color, JsonAsset, Node, Rect, Sprite, SpriteFrame, Texture2D, UITransform, resources } from 'cc';
 
 export const officeRooms = ['home', 'cottage', 'formal', 'studio', 'floor', 'campus'] as const;
 type RoomArt = typeof officeRooms[number];
 type RoomTexture = RoomArt | `${RoomArt}-staff` | `${RoomArt}-desk-row`;
-const roomTextures: RoomTexture[] = [...officeRooms, 'formal-desk-row', 'studio-staff', 'floor-staff', 'floor-desk-row', 'campus-staff', 'campus-desk-row'];
+// The two rooms a studio can afford at the start stay in the main package. Everything from the
+// ten-desk office up is a separate subpackage, so the first package stays under WeChat's 4 MB.
+const baseRooms: RoomTexture[] = ['home', 'cottage'];
+const packedRooms: RoomTexture[] = ['formal', 'formal-desk-row', 'studio', 'studio-staff', 'floor', 'floor-staff', 'floor-desk-row', 'campus', 'campus-staff', 'campus-desk-row'];
+const ROOM_BUNDLE = 'rooms';
 type SeatAnchor = [number, number, number, string[]?];
 export type RoomRect = [number, number, number, number];
 type RoomLayout = {
@@ -38,17 +42,39 @@ export class ArtPack {
   private clock = 0;
 
   load(done: () => void) {
-    let pending = 2 + roomTextures.length;
-    const finish = () => { if (--pending === 0 && !this.disposed && this.ready) done(); };
+    let pending = 2 + baseRooms.length;
+    const finish = () => { if (pending > 0 && --pending === 0 && !this.disposed && this.ready) done(); };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
     resources.load('art/atlas/texture', Texture2D, (error, texture) => { if (error) console.warn('Art atlas:', error.message); else this.atlas = texture; finish(); });
-    for (const name of roomTextures) {
+    for (const name of baseRooms) {
       resources.load(`art/${name}/texture`, Texture2D, (error, texture) => {
         if (error) console.warn(`Room art (${name}):`, error.message);
         else this.textures[name] = texture;
         finish();
       });
     }
+    // The bigger rooms arrive in the background; `done` runs a second time so the office redraws
+    // with them instead of waiting for the subpackage before the first screen.
+    this.loadRooms(() => { if (!this.disposed) done(); });
+  }
+
+  private loadRooms(done: () => void) {
+    let pending = packedRooms.length;
+    const finish = () => { if (pending > 0 && --pending === 0) done(); };
+    assetManager.loadBundle(ROOM_BUNDLE, (error, bundle) => {
+      if (error) {
+        console.warn('Room bundle:', error.message);
+        for (let i = 0; i < packedRooms.length; i++) finish();
+        return;
+      }
+      for (const name of packedRooms) {
+        bundle.load(`art/${name}/texture`, Texture2D, (err, texture) => {
+          if (err) console.warn(`Room art (${name}):`, err.message);
+          else this.textures[name] = texture;
+          finish();
+        });
+      }
+    });
   }
 
   get ready() { return !!(this.layout && this.atlas); }

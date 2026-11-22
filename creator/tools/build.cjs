@@ -33,6 +33,15 @@ child.once('exit', code => {
   child.stderr.destroy();
   log.end();
   const success = code === 36 || code === 0;
+  if (success && target === 'wechatgame') {
+    try {
+      console.log(require('./wechat-subpackages.cjs')(path.join(project, 'build', target)));
+    } catch (error) {
+      console.error('Subpackage step failed: ' + error.message);
+      process.exitCode = 1;
+      return;
+    }
+  }
   console.log((success ? 'Built ' : 'Build failed: ') + target + ' (Creator exit ' + code + ')');
   console.log('Log: ' + destination);
   process.exitCode = success ? 0 : 1;
