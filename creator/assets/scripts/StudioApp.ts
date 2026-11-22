@@ -1517,8 +1517,9 @@ export class StudioApp extends Component {
   }
 
   // Six axes of planned work, not score. The shape is the relative workload; each label is how many
-  // days the current crew needs for that dimension. Used before committing to a commission or a title.
-  private workRadar(body: Node, y: number, values: any, title: string, caption = '') {
+  // days that dimension takes — by the current crew, or by one person when `single` is set (the
+  // planning form needs that, because the line under its chart is already the whole team's estimate).
+  private workRadar(body: Node, y: number, values: any, title: string, caption = '', single = false) {
     const inner = this.width - 40;
     const height = 184;
     const { node, pen } = this.canvasNode(body, 'WorkRadar', 0, y, inner, height);
@@ -1528,7 +1529,7 @@ export class StudioApp extends Component {
     const count = core.DIM_KEYS.length;
     const crew = this.state.staff.length;
     const capacity = this.state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > this.state.day ? 0 : person.speed / 100), 0);
-    const daysOf = (value: number) => capacity > 0.0001 && value > 0 ? Math.max(1, Math.ceil(value / capacity)) : 0;
+    const daysOf = (value: number) => value <= 0 ? 0 : single ? Math.round(value * 10) / 10 : capacity > 0.0001 ? Math.max(1, Math.ceil(value / capacity)) : 0;
     const max = Math.max(1, ...core.DIM_KEYS.map((key: string) => Number(values?.[key]) || 0));
     const point = (index: number, ratio: number) => {
       const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
@@ -1922,7 +1923,7 @@ export class StudioApp extends Component {
       values.stability += plan.total * core.TEST_SHARE;
       // The chart's corners count person-days for one person; the caption says so, and the green line
       // under it is the same work at the current team's speed, so the two can be read together.
-      cursor += this.workRadar(body, cursor, values, '六项工作量', '六项工作单人完成分别所需时间') + 8;
+      cursor += this.workRadar(body, cursor, values, '六项工作量', '六项工作单人完成分别所需时间', true) + 8;
       cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12, colors.green);
     }
     // A grey button with no reason reads as a bug: the missing choice is named right above it.
