@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.51';
+export const VERSION = '0.4.52';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -737,21 +737,11 @@ export function moduleMetrics(state: any, id: string) {
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
 export const axisOpen = (state: any, axis: any) => !!axis && releases(state) >= (axis.unlock || 0);
 export const axisMax = (state: any, axis: any) => axis.key === 'mechanic' && releases(state) < SECOND_MECHANIC ? 1 : axis.max;
-// The first title's gameplay is fixed by the founder, so the other basic gameplay is not a choice yet.
-// Showing it in the library with no unlock ever shown to the player reads as a stray, unusable option;
-// it becomes a proper unlock the moment the first title ships.
-function firstTitleGate(state: any, line: string) {
-  if (releases(state) > 0) return false;
-  const first = ORIGINS[state.founder]?.firstCore;
-  if (!first || MODULES[line]?.axis !== 'core' || line === first) return false;
-  return !(state.unlocked || {})[line];
-}
 export const moduleOpen = (state: any, line: string) => !!MODULES[line]
   && (!MODULES[line].unlock || !!(state.unlocked || {})[line])
   && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis))
-  // The two lines the first title needs start gated and are learned one by one during the opening job.
-  && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line])
-  && !firstTitleGate(state, line);
+  // The two libraries the first title needs start gated and are learned one by one during the opening job.
+  && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line]);
 // An axis opens together with one line to put in it. Returns the lines handed out.
 function ensureAxisLines(state: any) {
   const given: string[] = [];
@@ -773,14 +763,15 @@ export function lineBlocked(plan: any, line: string) {
 }
 
 // The plan the form starts from: what the company has wherever it can, the first open line elsewhere.
-// The first title's gameplay follows the founder's origin and is not up for choice.
+// The first title's gameplay starts on the founder's own line, which the player is free to change.
 export function recommendPlan(state: any) {
   const axes: any = {};
   for (const axis of AXES) {
     if (!axisOpen(state, axis) || axis.min < 1) continue;
     const options = Object.keys(MODULES).filter(id => MODULES[id].axis === axis.key && moduleOpen(state, id) && !(MODULES[id].requires || []).length);
     const score = (line: string) => { const info = lineInfo(state, line); return info.level + info.next; };
-    axes[axis.key] = axis.key === 'core' && firstGameCore(state) ? [firstGameCore(state)] : [...options].sort((left, right) => score(right) - score(left)).slice(0, axis.min);
+    const first = axis.key === 'core' ? firstGameCore(state) : '';
+    axes[axis.key] = first && options.includes(first) ? [first] : [...options].sort((left, right) => score(right) - score(left)).slice(0, axis.min);
   }
   return { name: '', scale: 0, axes, rent: [], lineLevels: {} };
 }
@@ -885,7 +876,6 @@ export function planType(plan: any) {
 export function planIssue(state: any, plan: any) {
   if (!plan || !plan.axes) return '请选择模块。';
   if (plan.rent !== undefined && !Array.isArray(plan.rent)) return '租用设置无效。';
-  const first = firstGameCore(state);
   for (const axis of AXES) {
     const ids = plan.axes[axis.key] || [];
     if (!axisOpen(state, axis)) { if (ids.length) return `${axis.name}还没有开放。`; continue; }
@@ -896,7 +886,6 @@ export function planIssue(state: any, plan: any) {
     if (ids.length < Math.max(1, axis.min) && (ids.length || options.length)) return `请选择${axis.name}。`;
     if (ids.length > axisMax(state, axis)) return `${axis.name}最多选 ${axisMax(state, axis)} 个。`;
   }
-  if (first && (plan.axes.core || [])[0] !== first) return '首作的玩法由出身决定。';
   for (const line of planLines(plan)) if (!levelOpen(state, levelFor(plan, line))) return `${MODULES[line].name} ${levelFor(plan, line)} 级还没有开放。`;
   // A title cannot ship with pixel characters over hand-drawn scenery (or the other way round).
   const artStyles = (plan.axes?.art || []).map((line: string) => MODULES[line]?.style).filter(Boolean);
@@ -1284,12 +1273,13 @@ function nextStory(state: any) {
 
 const FOUNDER_FOCUS: any = { code: 'fluidity', design: 'creativity', art: 'picture' };
 
-// The first title needs two more lines than the opening job leaves behind: its gameplay, its engine
-// and one art library. Those two start gated and are learned one at a time while the first module is
-// being built, at evenly spaced progress points, so the opening wait is never a blank stretch.
+// The first title needs an engine and one art library on top of the module the opening job leaves
+// behind. Those start gated and are learned one at a time while the first module is being built, at
+// evenly spaced progress points, so the opening wait is never a blank stretch. The gameplay itself is
+// not gated: the founder's line is only where the plan starts.
 function openingLines(origin: any) {
   const out: string[] = [];
-  for (const line of [origin.firstCore, 'engine2d', 'artPixel']) {
+  for (const line of ['engine2d', 'artPixel']) {
     if (line && line !== origin.starter && !out.includes(line) && MODULES[line]) out.push(line);
   }
   return out.slice(0, 2);
@@ -3508,18 +3498,6 @@ export function launchProject(state: any, projectId: string) {
     person.level = (person.level || 0) + 1;
     personNote(next, person, `参与《${project.name}》发售` + (gains.length ? `：${gains.join('、')}` : ''));
     if (gains.length) studioLog(next, `${person.name} 积累经验`, `参与《${project.name}》：${gains.join('、')}。工资在招聘时定下，不随成长上调。`);
-  }
-  // The first title's gameplay was the founder's and nothing else could be picked. Shipping it is the
-  // moment that changes: the other basic gameplay unlocks with an explicit message, so it never just
-  // appears in the library out of nowhere.
-  if (book.tutorial) {
-    const first = ORIGINS[next.founder]?.firstCore;
-    const extra = Object.keys(MODULES).filter(line => MODULES[line].axis === 'core' && !MODULES[line].unlock && line !== first && !(next.unlocked || {})[line]);
-    for (const line of extra) {
-      next.unlocked = { ...(next.unlocked || {}), [line]: next.day };
-      announce(next, { kind: 'unlock', title: '做完第一款游戏', text: `解锁${MODULES[line].name}：从下一作起，玩法可以自由选了。`, line, amount: 0 });
-      studioLog(next, `解锁${MODULES[line].name}`, '做完第一款游戏后摸出的新玩法，下一作可以选。');
-    }
   }
   if (next.goals.firstRelease === null) {
     next.goals.firstRelease = next.day;

@@ -1720,12 +1720,8 @@ export class StudioApp extends Component {
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
     // Every axis comes filled in (what the company has, or a recommendation) and folded into one line;
-    // the player opens only the axis they want to change. The first title's gameplay is the origin's.
-    const first = core.firstGameCore(state);
-    // The founder's gameplay is fixed only while it is the one gameplay the studio actually has. A
-    // second line unlocked some other way already shows in the library, so hiding it in the plan would
-    // leave the two pages disagreeing about what the studio can make.
-    const otherCore = !!first && Object.keys(core.MODULES).some(key => core.MODULES[key].axis === 'core' && key !== first && core.moduleOpen(state, key));
+    // the player opens only the axis they want to change. Every open line is a real choice, first title
+    // included: the founder's gameplay is where the plan starts, not a lock.
     const open = this.draft.open || (this.draft.open = {});
     const rent: string[] = this.draft.rent || (this.draft.rent = []);
     const statusOf = (key: string) => {
@@ -1740,7 +1736,7 @@ export class StudioApp extends Component {
     for (const axis of core.AXES) {
       if (!core.axisOpen(state, axis)) continue;
       const chosen: string[] = this.draft.axes?.[axis.key] || [];
-      const fixed = !!this.draft.sequel || (axis.key === 'core' && !!first && !otherCore);
+      const fixed = !!this.draft.sequel;
       const expanded = !!open[axis.key];
       const color = core.FIELDS[axis.field].color;
       const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）' + (axis.key === 'core' ? ' · ' + core.TYPES[core.MODULES[key].type].name : '')).join('、') || '未选';
