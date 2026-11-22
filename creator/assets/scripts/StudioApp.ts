@@ -1837,13 +1837,10 @@ export class StudioApp extends Component {
       });
       cursor += 54;
     }
-    if (!core.planIssue(state, this.draft)) {
-      const nominal = core.nominalWork(this.draft);
-      cursor += this.paragraph(body, '预估体量：' + core.SCALES[core.planScale(this.draft)].name + '（全部新做约 ' + Math.round(nominal) + ' 人日）', cursor, false, 0, inner, 13);
-    }
+    // The market is a detour, not a step: its link sits above the chart, so the estimate line and the
+    // confirm button stay next to each other.
     this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.openMenu('industry', 'market'));
     cursor += 46;
-    // Show the shape of the work before the days-and-cost line: testing is the sixth spoke.
     if (!core.planIssue(state, this.draft)) {
       const plan = core.planWork(state, this.draft);
       const values: any = {};
@@ -1853,11 +1850,13 @@ export class StudioApp extends Component {
         if (values[dim] !== undefined) values[dim] += amount;
       }
       values.stability += plan.total * core.TEST_SHARE;
-      cursor += this.workRadar(body, cursor, values, '六项工作量') + 12;
+      cursor += this.workRadar(body, cursor, values, '六项工作量') + 8;
+      // The chart counts person-days for one person on each dimension; the line under it is the same
+      // work at the current team's speed, so the two can be read against each other. The size is read
+      // off the plan rather than shown as a separate row.
+      cursor += this.paragraph(body, '六项工作单人完成分别所需时间', cursor, true, 0, inner, 11);
+      cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12);
     }
-    cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, true, 0, inner, 13);
-    const coming = core.nextUnlocks(state);
-    if (coming.length) cursor += this.paragraph(body, '下一作发售后开放：' + coming.join('、'), cursor, true, 0, inner, 12);
     // A grey button with no reason reads as a bug: the missing choice is named right above it.
     const issue = core.planIssue(state, this.draft);
     if (issue) cursor += this.paragraph(body, issue, cursor, false, 0, inner, 12, colors.amber);

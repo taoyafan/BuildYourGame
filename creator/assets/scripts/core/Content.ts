@@ -220,17 +220,14 @@ export function menu(state: any, route: any, slots: any[] = []) {
   }
 }
 
-// Preview under the project form: workload, price, market size and which dimension this genre leans on.
-// Deliberately no market trend here: the trend is only read from news, the charts and past releases, so
-// picking a genre is never a case of reading today's weather report.
+// Preview under the project form: the same work at the current team's speed, its cost, and the size the
+// plan reads as. One line, so it sits directly under the six-dimension chart instead of pushing the
+// confirm button below the fold. No market trend here: the trend is only read from news, the charts and
+// past releases, so picking a genre is never a case of reading today's weather report.
 export function planPreview(state: any, draft: any) {
   const issue = core.planIssue(state, draft);
   if (issue) return issue;
   const plan = core.planWork(state, draft);
-  const items = core.planModules(state, draft);
-  const fresh = items.filter((item: any) => !item.built && !item.rented).length;
-  const rented = items.filter((item: any) => item.rented).length;
-  const reused = items.length - fresh - rented;
   const workload = plan.total * (1 + core.TEST_SHARE);
   // Output per day is the team's combined speed, so the estimate is total work over total hands.
   const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
@@ -240,12 +237,8 @@ export function planPreview(state: any, draft: any) {
   const wage = paid.length ? paid.reduce((total: number, person: any) => total + person.wage, 0) / paid.length : 1;
   const rentCost = plan.rentCost || 0;
   const cost = workload / 30 * wage + core.OFFICES[state.office].rent * (days || 30) / 30 + rentCost;
-  const rentLines = Array.from(new Set(items.filter((item: any) => item.rented).map((item: any) => item.line))).map((line: any) => {
-    const record = core.rentRecord(state, line);
-    const price = core.rentPrice(line, core.levelFor(draft, line));
-    return '\n' + core.MODULES[line].name + '：这条线累计租了 ' + record.count + ' 次，已付约 ' + money(record.paid) + '，自己做约需 ' + money(price.build);
-  }).join('');
-  return (days === null ? '还没有能推进的人。' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完（含测试）') + ' · 成本约 ' + money(cost) + '\n新做 ' + fresh + ' 个模块，复用 ' + reused + ' 个' + (rented ? '，租用 ' + rented + ' 个（立项时付 ' + money(rentCost) + '）' : '') + rentLines;
+  const team = days === null ? '还没有能推进的人' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完';
+  return team + ' · 成本约 ' + money(cost) + ' · 预估体量 ' + core.SCALES[core.planScale(draft)].name;
 }
 
 // The moment the library grows: the bricks this job or title added or levelled up, and what opened up.

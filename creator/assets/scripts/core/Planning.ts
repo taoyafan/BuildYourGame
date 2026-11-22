@@ -34,8 +34,11 @@ export const PLANNING_SCALES = [
 ];
 // A title's scale is read from its nominal person-days: the geometric middles between the W above.
 export const SCALE_BOUNDS = [105, 470, 2000];
-export function scaleOfWork(work) {
-  const index = SCALE_BOUNDS.findIndex(bound => work < bound);
+// `medium` lets the caller raise the 中型 floor (a plan is read against the work its own lines would
+// need at level 2); the other steps keep their fixed bounds.
+export function scaleOfWork(work, medium = SCALE_BOUNDS[0]) {
+  if (work < medium) return 0;
+  const index = SCALE_BOUNDS.findIndex((bound, position) => position > 0 && work < bound);
   return index < 0 ? SCALE_BOUNDS.length : index;
 }
 

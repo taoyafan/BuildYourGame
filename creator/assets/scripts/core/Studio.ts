@@ -3,13 +3,13 @@
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, AXES, FIELDS, ORIGINS, SECOND_MECHANIC } from './Modules';
 import { rotationSpan, legacyRotationSpan, retimedAge } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
+import { moduleUpdateWork, moduleUpdatedQuality, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, SCALE_BOUNDS, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { MODULES, AXES, FIELDS, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.63';
+export const VERSION = '0.4.65';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -657,7 +657,13 @@ export function nominalWork(plan: any) {
   const modules = sum(expandModules(plan).map(id => sum(Object.values(partOf(id).work) as number[])));
   return (sum(Object.values(contentWork(plan)) as number[]) + modules) * (1 + TEST_SHARE);
 }
-export const planScale = (plan: any) => scaleOfWork(nominalWork(plan));
+export const planScale = (plan: any) => {
+  // 中型 is measured against the same lines taken to level 2, not a flat floor: levelling one line up
+  // should not already read as a medium title. Half of that is the least a medium title can be.
+  const everyLineAtTwo = { ...plan, lineLevels: Object.fromEntries(planLines(plan).map(line => [line, 2])) };
+  const floor = Math.max(SCALE_BOUNDS[0], nominalWork(everyLineAtTwo) / 2);
+  return scaleOfWork(nominalWork(plan), floor);
+};
 // Every line's level written out, so a started plan no longer leans on a scale for it.
 export const fixLevels = (plan: any) => Object.fromEntries(planLines(plan).map(line => [line, levelFor(plan, line)]));
 
