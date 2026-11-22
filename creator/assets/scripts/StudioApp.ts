@@ -1722,8 +1722,11 @@ export class StudioApp extends Component {
     const state = this.state;
     this.draft.suggested = this.draft.suggested || content.randomTitle(state);
     if (!this.draft.axes) this.draft = { ...core.recommendPlan(state), ...this.draft, axes: core.recommendPlan(state).axes };
-    this.input(body, this.draft.suggested, this.draft.name, 0, 48, value => { this.draft.name = value; });
-    let cursor = 64;
+    // Same red prompt the studio form puts over its name field: the title is the one thing on this page
+    // the player has to type, and the filled-in suggestion looks like a value they can keep.
+    this.text(body, '输入作品的名字', 0, 0, inner, 22, 13, colors.danger, true);
+    this.input(body, this.draft.suggested, this.draft.name, 26, 48, value => { this.draft.name = value; });
+    let cursor = 90;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
     // Every axis comes filled in (what the company has, or a recommendation) and folded into one line;
