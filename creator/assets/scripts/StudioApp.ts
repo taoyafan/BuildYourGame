@@ -1912,8 +1912,10 @@ export class StudioApp extends Component {
         if (block.help) this.button(parent, '', width - 38, y + 4, 34, 34, () => this.showTip(block.title, block.help), false, false, 'CircleHelp');
         return y + 42;
       case 'divider':
+        // A card group already leaves 14 points under its last card (8 between cards, 6 after the
+        // group). The rule repeats that below itself, so the space above and below the line match.
         this.box(parent, 'Divider', 0, y + 8, width, 1, colors.line);
-        return y + 18;
+        return y + 8 + 1 + 8 + 14;
       case 'note': {
         const node = this.box(parent, 'Note', 0, y, width, 40);
         const height = this.paragraph(node, block.text, 10, false, 40, width - 52, 13) + 10;

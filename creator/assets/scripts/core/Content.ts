@@ -342,7 +342,6 @@ function projectMenu(state: any, id?: string) {
   const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
   const live = core.liveProjects(state);
-  const updates = core.moduleUpdateSummary(state, project);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   const order = core.projectOrder(state);
   const rank = order.findIndex((item: any) => item.id === project.id);
@@ -355,7 +354,7 @@ function projectMenu(state: any, id?: string) {
     ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
     { type: 'section', title: '各项预期时间' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
-    { type: 'lines', items: [['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项'], ...(updates.work > 0.001 ? [['模块自动更新', '还需约 ' + updates.work.toFixed(1) + ' 人日']] : [])] },
+    { type: 'lines', items: [['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
     ...(order.length > 1 ? [
       { type: 'buttons', columns: 2, items: [
