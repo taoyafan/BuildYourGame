@@ -237,7 +237,7 @@ export function planPreview(state: any, draft: any) {
   const wage = paid.length ? paid.reduce((total: number, person: any) => total + person.wage, 0) / paid.length : 1;
   const rentCost = plan.rentCost || 0;
   const cost = workload / 30 * wage + core.OFFICES[state.office].rent * (days || 30) / 30 + rentCost;
-  const team = days === null ? '还没有能推进的人' : '现有 ' + state.staff.length + ' 人约 ' + days + ' 天做完';
+  const team = days === null ? '还没有能推进的人' : '现有 ' + state.staff.length + ' 人预估约 ' + days + ' 天做完';
   return team + ' · 成本约 ' + money(cost) + ' · 预估体量 ' + core.SCALES[core.planScale(draft)].name;
 }
 
