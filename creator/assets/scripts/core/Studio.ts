@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.52';
+export const VERSION = '0.4.53';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -737,8 +737,14 @@ export function moduleMetrics(state: any, id: string) {
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
 export const axisOpen = (state: any, axis: any) => !!axis && releases(state) >= (axis.unlock || 0);
 export const axisMax = (state: any, axis: any) => axis.key === 'mechanic' && releases(state) < SECOND_MECHANIC ? 1 : axis.max;
+// Two gameplay lines carry no level in the data because each origin starts on one of them: the programmer
+// on side-scrolling action, the designer and the artist on branching story. Only the founder's own line is
+// known on day one; the other one is learned like any later line, during production, and shows up in the
+// library and in the plan only once it has been learned.
+const originLine = (state: any) => ORIGINS[state.founder]?.firstCore || '';
+const startsKnown = (state: any, line: string) => MODULES[line]?.axis !== 'core' || !!MODULES[line].unlock || line === originLine(state);
 export const moduleOpen = (state: any, line: string) => !!MODULES[line]
-  && (!MODULES[line].unlock || !!(state.unlocked || {})[line])
+  && (MODULES[line].unlock ? !!(state.unlocked || {})[line] : startsKnown(state, line) || !!(state.unlocked || {})[line])
   && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis))
   // The two libraries the first title needs start gated and are learned one by one during the opening job.
   && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line]);
@@ -4842,6 +4848,17 @@ export function restoreStudio(saved: any) {
   }
   // Lines learned during the opening job stay learned across saves.
   if (next && next.openingLearned) next.unlocked = { ...(next.unlocked || {}), ...next.openingLearned };
+  // A save from before the founder's gameplay became the only known one could already pick both basic
+  // lines once a title had shipped. Nothing a player already had disappears: those saves get the other
+  // line recorded as known. A save that never shipped a title still has to learn it during production.
+  if (next && releases(next) > 0 && ORIGINS[next.founder]?.firstCore) {
+    const own = ORIGINS[next.founder].firstCore;
+    for (const line of Object.keys(MODULES)) {
+      if (MODULES[line].axis === 'core' && !MODULES[line].unlock && line !== own && !(next.unlocked || {})[line]) {
+        next.unlocked = { ...(next.unlocked || {}), [line]: next.day };
+      }
+    }
+  }
   // Older saves had one shared market lens; the six-axis cycle replaces it before validation, keeping the
   // fields the player has already seen. Tags that moved between axes are dropped from the hot picks.
   if (next?.marketCycle && Array.isArray(next.projects) && Array.isArray(next.catalog)) ensureMarketCycle(next);
@@ -5161,10 +5178,16 @@ function keepModules(state: any, project: any) {
 // person, a reason and what it opens.
 const SIDE_EVERY = [4, 5];
 // Only lines whose batch has come (titles out ≥ unlock − 1) and whose axis is already open can be learned.
+// A level-less line is the founder's own gameplay and is known already; the other level-less gameplay has
+// no batch of its own, so it enters the pool from the first title on and is learned like any later line.
 function lockedReady(state: any) {
-  const open = (line: string) => !MODULES[line].unlock || !!(state.unlocked || {})[line];
   const out = releases(state);
-  return Object.keys(MODULES).filter(line => !open(line) && MODULES[line].unlock <= out + 1 && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis)));
+  return Object.keys(MODULES).filter(line => {
+    if (moduleOpen(state, line)) return false;
+    if ((state.openingGates || {})[line] && !(state.openingLearned || {})[line]) return false;
+    const need = MODULES[line].unlock || 0;
+    return need <= out + 1 && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis));
+  });
 }
 
 function nextLesson(state: any) {
