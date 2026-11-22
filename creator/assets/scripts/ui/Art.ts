@@ -158,6 +158,29 @@ function seeded(seed: number) {
   return () => { value = (Math.imul(value, 1664525) + 1013904223) >>> 0; return value / 4294967296; };
 }
 
+const moduleTileColors: Record<string, [string, string]> = {
+  core: ['#bc6759', '#e6b4a7'], mechanic: ['#936aa6', '#c6add1'],
+  theme: ['#45805b', '#a0bea2'], engine: ['#4f77ac', '#a4bcd7'],
+  art: ['#b08048', '#dfc29d'], audio: ['#38867d', '#9bc8bd']
+};
+
+export function drawModulePlate(pen: Pen, size: number, axis: string, level: number, faded: boolean) {
+  const [face, trim] = faded ? ['#b4bcb6', '#d4d8d1'] : moduleTileColors[axis];
+  const box = (x: number, y: number, width: number, height: number, color: string, radius: number) =>
+    pen.rect(x * size, y * size, width * size, height * size, color, radius * size);
+  if (level >= 3) {
+    box(0.12, 0.12, 0.76, 0.76, face, 0.09);
+  } else if (level === 2) {
+    box(0.03, 0.03, 0.94, 0.94, '#494037', 0.14);
+    box(0.045, 0.045, 0.91, 0.79, trim, 0.11);
+    box(0.1, 0.105, 0.8, 0.69, face, 0.08);
+    box(0.12, 0.86, 0.76, 0.065, face, 0.025);
+  } else {
+    box(0.03, 0.03, 0.94, 0.94, '#494037', 0.13);
+    box(0.065, 0.065, 0.87, 0.87, face, 0.10);
+  }
+}
+
 // A module brick: family colour, the module's glyph on the face, one stud per level on top and a metal
 // rim from the third level up. Built means solid; a brick in progress keeps what is still missing grey
 // and fills the finished share from the bottom, so a half-done module reads as half coloured and half

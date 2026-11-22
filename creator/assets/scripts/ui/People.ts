@@ -8,6 +8,15 @@ type RoomTexture = RoomArt | `${RoomArt}-staff` | `${RoomArt}-desk-row`;
 const baseRooms: RoomTexture[] = ['home', 'cottage'];
 const packedRooms: RoomTexture[] = ['formal', 'formal-desk-row', 'studio', 'studio-staff', 'floor', 'floor-staff', 'floor-desk-row', 'campus', 'campus-staff', 'campus-desk-row'];
 const ROOM_BUNDLE = 'rooms';
+// Module icon cells in row order, followed by the shared silver and gold overlays.
+const moduleIconCells = [
+  'actionCombat', 'topShooter', 'platformer', 'turnTactics', 'puzzle', 'management', 'branchingStory', 'visualNovel',
+  'rpg', 'roguelikeAction', 'growthTactics', 'ensembleStory', 'deckBuilding', 'deduction', 'baseBuilding', 'survival',
+  'openWorld', 'fantasy', 'scifi', 'apocalypse', 'mystery', 'wuxia', 'campus', 'engine2d',
+  'engine3d', 'artPixel', 'artHand', 'artCartoon', 'artWatercolor', 'artPrint', 'retroMusic', 'lyricalMusic',
+  'electronicMusic', 'orchestralMusic', 'sfxLibrary', 'module-silver', 'module-gold'
+];
+
 type SeatAnchor = [number, number, number, string[]?];
 export type RoomRect = [number, number, number, number];
 type RoomLayout = {
@@ -35,6 +44,7 @@ export type Station = { x: number; y: number; k: number; art: string; look: Look
 export class ArtPack {
   layout: Layout | null = null;
   private atlas: Texture2D | null = null;
+  private moduleAtlas: Texture2D | null = null;
   private textures: Partial<Record<RoomTexture, Texture2D>> = {};
   private frames = new Map<string, SpriteFrame>();
   private disposed = false;
@@ -42,6 +52,14 @@ export class ArtPack {
   private clock = 0;
 
   load(done: () => void) {
+    resources.load('art/module-icons/texture', Texture2D, (error, texture) => {
+      if (this.disposed) return;
+      if (error) console.warn('Module icons:', error.message);
+      else {
+        this.moduleAtlas = texture;
+        done();
+      }
+    });
     let pending = 2 + baseRooms.length;
     const finish = () => { if (pending > 0 && --pending === 0 && !this.disposed && this.ready) done(); };
     resources.load('art/art', JsonAsset, (error, asset) => { if (error) console.warn('Art layout:', error.message); else this.layout = asset.json as Layout; finish(); });
@@ -91,6 +109,12 @@ export class ArtPack {
   }
 
   private character(art: string) { return this.layout!.characters.find(item => item.id === art) || this.layout!.characters[0]; }
+  moduleIcon(key: string) {
+    const index = moduleIconCells.indexOf(key);
+    if (index < 0 || !this.moduleAtlas) return null;
+    const size = this.moduleAtlas.width / 8;
+    return this.frame('module:' + key, this.moduleAtlas, [(index % 8) * size, Math.floor(index / 8) * size, size, size]);
+  }
   prop(name: string) { return this.frame('prop:' + name, this.atlas!, this.layout!.props[name]); }
   face(art: string, face: string) { const item = this.character(art); return this.frame(item.id + ':' + face, this.atlas!, item.frames[face] || item.frames.neutral); }
   avatar(art: string) {

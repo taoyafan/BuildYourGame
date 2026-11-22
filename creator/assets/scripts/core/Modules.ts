@@ -54,7 +54,9 @@ export const MODULES: any = {
   artPixel: { name: '像素画风素材库', field: 'art', shelf: '画风', style: '像素', glyph: 'person', axis: 'art', work: { picture: 18 }, tags: ['像素'], desc: '像素人物、地块与界面，一套统一的格子感。' },
   artHand: { name: '手绘画风素材库', field: 'art', shelf: '画风', style: '手绘', glyph: 'person', axis: 'art', unlock: 1, work: { picture: 22 }, tags: ['手绘'], desc: '手绘立绘、背景与道具，笔触统一。' },
   artCartoon: { name: '卡通风素材库', field: 'art', shelf: '画风', style: '卡通', glyph: 'person', axis: 'art', unlock: 2, work: { picture: 20 }, tags: ['卡通'], desc: '粗描边、平涂，角色和场景都鲜亮。' },
-  artWatercolor: { name: '水彩风素材库', field: 'art', shelf: '画风', style: '水彩', glyph: 'mountain', axis: 'art', unlock: 3, work: { picture: 19 }, tags: ['水彩'], desc: '晕染与留白，偏绘本的画面。' },
+  // Keep the serialized library key so existing research and active work retain their progress.
+  artWatercolor: { name: '剪影风素材库', field: 'art', shelf: '画风', style: '剪影', glyph: 'mountain', axis: 'art', unlock: 3, work: { picture: 19 }, tags: ['剪影'], desc: '用深色轮廓和明亮色块表现人物与场景。' },
+  artPrint: { name: '套色版画素材库', field: 'art', shelf: '画风', style: '套色版画', glyph: 'frame', axis: 'art', unlock: 3, work: { picture: 19 }, tags: ['套色版画'], desc: '少量墨色叠印，配上刻线和纸面质感。' },
 
   retroMusic: { name: '复古配乐库', field: 'audio', shelf: '配乐库', style: '复古', glyph: 'note', axis: 'audio', work: { sound: 6 }, tags: ['复古'], desc: '芯片音色与短循环曲。' },
   lyricalMusic: { name: '抒情配乐库', field: 'audio', shelf: '配乐库', style: '抒情', glyph: 'note', axis: 'audio', unlock: 1, work: { sound: 8 }, tags: ['抒情'], desc: '钢琴与弦乐的情绪曲。' },

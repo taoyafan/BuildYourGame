@@ -287,7 +287,7 @@ function defectsByDimension(project: any) {
 function contentMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   if (!project) return { title: '游戏内容', blocks: [{ type: 'text', text: '先立项。' }] };
-  const line = (key: string) => ({ name: core.MODULES[key].name, glyph: core.MODULES[key].glyph, level: (project.lineLevels || {})[key] || 1, rented: (project.rent || []).includes(key) });
+  const line = (key: string) => ({ module: key, name: core.MODULES[key].name, level: core.levelFor(project, key), rented: (project.rent || []).includes(key) });
   const only = project.kind === 'module' ? (project.rebuild ? [core.partOf(project.rebuild).line] : project.only || []) : [];
   const axes = core.AXES.map((axis: any) => ({ name: axis.name, field: axis.field, lines: ((project.axes || {})[axis.key] || []).map(line) })).filter((axis: any) => axis.lines.length);
   const items = only.length ? [{ name: '模块', field: core.MODULES[only[0]].field, lines: only.map(line) }, ...axes] : axes;
@@ -316,7 +316,7 @@ function projectMenu(state: any, id?: string) {
       title: project.job ? '委托' : '模块项目',
       blocks: [
         { type: 'text', text: project.job ? project.job.client + '。做完就能拿到 ' + money(project.job.pay) + '，这块模块也会留在你手里。' : project.rebuild ? '从头重做这一级，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
-        { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
+        { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, progress: project.progress / 100, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
         { type: 'section', title: '各项预期时间' },
         { type: 'dimensions', items: rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
         { type: 'lines', items: [['完成度', metrics.progress.toFixed(0) + '%'], ['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
@@ -1130,7 +1130,7 @@ function dismissMenu(state: any, id: string) {
   };
 }
 
-// A brick for the board: the axis colour, the line's own glyph, studs for its tier, and how far along it is.
+// The library shows the highest completed tier and the progress of the next tier.
 function brickOf(state: any, line: string, extra: any = {}) {
   const module = core.MODULES[line];
   const info = core.lineInfo(state, line);
@@ -1140,10 +1140,9 @@ function brickOf(state: any, line: string, extra: any = {}) {
     : info.level ? (tiers ? info.level + ' 级 · ' : '') + '用过 ' + info.uses + ' 次 · 质量 ' + Math.round(info.quality) + (info.next > 0 ? ' · 下一级做了 ' + Math.round(info.next * 100) + '%' : '')
     : info.next > 0 ? '做了 ' + Math.round(info.next * 100) + '%' : '还没有';
   return {
-    module: line, name: module.name, field: module.field, glyph: module.glyph,
-    level: Math.max(1, info.level + (info.next > 0 ? 1 : 0)), status: info.level ? 'have' : info.next > 0.001 ? 'partial' : 'missing',
-    // How much of this tier is done, so a half-built module reads as half coloured and half grey.
-    progress: info.level ? 1 : info.next,
+    module: line, name: module.name, field: module.field,
+    level: Math.max(1, info.level), status: info.level ? 'have' : info.next > 0.001 ? 'partial' : 'missing',
+    progress: info.next,
     detail, note: module.desc, route: { menu: 'module', id: line }, actions: [], ...extra
   };
 }

@@ -6,9 +6,10 @@ import {
 } from 'cc';
 import * as core from './core/Studio';
 import * as content from './core/Content';
-import { Pen, drawRoom, drawTrophy, drawBrick, drawWork, seatLayout, roomProps } from './ui/Art';
+import { Pen, drawRoom, drawTrophy, drawBrick, drawModulePlate, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
 import { ArtPack, Look, RoomRect, Station, officeRooms } from './ui/People';
+import { WorkPreviews } from './ui/WorkPreview';
 
 const { ccclass } = _decorator;
 const colors = {
@@ -116,6 +117,7 @@ export class StudioApp extends Component {
   private officeSwiped = false;
   private staffSwipe: { id: number; turn: (step: number) => void } | null = null;
   private art = new ArtPack();
+  private workPreviews = new WorkPreviews();
   private brickTip: any = null;
   private activeTouches = new Set<number>();
   private renderPending = false;
@@ -161,6 +163,7 @@ export class StudioApp extends Component {
     this.effects = this.box(this.canvas, 'Effects', 0, 0, 390, 844);
     this.state = this.load();
     this.art.load(() => { if (this.isValid) this.render(); });
+    this.workPreviews.load(() => { if (this.isValid) this.render(); });
     this.audio = this.canvas.addComponent(AudioSource);
     for (const name of ['click', 'income', 'launch', 'breakeven']) resources.load('sounds/' + name, AudioClip, (error, clip) => {
       if (!error && this.isValid) this.sounds.set(name, clip);
@@ -179,6 +182,7 @@ export class StudioApp extends Component {
   onDestroy() {
     this.flushSave();
     this.art.destroy();
+    this.workPreviews.destroy();
     screen.off('window-resize', this.resize, this);
     engineGame.off(Game.EVENT_HIDE, this.background, this);
   }
@@ -436,6 +440,34 @@ export class StudioApp extends Component {
   private canvasNode(parent: Node, name: string, x: number, y: number, width: number, height: number) {
     const node = this.box(parent, name, x, y, width, height);
     return { node, pen: new Pen(node.addComponent(Graphics)) };
+  }
+
+  private moduleBrick(parent: Node, x: number, y: number, size: number, key: string, level: number, status = 'have', progress = 0) {
+    const module = core.MODULES[key];
+    const { node, pen } = this.canvasNode(parent, 'Brick', x, y, size, size);
+    const subject = this.art.moduleIcon(key);
+    if (!subject) {
+      drawBrick(pen, 0, 0, size, core.FIELDS[module.field].color, module.glyph, level, status, false, progress);
+      return;
+    }
+    const faded = status === 'missing';
+    drawModulePlate(pen, size, module.axis, level, faded);
+    if (level >= 3) {
+      const rim = this.art.moduleIcon(level === 3 ? 'module-silver' : 'module-gold')!;
+      this.art.place(node, rim, 0, 0, size, size).grayscale = faded;
+    }
+    this.art.place(node, subject, size * 0.15, size * 0.14, size * 0.7, size * 0.7).grayscale = faded;
+    const { node: indicator, pen: overlay } = this.canvasNode(node, 'ModuleIndicator', 0, 0, size, size);
+    if (progress > 0 && progress < 1) {
+      overlay.rect(size * 0.13, size * 0.85, size * 0.54, size * 0.082, '#313a34', 1);
+      overlay.rect(size * 0.13, size * 0.85, size * 0.54 * progress, size * 0.082, '#f3cf79', 1);
+    }
+    const depth = Math.round(size * 0.28);
+    const corner = size - depth - 1;
+    overlay.rect(corner, corner, depth, depth, '#e9d6b2', 2);
+    overlay.rect(corner + 1, corner + 1, depth - 2, depth - 2, '#49382b', 1);
+    this.text(indicator, String(level), corner, corner, depth, depth, Math.max(7, Math.round(size * 0.24)), '#fff8e9', true)
+      .horizontalAlign = HorizontalTextAlignment.CENTER;
   }
 
   private text(parent: Node, value: any, x: number, y: number, width: number, height = 24, size = 14, color = colors.ink, bold = false) {
@@ -1060,11 +1092,7 @@ export class StudioApp extends Component {
         if (!book) return;
         const { x, y, w, h } = map(frame);
         const cover = this.box(node, 'ExhibitCover', x, y, w, h);
-        cover.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
-        const zoom = h / 96;
-        const { node: illustration, pen } = this.canvasNode(cover, 'Art', 0, 0, w / zoom, 96);
-        illustration.setScale(zoom, zoom, 1);
-        drawWork(pen, w / zoom, 96, book.type, 1, book.metrics.dimensions.picture, book.released);
+        this.workPreview(cover, w, h, book, 1);
       });
       const offset = room.staffFloor?.deskOffsetY ?? 0;
       const rows = room.deskRows ?? (room.staffFloor ? art.layout![room.staffFloor.deskRowsFrom ?? 'formal'].deskRows : undefined);
@@ -1263,21 +1291,33 @@ export class StudioApp extends Component {
     }
   }
 
-  // The screen clips artwork drawn at its design height and scaled down into the room.
+  // The same scene is framed for the office screen, the exhibit and the work record.
+  private workPreview(node: Node, width: number, height: number, work: any, progress: number, picture = work.metrics?.dimensions.picture ?? 0) {
+    node.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
+    const frame = this.workPreviews.frame(work, progress);
+    if (frame) {
+      const zoom = Math.max(width / frame.rect.width, height / frame.rect.height);
+      const w = frame.rect.width * zoom, h = frame.rect.height * zoom;
+      this.art.place(node, frame, (width - w) / 2, (height - h) / 2, w, h);
+      return;
+    }
+    const zoom = height / 96;
+    const { node: fallback, pen } = this.canvasNode(node, 'Art', 0, 0, width / zoom, 96);
+    fallback.setScale(zoom, zoom, 1);
+    drawWork(pen, width / zoom, 96, work.type, progress, picture, work.started ?? work.released);
+  }
+
   private officeMonitor(node: Node, screen: { x: number; y: number; w: number; h: number }, project: any, metrics: any) {
     const { catalog } = this.state;
     const monitor = this.box(node, 'Screen', screen.x, screen.y, screen.w, screen.h);
-    monitor.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT;
-    const zoom = screen.h / 96;
-    const { node: work, pen: screenPen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w / zoom, 96);
-    work.setScale(zoom, zoom, 1);
-    if (project) drawWork(screenPen, screen.w / zoom, 96, project.type, project.released ? 1 : metrics.progress / 100, metrics.dimensions.picture, project.started);
-    else if (catalog.length) drawWork(screenPen, screen.w / zoom, 96, catalog[0].type, 1, catalog[0].metrics.dimensions.picture, catalog[0].released);
-    else { screenPen.rect(0, 0, screen.w / zoom, 96, '#3b4744', 2); this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER; }
-    const caption = project ? '《' + project.name + '》' + (project.released ? ' 补丁' : '') : catalog.length ? '上一作《' + catalog[0].name + '》' : '';
-    if (caption) {
-      const tag = this.box(monitor, 'Caption', 4, 2, Math.min(screen.w - 8, caption.length * 10 + 10), 14, colors.night, 7, 190);
-      this.text(tag, caption, 5, 0, Math.min(screen.w - 18, caption.length * 10), 14, 9, '#ffffff');
+    const shown = project?.released ? catalog.find((book: any) => book.id === project.id) ?? project : project ?? catalog[0];
+    if (shown) {
+      const active = project && !project.released;
+      this.workPreview(monitor, screen.w, screen.h, shown, active ? metrics.progress / 100 : 1, active ? metrics.dimensions.picture : undefined);
+    } else {
+      const { pen } = this.canvasNode(monitor, 'Art', 0, 0, screen.w, screen.h);
+      pen.rect(0, 0, screen.w, screen.h, '#3b4744', 2);
+      this.text(monitor, '立项后作品在这里成形', 0, 0, screen.w, screen.h, 10, '#cfeee0').horizontalAlign = HorizontalTextAlignment.CENTER;
     }
     this.clickable(monitor, () => project ? this.openMenu('project', project.id) : this.openMenu('project'));
     this.anchors.set('work', monitor);
@@ -1750,14 +1790,12 @@ export class StudioApp extends Component {
       const chosen: string[] = this.draft.axes?.[axis.key] || [];
       const fixed = !!this.draft.sequel;
       const expanded = !!open[axis.key];
-      const color = core.FIELDS[axis.field].color;
       const summary = chosen.map(key => core.MODULES[key].name + '（' + statusOf(key).text + '）').join('、') || '未选';
       const row = this.box(body, 'Axis', 0, cursor, inner, 52, expanded ? colors.soft : colors.paper, 10);
       new Pen(this.box(row, 'Rim', 0, 0, inner, 52).addComponent(Graphics)).frame(0, 0, inner, 52, expanded ? colors.green : colors.line, expanded ? 2 : 1, 10);
       chosen.slice(0, 2).forEach((key: string, index: number) => {
-        const module = core.MODULES[key];
         const status = statusOf(key);
-        drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, module.glyph, status.need, status.brick, false, status.progress);
+        this.moduleBrick(row, 8 + index * 34, 10, 30, key, status.need, status.brick, status.progress);
       });
       const textLeft = 8 + Math.max(1, Math.min(2, chosen.length)) * 34 + 4;
       this.text(row, axis.name + (this.draft.sequel && fixed ? ' · 沿用原作' : ''), textLeft, 6, inner - textLeft - 40, 20, 13, colors.ink, true);
@@ -1783,7 +1821,7 @@ export class StudioApp extends Component {
         const y = cursor + Math.floor(index / 3) * 92;
         const node = this.box(body, 'Pick', x, y, cell, 84, blocked ? colors.pale : on ? colors.soft : colors.paper, 10);
         new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
-        drawBrick(this.canvasNode(node, 'Brick', (cell - 40) / 2, 4, 40, 40).pen, 0, 0, 40, blocked ? colors.line : color, module.glyph, status.need, blocked ? 'missing' : status.brick, false, blocked ? 0 : status.progress);
+        this.moduleBrick(node, (cell - 40) / 2, 4, 40, key, status.need, blocked ? 'missing' : status.brick, blocked ? 0 : status.progress);
         this.text(node, module.name, 4, 46, cell - 8, 18, 11, blocked ? colors.muted : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.text(node, blocked || '选 ' + status.need + ' 级 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.clickable(node, () => {
@@ -1995,9 +2033,8 @@ export class StudioApp extends Component {
         for (const axis of block.items) {
           const row = this.box(parent, 'AxisRow', 0, y, width, 52, colors.paper, 10);
           new Pen(this.box(row, 'Rim', 0, 0, width, 52).addComponent(Graphics)).frame(0, 0, width, 52, colors.line, 1, 10);
-          const color = core.FIELDS[axis.field]?.color || colors.green;
           axis.lines.slice(0, 2).forEach((line: any, index: number) => {
-            drawBrick(this.canvasNode(row, 'Brick', 8 + index * 34, 10, 30, 30).pen, 0, 0, 30, color, line.glyph, line.level, 'have', false, 1);
+            this.moduleBrick(row, 8 + index * 34, 10, 30, line.module, line.level);
           });
           const left = 8 + Math.max(1, Math.min(2, axis.lines.length)) * 34 + 4;
           this.text(row, axis.name, left, 6, width - left - 16, 20, 13, colors.ink, true);
@@ -2087,11 +2124,11 @@ export class StudioApp extends Component {
         const rows = Math.max(1, Math.ceil(block.items.length / columns));
         const tips = block.items.some((item: any) => !item.open);
         const height = Math.max(rows * (size + 40), tips ? this.tipLayout('Bricks')?.bottom || 0 : 0);
-        const { node, pen } = this.canvasNode(parent, 'Bricks', 0, y, width, height);
+        const node = this.box(parent, 'Bricks', 0, y, width, height);
         block.items.forEach((item: any, index: number) => {
           const x = pitch * (index % columns) + (pitch - size) / 2;
           const top = Math.floor(index / columns) * (size + 40);
-          drawBrick(pen, x, top, size, core.FIELDS[item.field]?.color || colors.green, item.glyph, item.level || 1, item.status, item.oneOff, item.progress ?? 1);
+          this.moduleBrick(node, x, top, size, item.module, item.level, item.status, item.progress);
           this.text(node, item.name, pitch * (index % columns) + 2, top + size + 2, pitch - 4, 30, 10, item.status === 'missing' ? colors.muted : colors.ink).horizontalAlign = HorizontalTextAlignment.CENTER;
           // A shelf opens in place instead of showing a card.
           if (item.open) {
@@ -2324,8 +2361,9 @@ export class StudioApp extends Component {
 
   private cover(parent: Node, y: number, book: any) {
     const width = this.width - 40;
-    const { node, pen } = this.canvasNode(parent, 'Cover', 0, y, width, 150);
-    drawWork(pen, width, 150, book.type, 1, book.metrics.dimensions.picture, book.released);
+    const node = this.box(parent, 'Cover', 0, y, width, 150);
+    this.workPreview(this.box(node, 'Illustration', 0, 0, width, 150), width, 150, book, 1);
+    const { pen } = this.canvasNode(node, 'CoverShade', 0, 0, width, 150);
     pen.rect(0, 100, width, 50, colors.night, 0, 170);
     this.text(node, '《' + book.name + '》', 14, 104, width - 28, 26, 19, '#ffffff', true);
     this.text(node, core.titleName(book) + ' · ' + core.SCALES[book.scale].name + ' · ' + this.state.company, 14, 128, width - 28, 18, 11, '#d7e2d9');
@@ -2527,8 +2565,8 @@ export class StudioApp extends Component {
       bubble.getComponent(UITransform).setContentSize(width, height);
       const paper = this.box(bubble, 'Paper', 0, 0, width, height, colors.paper, 14, 250);
       paper.setSiblingIndex(0);
-      const { pen } = this.canvasNode(bubble, 'Face', 10, 10, 44, 44);
-      drawBrick(pen, 0, 0, 44, color, module ? module.glyph : 'star', 1, 'have');
+      if (module) this.moduleBrick(bubble, 10, 10, 44, item.line, 1);
+      else drawBrick(this.canvasNode(bubble, 'Face', 10, 10, 44, 44).pen, 0, 0, 44, color, 'star', 1, 'have');
       new Pen(this.box(bubble, 'Rim', 0, 0, width, height).addComponent(Graphics)).frame(0, 0, width, height, color, 2, 14);
       this.text(bubble, item.title, 64, 8, width - 78, 22, 14, colors.ink, true);
       const opacity = bubble.addComponent(UIOpacity);

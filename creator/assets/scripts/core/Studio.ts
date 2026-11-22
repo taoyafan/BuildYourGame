@@ -4876,6 +4876,11 @@ export function restoreStudio(saved: any) {
       }
     }
   }
+  const artHot = next?.marketCycle?.axes?.art?.hot;
+  if (artHot && artHot['水彩'] !== undefined) {
+    artHot['剪影'] ??= artHot['水彩'];
+    delete artHot['水彩'];
+  }
   // Older saves had one shared market lens; the six-axis cycle replaces it before validation, keeping the
   // fields the player has already seen. Tags that moved between axes are dropped from the hot picks.
   if (next?.marketCycle && Array.isArray(next.projects) && Array.isArray(next.catalog)) ensureMarketCycle(next);
@@ -4885,6 +4890,11 @@ export function restoreStudio(saved: any) {
     for (const tag of Object.keys(clock.hot)) if (TAG_GROUP[tag] !== axis) delete clock.hot[tag];
   }
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
+  for (const work of [...next.catalog, ...(Array.isArray(next.works) ? next.works : [])]) {
+    if (Array.isArray(work?.tags) && work.tags.includes('水彩')) {
+      work.tags = Array.from(new Set(work.tags.map((tag: string) => tag === '水彩' ? '剪影' : tag)));
+    }
+  }
   if ((next.rulesRevision || 0) < 1) {
     for (const project of next.projects) {
       const share = sum(CONTENT_KEYS.map(key => TYPES[project.type].share[key]));
@@ -5158,6 +5168,10 @@ export function restoreStudio(saved: any) {
   // records, so they are dropped here. The studio opens on day 1, so nothing before it was ever sampled.
   if (!Array.isArray(next.heatLog)) next.heatLog = [];
   next.heatLog = next.heatLog.filter((item: any) => item && item.day >= 1 && item.day <= next.day && item.v);
+  for (const { v } of next.heatLog) if (v['水彩'] !== undefined) {
+    v['剪影'] ??= v['水彩'];
+    delete v['水彩'];
+  }
   projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;
