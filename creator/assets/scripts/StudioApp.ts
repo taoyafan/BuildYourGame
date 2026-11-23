@@ -1147,12 +1147,11 @@ export class StudioApp extends Component {
     }
     this.clickable(node, () => { if (!this.officeSwiped) this.openMenu('team'); });
     if (state.office !== 0 && props.screen) this.officeMonitor(node, props.screen, project, metrics);
-    // Desks: people on the watched project first, then anyone resting or stressed, then by seniority.
-    const onProject = (person: any) => project && core.projectOf(state, person)?.id === project.id ? 0 : 1;
-    const attention = (person: any) => person.leaveUntil > state.day || person.stressTags.length ? 0 : 1;
-    const sorted = [...state.staff].sort((left: any, right: any) => onProject(left) - onProject(right) || attention(left) - attention(right) || (left.joined || 0) - (right.joined || 0));
+    const staffByDesk = new Map<number, any>(state.staff.map((person: any) => [person.desk, person]));
+    const occupied = Math.max(0, ...state.staff.map((person: any) => person.desk + 1));
+    const capacity = Math.max(occupied, core.seats(state));
     const pageSize = splitOffice ? 10 : 20;
-    const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
+    const pages = Math.max(1, Math.ceil(occupied / pageSize));
     let page = Math.min(this.officePage, pages - 1);
     const stationLayer = staffArea ? this.box(staffArea, 'Workstations', 0, 0, inner, staffHeight) : node;
     const sharedDesk = roomName && deskRows.length ? art?.deskRowFrame(roomName) : null;
@@ -1162,11 +1161,11 @@ export class StudioApp extends Component {
     // whether there is work; a sweat drop and a cloud above the head mark tired and wanting to leave.
     const drawStations = () => {
       if (!art) return;
-      const shown = sorted.slice(page * pageSize, (page + 1) * pageSize);
-      const count = Math.min(pageSize, Math.max(shown.length, core.seats(state) - page * pageSize));
+      const startDesk = page * pageSize;
+      const count = Math.min(pageSize, capacity - startDesk);
       const anchors = seats || seatLayout(count, inner, staffHeight).map(seat => ({ x: seat.x, y: seat.y - 13 * seat.scale, k: seat.scale * 0.2 }));
       const stations: Station[] = anchors.map((seat, index) => {
-        const person = shown[index];
+        const person = staffByDesk.get(startDesk + index);
         let look: Look | null = null;
         if (person && person.leaveUntil > state.day) look = { face: '', person: false, laptop: 'closed', mug: false, symbols: [] };
         else if (person) {
@@ -2512,7 +2511,7 @@ export class StudioApp extends Component {
     const py = (value: number) => bottom - (bottom - top) * (Math.max(low, Math.min(high, value)) - low) / (high - low);
     const { node, pen } = this.canvasNode(parent, 'Heat', offsetX, y, width, height);
     pen.rect(left, top, right - left, bottom - top, '#fbf8f1', 4);
-    const step = span >= 240 ? 90 : span >= 120 ? 60 : span >= 45 ? 30 : 15;
+    const step = span >= 45 ? 30 : 15;
     for (let ago = step; ago < span; ago += step) {
       const tx = px(block.end - ago);
       if (tx - left < 44 || right - tx < 38) continue;
@@ -2521,7 +2520,7 @@ export class StudioApp extends Component {
     }
     pen.line(left, py(1), right, py(1), colors.line, 2);
     for (const [label, value] of [['热', 1.16], ['平', 1], ['冷', 0.84]] as [string, number][]) this.text(node, label, 0, py(value) - 8, left - 6, 16, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    this.text(node, block.fromLabel || '一年前', left, height - 20, 80, 16, 10, colors.muted);
+    this.text(node, block.fromLabel, left, height - 20, 80, 16, 10, colors.muted);
     this.text(node, '现在', right - 40, height - 20, 40, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     const visible = block.lines.filter((item: any) => item.shown);
     const segments = new Map<string, { points: [number, number, number, number]; colors: string[]; index: number }>();

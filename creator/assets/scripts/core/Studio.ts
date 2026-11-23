@@ -2,14 +2,14 @@
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
 import { MODULES, AXES, FIELDS, ORIGINS, SECOND_MECHANIC } from './Modules';
-import { rotationSpan, legacyRotationSpan, retimedAge } from './MarketCycle';
+import { marketWave, rotationSpan, smoothMarket } from './MarketCycle';
 import { moduleUpdateWork, moduleUpdatedQuality, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, SCALE_BOUNDS, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { MODULES, AXES, FIELDS, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.75';
+export const VERSION = '0.4.76';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -336,7 +336,8 @@ export const HEAT_REDEEM = 0.6;
 export const HEAT_FLOOR = 0.75;
 export const HEAT_CEIL = 1.45;
 export const axisTags = (axis: string): string[] => ALL_TAGS.filter(tag => TAG_GROUP[tag] === axis);
-const OPTION_SWING = 0.02;
+const MARKET_MIGRATION_DAYS = 24;
+const MARKET_NEWS_GAP = 70;
 // Nine options fill the 12% swing; fewer options swing less, in proportion, rounded to a whole percent.
 export const axisAmplitude = (axis: string) => Math.round(Math.min(1, axisTags(axis).length / 9) * 12) / 100;
 const heatRound = (value: number) => Math.round(value * 1000) / 1000;
@@ -345,73 +346,19 @@ const heatRound = (value: number) => Math.round(value * 1000) / 1000;
 export const LENS_ORDER = ['design', 'art', 'audio', 'tech'];
 export const LENS_ABILITY: any = { design: 'creativity', art: 'picture', audio: 'sound', tech: 'fluidity' };
 
-// A small wobble that never repeats and never needs saving: same day and axis, same offset, in this run
-// and the next. It only keeps a curve from looking drawn with a ruler.
-function wobble(day: number, index: number) {
-  let h = Math.imul(day | 0, 0x27d4eb2d) ^ Math.imul(index + 1, 0x85ebca6b);
-  h = Math.imul(h ^ (h >>> 15), 0x2545f491);
-  h ^= h >>> 13;
-  return (h >>> 0) / 2147483648 - 1;
-}
-const axisIndex = (axis: string) => Math.max(0, MARKET_AXES.indexOf(axis));
-// One round is 1.2 to 1.8 titles long and is re-rolled every round, so no two axes stay in step. The
-// reference crew finishes a small title in weeks, which would put four rounds in a season and make the
-// chart a blur: no round is shorter than a quarter of a year, so the first scales see about four rounds.
-function axisLength(state: any, scale: number) {
-  const production = Math.max(12, rotationSpan(scale).production);
-  const roll = random(state);
-  const byTitle = production * (1.2 + roll * 0.6);
-  const byYear = 78 + roll * 26;
-  return Math.max(9, Math.round(Math.max(byTitle, byYear)));
-}
-// At least one option runs hot, at most half of them; the rest share the opposite side so the axis still
-// averages out. Whoever has waited longest takes the next turn, so no option can sit cold for years; the
-// order in `hot` staggers their peaks, so two hot options never form one wide crest.
-function rollHot(state: any, axis: string, since: any) {
-  const tags = axisTags(axis);
-  const most = Math.max(1, Math.floor(tags.length / 2));
-  const count = 1 + Math.floor(random(state) * most);
-  const key: any = {};
-  for (const tag of tags) key[tag] = (since[tag] || 0) + random(state) * 0.5;
-  const pool = [...tags].sort((left, right) => key[left] - key[right]);
-  const hot: any = {};
-  for (let i = 0; i < count && i < pool.length; i++) { hot[pool[i]] = i; since[pool[i]] = state.day; }
-  return hot;
-}
-// Every axis opens part-way through a round, a little ahead of the one before it. Starting the first axis
-// at zero left the default 行情 tab with a single sample — a dot on the right edge — while the other tabs
-// at least had a few days behind them.
-function freshAxis(state: any, axis: string, scale: number, phase: number, since: any) {
-  const len = axisLength(state, scale);
-  return { len, from: state.day - Math.round(len * phase), hot: rollHot(state, axis, since) };
-}
-function strengthAt(clock: any, age: number) {
-  if (age < 0 || age >= clock.len) return 0;
-  const rise = Math.max(1, Math.round(clock.len * 0.25));
-  const hold = Math.max(1, Math.round(clock.len * 0.5));
-  const fall = Math.max(1, clock.len - rise - hold);
-  const smooth = (t: number) => t * t * (3 - 2 * t);
-  if (age < rise) return smooth(age / rise);
-  if (age < rise + hold) return 1;
-  return smooth(Math.max(0, 1 - (age - rise - hold) / fall));
-}
-export function axisStrength(clock: any, day: number) {
-  return strengthAt(clock, day - clock.from);
-}
 export const axisTarget = (cycle: any, axis: string) => cycle.late || !cycle.focus ? 1 : (cycle.focus === axis ? FOCUS_SWING : QUIET_SWING);
 // The swing a handover is worth today: the focus changes only the amplitude, never the clock's phase, so
 // a curve keeps moving while it grows or shrinks, and the change takes two months instead of one switch.
 export function axisSwing(state: any, axis: string) {
   const cycle = state.marketCycle;
-  if (!cycle || !cycle.axes) return 1;
+  if (!cycle) return 1;
   const target = axisTarget(cycle, axis);
   const hand = cycle.handover;
   if (!hand) return target;
   const t = clamp((state.day - hand.start) / HANDOVER_DAYS, 0, 1);
   if (t >= 1) return target;
   const from = hand.from && hand.from[axis] !== undefined ? hand.from[axis] : target;
-  const s = t * t * (3 - 2 * t);
-  return from + (target - from) * s;
+  return from + (target - from) * smoothMarket(t);
 }
 function startHandover(state: any) {
   const cycle = state.marketCycle;
@@ -419,41 +366,39 @@ function startHandover(state: any) {
   for (const axis of MARKET_AXES) from[axis] = axisSwing(state, axis);
   cycle.handover = { start: state.day, from };
 }
-function newMarketCycle(state: any) {
-  const scale = Math.max(0, ...state.projects.filter((project: any) => project.kind === 'game' && !project.parentId && !project.port).map((project: any) => project.scale), ...state.catalog.filter((book: any) => !book.parentId).map((book: any) => book.scale));
-  const seen = Array.isArray(state.marketCycle?.seen) && state.marketCycle.seen.length ? state.marketCycle.seen.filter((field: string) => LENS_ORDER.includes(field)) : ['design'];
-  const cycle: any = { scale, axes: {}, since: {}, focus: FOCUS_AXES[0], done: [FOCUS_AXES[0]], focusAt: releases(state), late: false, handover: null, seen: seen.length ? seen : ['design'], enginePhase: state.seed % 360 };
-  MARKET_AXES.forEach((axis, index) => { cycle.since[axis] = {}; cycle.axes[axis] = freshAxis(state, axis, scale, 0.35 + index * 0.09, cycle.since[axis]); });
+function ensureMarketCycle(state: any) {
+  const saved = state.marketCycle;
+  if (Number.isInteger(saved?.waveSeed)) return saved;
+
+  const scale = scaleIndex(saved?.scale) ? saved.scale : Math.max(0,
+    ...state.projects.filter((project: any) => project.kind === 'game' && !project.parentId && !project.port && scaleIndex(project.scale)).map((project: any) => project.scale),
+    ...state.catalog.filter((book: any) => !book.parentId && scaleIndex(book.scale)).map((book: any) => book.scale));
+  const seen = Array.isArray(saved?.seen) ? saved.seen.filter((field: string) => LENS_ORDER.includes(field)) : [];
+  const focus = saved?.late ? null : FOCUS_AXES.includes(saved?.focus) ? saved.focus : FOCUS_AXES[0];
+  const done = Array.isArray(saved?.done) ? saved.done.filter((axis: string) => FOCUS_AXES.includes(axis)) : [];
+  if (focus && !done.includes(focus)) done.push(focus);
+  const recent = Array.isArray(state.heatLog) ? state.heatLog[state.heatLog.length - 1] : null;
+  const migration = saved && recent?.v && typeof recent.v === 'object' && !Array.isArray(recent.v)
+    && recent.day >= state.day - HEAT_EVERY - 1 && recent.day <= state.day ? { start: state.day, values: recent.v } : null;
+  const cycle = {
+    scale, waveSeed: state.seed >>> 0, clock: { day: state.day, time: state.day }, newsAt: state.day,
+    focus, done, focusAt: Number.isFinite(saved?.focusAt) ? saved.focusAt : releases(state),
+    late: !!saved?.late, handover: saved?.handover ?? null, seen: seen.length ? seen : ['design'], migration
+  };
   state.marketCycle = cycle;
   delete state.lens;
   delete state.lensFrom;
   delete state.tags;
   return cycle;
 }
-function ensureMarketCycle(state: any) {
-  const cycle = state.marketCycle;
-  if (cycle && cycle.axes && MARKET_AXES.every(axis => cycle.axes[axis])) {
-    if (!Array.isArray(cycle.seen) || !cycle.seen.length) cycle.seen = ['design'];
-    if (!Array.isArray(cycle.done)) cycle.done = cycle.focus ? [cycle.focus] : [];
-    if (cycle.focusAt === undefined || cycle.focusAt === null) cycle.focusAt = releases(state);
-    if (typeof cycle.late !== 'boolean') cycle.late = false;
-    if (!Number.isFinite(cycle.enginePhase)) cycle.enginePhase = state.seed % 360;
-    if (!cycle.since || typeof cycle.since !== 'object') cycle.since = {};
-    for (const axis of MARKET_AXES) if (!cycle.since[axis] || typeof cycle.since[axis] !== 'object') cycle.since[axis] = {};
-    return cycle;
-  }
-  return newMarketCycle(state);
+function marketTime(cycle: any, day: number) {
+  const pace = Math.max(1, rotationSpan(cycle.scale).production / 55);
+  return cycle.clock.time + (day - cycle.clock.day) / pace;
 }
 function extendMarketCycle(state: any, scale: number) {
   const cycle = ensureMarketCycle(state);
   if (scale <= cycle.scale) return;
-  const ratio = rotationSpan(scale).total / Math.max(1, rotationSpan(cycle.scale).total);
-  for (const axis of MARKET_AXES) {
-    const clock = cycle.axes[axis];
-    const phase = (state.day - clock.from) / Math.max(1, clock.len);
-    clock.len = Math.max(9, Math.round(clock.len * ratio));
-    clock.from = state.day - Math.round(phase * clock.len);
-  }
+  cycle.clock = { day: state.day, time: marketTime(cycle, state.day) };
   cycle.scale = scale;
 }
 // A focus lasts at least two shipped titles: long enough to meet a peak on the axis being pushed, short
@@ -477,23 +422,18 @@ function advanceFocus(state: any) {
 }
 function marketCycleDay(state: any) {
   const cycle = ensureMarketCycle(state);
-  for (const axis of MARKET_AXES) {
-    const clock = cycle.axes[axis];
-    let guard = 0;
-    while (state.day - clock.from >= clock.len && guard++ < 8) {
-      clock.from += clock.len;
-      clock.len = axisLength(state, cycle.scale);
-      clock.hot = rollHot(state, axis, cycle.since[axis]);
-      if (axis === cycle.focus && !cycle.late) {
-        const modules = planOptions(state, axis === 'genre' ? 'core' : axis)
-          .filter(line => MODULES[line].tags.some((tag: string) => has(clock.hot, tag)))
-          .map(line => MODULES[line].name);
-        if (modules.length) news(state, state.focus || 0, false, `${AXIS_NAME[axis]}方向出现新窗口`, `最近的讨论集中在${modules.join('、')}。行情只在发售当天结算，做完那天的冷热才算数。`, null, true);
-      }
-    }
-  }
   if (!cycle.late && cycle.focus && releases(state) - cycle.focusAt >= 2) advanceFocus(state);
   if (cycle.handover && state.day - cycle.handover.start >= HANDOVER_DAYS) cycle.handover = null;
+  if (cycle.migration && state.day - cycle.migration.start >= MARKET_MIGRATION_DAYS) cycle.migration = null;
+
+  const axis = cycle.focus;
+  if (!axis || cycle.late || state.day - cycle.newsAt < MARKET_NEWS_GAP) return;
+  const modules = planOptions(state, axis === 'genre' ? 'core' : axis)
+    .filter(line => tagHeat(tagDemand(state, MODULES[line].tags[0]), axisAmplitude(axis)).tone === 'up')
+    .map(line => MODULES[line].name);
+  if (!modules.length) return;
+  cycle.newsAt = state.day;
+  news(state, state.focus || 0, false, `${AXIS_NAME[axis]}方向出现新窗口`, `最近的讨论集中在${modules.join('、')}。行情只在发售当天结算，做完那天的冷热才算数。`, null, true);
 }
 function reviewMarket(state: any, book: any) {
   if (book.parentId) return;
@@ -523,38 +463,37 @@ export function market(state: any, tag: string) {
   };
   return { multiplier: round(clamp(value, HEAT_FLOOR, HEAT_CEIL)), ...text[heat.label] };
 }
-// Each option has its own small drift on top of the rise and fall of its axis.
+// Each option follows its own cycle. When demand is crowded, only the leading options stay hot.
 export function tagDemand(state: any, tag: string) {
   const axis = TAG_GROUP[tag];
   if (!axis) return 1;
-  const day = state.day;
   const cycle = ensureMarketCycle(state);
-  const wobbleValue = wobble(day, axisIndex(axis)) * 0.005;
-  // Engine is a generational tier rather than a taste cycle: 2D stays near baseline (±3%) while 3D
-  // rides above it (+3%..+10%) with smooth waves that can dip into flat and lightly brush 2D's peak.
+  const day = state.day;
+  const time = marketTime(cycle, day);
+  const seed = cycle.waveSeed;
+  let demand: number;
   if (axis === 'engine') {
-    const phase = cycle.enginePhase;
-    if (tag === '3D') return heatRound(1.065 + 0.035 * Math.sin(2 * Math.PI * (day + phase) / 180 + 1.8) + wobbleValue);
-    return heatRound(1 + 0.03 * Math.sin(2 * Math.PI * (day + phase) / 150) + wobbleValue);
+    const wave = marketWave(seed, idHash(tag), time / 1.6);
+    demand = tag === '3D' ? 1.06 + wave * 0.04 : 1 + wave * 0.03;
+  } else {
+    const tags = axisTags(axis);
+    const waves = tags.map(option => marketWave(seed, idHash(option), time));
+    const competing = waves.filter(value => value > 0).sort((left, right) => right - left);
+    const hotLimit = Math.max(1, Math.floor(tags.length / 2));
+    const threshold = competing.length > hotLimit ? (competing[hotLimit - 1] + competing[hotLimit]) / 2 : 0;
+    const relative = waves[tags.indexOf(tag)] - threshold;
+    const deviation = relative < 0 ? relative / (1 + threshold) : relative;
+    demand = 1 + axisSwing(state, axis) * axisAmplitude(axis) * deviation;
   }
-  const clock = cycle.axes[axis];
-  if (!clock) return 1;
-  const tags = axisTags(axis);
-  const hot = Object.keys(clock.hot || {}).filter(item => tags.includes(item));
-  const hotCount = hot.length;
-  const coldCount = Math.max(1, tags.length - hotCount);
-  const at = hot.indexOf(tag);
-  const direction = at >= 0 ? 1 : -(hotCount / coldCount);
-  const rise = Math.max(1, Math.round(clock.len * 0.25));
-  // Several hot options peak one after another instead of together. A later one starts that many days in
-  // and fits its own rise and fall into the rest of the round, so nothing is cut off when the round turns.
-  const lag = at > 0 ? Math.min(clock.len - 2, Math.round(at * rise / 2)) : 0;
-  const raw = day - clock.from;
-  const age = lag > 0 ? (raw <= lag ? 0 : (raw - lag) * clock.len / (clock.len - lag)) : raw;
-  const strength = strengthAt(clock, age);
-  const phase = day / 113 + tags.indexOf(tag) / tags.length + axisIndex(axis) / MARKET_AXES.length;
-  const drift = OPTION_SWING * Math.sin(2 * Math.PI * phase);
-  return heatRound(1 + axisSwing(state, axis) * (axisAmplitude(axis) * direction * strength + drift) + wobbleValue);
+  const migration = cycle.migration;
+  if (migration && day >= migration.start) {
+    const previous = migration.values[tag] ?? (tag === '剪影' ? migration.values['水彩'] : undefined);
+    if (Number.isFinite(previous)) {
+      const progress = smoothMarket(clamp((day - migration.start) / MARKET_MIGRATION_DAYS, 0, 1));
+      demand = previous + (demand - previous) * progress;
+    }
+  }
+  return heatRound(demand);
 }
 // Per-axis breakdown of a title's launch heat so the archive can show which axes carried or dragged it.
 export function tagBreakdown(state: any, tags: string[]) {
@@ -590,19 +529,29 @@ export function tagFactor(state: any, tags: string[], scale = 0) {
 // Past demand of every tag, one sample every few days for a year: what the 行情 chart draws. Only the past
 // is kept; a round of three months needs more than one point to be visible.
 const HEAT_EVERY = 6;
-const HEAT_SAMPLES = 60;
+const HEAT_SAMPLES = 61;
 function recordHeat(state: any) {
   const sample: any = {};
   for (const tag of ALL_TAGS) sample[tag] = tagDemand(state, tag);
   state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_SAMPLES);
 }
-export function heatSeries(state: any, tag: string) {
+export function heatSeries(state: any, tag: string, start = 1) {
   const past = (state.heatLog || []).filter((item: any) => Number.isFinite(item.v[tag]))
     .map((item: any) => ({ day: item.day, value: item.v[tag] }));
   // Today is often already one of the samples; appending it again would draw a vertical stub.
   const last = past[past.length - 1];
-  if (last && last.day >= state.day) return past;
-  return [...past, { day: state.day, value: tagDemand(state, tag) }];
+  if (!last || last.day < state.day) past.push({ day: state.day, value: tagDemand(state, tag) });
+  const first = past.findIndex((point: { day: number }) => point.day >= start);
+  if (first <= 0) return past;
+  const visible = past.slice(first);
+  const next = visible[0];
+  // Clip the first segment at the window edge, keeping the line continuous between samples.
+  if (next.day > start) {
+    const previous = past[first - 1];
+    const fraction = (start - previous.day) / (next.day - previous.day);
+    visible.unshift({ day: start, value: previous.value + (next.value - previous.value) * fraction });
+  }
+  return visible;
 }
 export function heatGroups(state: any, draft?: any) {
   return AXES.map(axis => ({
@@ -615,7 +564,7 @@ export function heatGroups(state: any, draft?: any) {
 // Research and news follow the focus field, then use all learned fields.
 export const activeMarketFields = (state: any): string[] => {
   const cycle = state.marketCycle;
-  if (!cycle || !cycle.axes || cycle.late || !cycle.focus) return marketFields(state);
+  if (!cycle || cycle.late || !cycle.focus) return marketFields(state);
   return [AXIS_FIELD[cycle.focus]];
 };
 export const lensOf = (state: any) => activeMarketFields(state)[0] || 'design';
@@ -1281,7 +1230,7 @@ export function nameCompany(state: any, name: string, founder?: string, art?: st
       const [low, high] = key === focus ? [68, 76] : key === 'depth' ? [15, 22] : key === 'discover' ? [30, 40] : [25, 38];
       abilities[key] = Math.round(low + random(next) * (high - low));
     }
-    next.staff.push(freshPerson(next, {
+    addStaff(next, freshPerson(next, {
       id: `founder-${next.seed}`, name: '创始人', role: next.founder, abilities, speed: 95, wage: 0,
       hired: true, joined: next.day, home: homeWork({ role: next.founder, abilities, home: '' }), founder: true, snap: { ...abilities },
       potential: Math.round(Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 8 + random(next) * 10)),
@@ -1612,6 +1561,29 @@ function personNote(state: any, person: any, text: string) {
   person.history = [...(person.history || []), { day: state.day, text }].slice(-40);
 }
 
+function claimDesk(taken: Set<number>) {
+  let desk = 0;
+  while (taken.has(desk)) desk += 1;
+  taken.add(desk);
+  return desk;
+}
+
+function addStaff(state: any, person: any) {
+  person.desk = claimDesk(new Set(state.staff.map((colleague: any) => colleague.desk)));
+  state.staff.push(person);
+}
+
+function restoreDesks(state: any) {
+  const taken = new Set<number>();
+  const unseated: any[] = [];
+  const limit = Math.max(state.staff.length, OFFICES[state.office]?.seats || 0);
+  for (const person of state.staff) {
+    if (Number.isInteger(person.desk) && person.desk >= 0 && person.desk < limit && !taken.has(person.desk)) taken.add(person.desk);
+    else unseated.push(person);
+  }
+  for (const person of unseated) person.desk = claimDesk(taken);
+}
+
 function freshPerson(state: any, base: any) {
   const gender = base.gender === 'f' ? 'f' : 'm';
   return {
@@ -1746,7 +1718,7 @@ export function hire(state: any, id: string) {
   const person: any = Object.values(next.candidates).flatMap((pool: any) => pool.people).find((item: any) => item.id === id);
   person.hired = true;
   const joined = { ...person, joined: next.day, home: homeWork(person), snap: { ...person.abilities } };
-  next.staff.push(joined);
+  addStaff(next, joined);
   placeNewcomer(next, joined);
   personNote(next, joined, `入职，月薪 ${person.wage.toFixed(2)} 万`);
   const talent = person.talent ? (next.talents || []).find((item: any) => item.id === person.talent) : null;
@@ -1768,7 +1740,7 @@ export function hire(state: any, id: string) {
       role, abilities, speed: 95, wage: round(1.4 + random(next)), hired: true, joined: next.day, home: homeWork({ role, abilities, home: '' }),
       potential: Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 10)
     });
-    next.staff.push(mate);
+    addStaff(next, mate);
     placeNewcomer(next, mate);
     studioLog(next, `${mate.name} 一同入职`, `${person.name}的旧部，${ROLES[role].name}，月薪 ${mate.wage.toFixed(2)} 万。`);
   }
@@ -3919,8 +3891,7 @@ export function stepDay(state: any) {
   refreshBoard(next);
   if (!next.event) rollRandomEvent(next);
   checkAchievements(next);
-  // Every few days, so a round of three weeks is drawn as a shape instead of a single point.
-  if (next.day % HEAT_EVERY === 0) recordHeat(next);
+  if (next.day === 1 || next.day % HEAT_EVERY === 0) recordHeat(next);
   if (next.day % 30 === 0) {
     // Licensed lines pay by their tier every month.
     for (const line of Object.keys(next.licenses || {})) {
@@ -4413,7 +4384,7 @@ export function poach(state: any, talentId: string, bid: number) {
     potential: Math.min(100, talent.abilities[talent.primary] + 2), tags: [{ kind: 'personality', key: 'eager' }],
     story: freeAgent ? '离职后以自由身加盟' : `从${talent.studioName}挖来`
   });
-  next.staff.push(person);
+  addStaff(next, person);
   placeNewcomer(next, person);
   personNote(next, person, (freeAgent ? '自由身加盟' : `从${talent.studioName}挖来`) + `，月薪 ${moneyText(offer.wage)}`);
   talent.status = 'hired';
@@ -4871,7 +4842,7 @@ function applyEffects(state: any, effects: any, ctx: any) {
   }
   if (effects.junior && state.staff.length < seats(state)) {
     const junior = makeJunior(state, effects.junior.role, effects.junior.skill);
-    state.staff.push(junior);
+    addStaff(state, junior);
     placeNewcomer(state, junior);
     studioLog(state, `${junior.name} 加入`, `${ROLES[junior.role].name}，月薪 ${junior.wage.toFixed(2)} 万。`);
   }
@@ -4939,19 +4910,7 @@ export function restoreStudio(saved: any) {
       }
     }
   }
-  const artHot = next?.marketCycle?.axes?.art?.hot;
-  if (artHot && artHot['水彩'] !== undefined) {
-    artHot['剪影'] ??= artHot['水彩'];
-    delete artHot['水彩'];
-  }
-  // Older saves had one shared market lens; the six-axis cycle replaces it before validation, keeping the
-  // fields the player has already seen. Tags that moved between axes are dropped from the hot picks.
   if (next?.marketCycle && Array.isArray(next.projects) && Array.isArray(next.catalog)) ensureMarketCycle(next);
-  for (const axis of MARKET_AXES) {
-    const clock = next?.marketCycle?.axes?.[axis];
-    if (!clock || !clock.hot) continue;
-    for (const tag of Object.keys(clock.hot)) if (TAG_GROUP[tag] !== axis) delete clock.hot[tag];
-  }
   if (!validStudio(next)) throw new Error('这不是有效的工作室存档，当前进度没有改变。');
   for (const work of [...next.catalog, ...(Array.isArray(next.works) ? next.works : [])]) {
     if (Array.isArray(work?.tags) && work.tags.includes('水彩')) {
@@ -5132,15 +5091,7 @@ export function restoreStudio(saved: any) {
   }
   if (next.event?.id === 'deadline') next.event = null;
   if (next.rulesRevision < 10) next.rulesRevision = 10;
-  const hadMarketCycle = !!next.marketCycle;
   ensureMarketCycle(next);
-  if (next.rulesRevision < 12) {
-    if (hadMarketCycle && Number.isFinite(next.marketCycle.from)) {
-      const cycle = next.marketCycle;
-      cycle.from = next.day - retimedAge(legacyRotationSpan(cycle.scale), rotationSpan(cycle.scale), next.day - cycle.from);
-    }
-    next.rulesRevision = 12;
-  }
   if (next.rulesRevision < 13) next.rulesRevision = 13;
   if (next.rulesRevision < 14) {
     // 0.4.18: platforms are gone, the old gameplay variants are mechanics on their base genre, and every
@@ -5254,6 +5205,7 @@ export function restoreStudio(saved: any) {
     v['剪影'] ??= v['水彩'];
     delete v['水彩'];
   }
+  restoreDesks(next);
   for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;
 }
@@ -5368,15 +5320,12 @@ function validStudio(state: any) {
   if (!state || state.version !== 9 || !Number.isInteger(state.day) || state.day < 1 || !text(state.company) || !number(state.cash) || !nonnegative(state.accrued) || typeof state.over !== 'boolean' || !object(state.modules)) return false;
   const cycle = state.marketCycle;
   if (cycle && (!Number.isInteger(cycle.scale) || cycle.scale < 0 || cycle.scale >= SCALES.length
-    || !object(cycle.axes) || !Array.isArray(cycle.seen) || !cycle.seen.every((field: string) => LENS_ORDER.includes(field))
+    || !Number.isInteger(cycle.waveSeed) || !object(cycle.clock) || !number(cycle.clock.day) || !number(cycle.clock.time)
+    || !number(cycle.newsAt) || !Array.isArray(cycle.seen) || !cycle.seen.every((field: string) => LENS_ORDER.includes(field))
     || typeof cycle.late !== 'boolean' || !Array.isArray(cycle.done)
     || cycle.focus !== null && (!MARKET_AXES.includes(cycle.focus) || !cycle.done.includes(cycle.focus))
     || cycle.handover && (!number(cycle.handover.start) || !object(cycle.handover.from))
-    || MARKET_AXES.some((axis: string) => {
-      const clock = cycle.axes[axis];
-      return !object(clock) || !number(clock.len) || clock.len <= 0 || !number(clock.from) || clock.from > state.day
-        || !object(clock.hot) || Object.keys(clock.hot).some((tag: string) => TAG_GROUP[tag] !== axis);
-    }))) return false;
+    || cycle.migration && (!number(cycle.migration.start) || !object(cycle.migration.values)))) return false;
   if (!Array.isArray(state.staff) || !state.staff.every(person)) return false;
   if (!Array.isArray(state.projects) || !state.projects.every((project: any) => project && text(project.name) && has(TYPES, project.type) && scaleIndex(project.scale) && work(project.work) && Array.isArray(project.defects))) return false;
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;

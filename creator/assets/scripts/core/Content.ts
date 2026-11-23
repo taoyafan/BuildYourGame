@@ -1430,23 +1430,22 @@ function industryMenu(state: any, id?: string) {
   return { title: '行业', blocks };
 }
 
-// The 行情 tab: how hot each option of a category has been over the last year, one line per option, read
-// off the market itself (not the titles), so promotion cannot colour it. The legend filters to one line.
+// The chart shows recent market demand for each option. The legend filters to one line.
+const HEAT_CHART_DAYS = 90;
 const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0', '#6b8e3d', '#b5547f', '#3f7f9e', '#a8742f', '#5b6770'];
 export function marketChartData(state: any, groupKey = '', rawTag = '', draft?: any) {
   const groups = core.heatGroups(state, draft);
   const group = groups.find(item => item.key === groupKey) || groups.find(item => item.key === state.marketCycle?.focus) || groups[0];
   if (!group) return null;
   const tag = group.options.some(option => option.tag === rawTag) ? rawTag : '';
+  const end = state.day;
+  const firstDay = state.heatLog?.[0]?.day ?? end;
+  const start = Math.max(end - HEAT_CHART_DAYS, Math.min(firstDay, end - 14));
+  const fromLabel = end - start === HEAT_CHART_DAYS ? '三个月前' : start <= 1 ? '开业' : (end - start) + '天前';
   const lines = group.options.map((option, index) => ({
-    ...option, color: OPTION_COLORS[index % OPTION_COLORS.length], series: core.heatSeries(state, option.tag), shown: !tag || tag === option.tag
+    ...option, color: OPTION_COLORS[index % OPTION_COLORS.length], series: core.heatSeries(state, option.tag, start), shown: !tag || tag === option.tag
   }));
-  const first = (state.heatLog || [])[0];
-  const fromDay = first ? first.day : state.day;
-  const span = Math.max(14, state.day - fromDay);
-  const start = state.day - span;
-  const fromLabel = span >= 330 ? '一年前' : '开业';
-  return { groups, group, tag, lines, start, end: state.day, fromLabel };
+  return { groups, group, tag, lines, start, end, fromLabel };
 }
 function marketBlocks(state: any, id?: string) {
   const [, groupText = '', rawTag = ''] = String(id || '').split(':');
