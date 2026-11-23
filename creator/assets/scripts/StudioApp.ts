@@ -2350,7 +2350,7 @@ export class StudioApp extends Component {
             const next = core.toggleAssign(this.state, projectId, person.id, work.key);
             // Turning the last box off no longer bounces back to the home trade: the person idles.
             // The message rides along with the redraw: notifying afterwards rebuilt the whole page twice.
-            this.apply(next, this.assignNotice(before, next, projectId, person.id, work.key));
+            this.apply(next, this.assignNotice(before, next, projectId, person.id));
           });
         });
         // The lesson is "everyone picks their work", so the ring has to hug the whole grid. Anchoring
@@ -2370,7 +2370,7 @@ export class StudioApp extends Component {
           const best = core.homeWork(target);
           const before = core.projectOf(this.state, target);
           const next = core.assign(this.state, project.id, target.id, [best]);
-          this.apply(next, this.assignNotice(before, next, project.id, target.id, best));
+          this.apply(next, this.assignNotice(before, next, project.id, target.id));
         }, false);
         this.button(card, '全部都做', chipX(1), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};
@@ -2379,7 +2379,7 @@ export class StudioApp extends Component {
           if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
           const before = core.projectOf(this.state, target);
           const next = core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]);
-          this.apply(next, this.assignNotice(before, next, project.id, target.id, ''));
+          this.apply(next, this.assignNotice(before, next, project.id, target.id));
         }, false);
         // No idle shortcut: the two buttons above fill the row exactly. A third one used to sit at
         // chipX(2), which started past the card's right edge and showed up as a sliver of a button.
@@ -2390,21 +2390,12 @@ export class StudioApp extends Component {
     }
   }
 
-  // Every way the assign page can move a person goes through here, so the message always says the
-  // same thing: which work they picked up, or which title they left for this one. Without the
-  // "退出《…》" half, pulling someone off a running title just looks like nothing happened.
-  private assignNotice(before: any, next: any, projectId: string, personId: string, workKey: string) {
+  // 只有「把人从别的作品调过来」才提示：这一步换掉了他手上正在做的东西，玩家需要知道人是从哪来的。
+  // 同一部作品里加减工作、关到空闲，格子和状态行当场就变了，再弹一句只是噪音。
+  private assignNotice(before: any, next: any, projectId: string, personId: string) {
     const person = next.staff.find((item: any) => item.id === personId);
-    const project = next.projects.find((item: any) => item.id === projectId);
-    if (!person || !project) return '分工已更新。';
-    const after: string[] = core.personWorks(next, project, person);
-    const left = before && before.id !== projectId ? before.name : '';
-    const label = workKey ? (core.WORKS.find((entry: any) => entry.key === workKey)?.name || workKey) : '';
-    if (!after.length) return person.name + '：已空闲，不做任何工作，工资照付。';
-    if (left) return '已让 ' + person.name + ' 退出《' + left + '》' + (label ? '，改做「' + label + '」' : '') + '。';
-    if (label && !after.includes(workKey)) return person.name + ' 已退出「' + label + '」';
-    if (label) return person.name + ' 已加入「' + label + '」';
-    return person.name + '：接手全部 ' + after.length + ' 项工作。';
+    if (!person || !before || before.id === projectId) return '';
+    return '已让 ' + person.name + ' 退出《' + before.name + '》';
   }
 
   private cover(parent: Node, y: number, book: any) {
