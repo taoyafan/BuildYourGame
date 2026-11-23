@@ -56,10 +56,10 @@ export const ABILITY_KEYS = ABILITIES.map(ability => ability.key);
 // level, testing and fitting-in included, totals the person-days of that scale in Planning.ts. The title's
 // scale is read back from the person-days its picked levels add up to. Re-measure when module work changes.
 export const SCALES = [
-  { name: '小型', work: 0.726 },
-  { name: '中型', work: 3.631 },
-  { name: '大型', work: 14.523 },
-  { name: '超大型', work: 65.355 }
+  { name: '小型', work: 0.490 },
+  { name: '中型', work: 2.823 },
+  { name: '大型', work: 11.951 },
+  { name: '超大型', work: 53.207 }
 ];
 
 // Three genre templates. The share is the slice of the workload each dimension takes; the weights are
@@ -504,6 +504,14 @@ export function tagHeat(value: number, amplitude = 0.12) {
   const edge = Math.max(0.012, amplitude * 0.6);
   return value >= 1 + edge ? { label: '热门', tone: 'up' } : value <= 1 - edge ? { label: '冷门', tone: 'down' } : { label: '平稳', tone: 'flat' };
 }
+// Five-step strength graded by absolute demand deviation so every axis is comparable on one scale.
+export function heatGrade(value: number) {
+  if (value >= 1.12) return { label: '大热', tone: 'up' };
+  if (value >= 1.04) return { label: '偏热', tone: 'up' };
+  if (value <= 0.88) return { label: '遇冷', tone: 'down' };
+  if (value <= 0.96) return { label: '偏冷', tone: 'down' };
+  return { label: '平稳', tone: 'flat' };
+}
 export function market(state: any, tag: string) {
   const value = tagDemand(state, tag);
   const heat = tagHeat(value, axisAmplitude(TAG_GROUP[tag]));
@@ -521,6 +529,14 @@ export function market(state: any, tag: string) {
 function tagDemandOn(state: any, tag: string, day: number) {
   const axis = TAG_GROUP[tag];
   if (!axis) return 1;
+  const wobbleValue = wobble(day, axisIndex(axis)) * 0.005;
+  // Engine is a generational tier rather than a taste cycle: 2D stays near baseline (±3%) while 3D
+  // rides above it (+3%..+10%) with smooth waves that can dip into flat and lightly brush 2D's peak.
+  if (axis === 'engine') {
+    const phase = ((state.seed || 1) % 360);
+    if (tag === '3D') return heatRound(1.065 + 0.035 * Math.sin(2 * Math.PI * (day + phase) / 180 + 1.8) + wobbleValue);
+    return heatRound(1 + 0.03 * Math.sin(2 * Math.PI * (day + phase) / 150) + wobbleValue);
+  }
   const cycle = ensureMarketCycle(state);
   const clock = cycle.axes[axis];
   if (!clock) return 1;
@@ -537,13 +553,28 @@ function tagDemandOn(state: any, tag: string, day: number) {
   const raw = day - clock.from;
   const age = lag > 0 ? (raw <= lag ? 0 : (raw - lag) * clock.len / (clock.len - lag)) : raw;
   const strength = strengthAt(clock, age);
-  const wobbleValue = wobble(day, axisIndex(axis)) * 0.005;
   // Handovers interpolate towards today's amplitude, so they only apply to the day being lived through.
   const swing = day === state.day ? axisSwing(state, axis) : axisTarget(cycle, axis);
   return heatRound(1 + axisAmplitude(axis) * swing * direction * strength + wobbleValue);
 }
 export function tagDemand(state: any, tag: string) {
   return tagDemandOn(state, tag, state.day);
+}
+// Per-axis breakdown of a title's launch heat so the archive can show which axes carried or dragged it.
+export function tagBreakdown(state: any, tags: string[]) {
+  const grouped: any = {};
+  for (const tag of Array.from(new Set(tags))) {
+    const axis = TAG_GROUP[tag];
+    if (!axis) continue;
+    if (!grouped[axis]) grouped[axis] = [];
+    grouped[axis].push(tag);
+  }
+  return MARKET_AXES.filter(axis => grouped[axis]?.length).map(axis => {
+    const list: string[] = grouped[axis];
+    const value = heatRound(sum(list.map(tag => tagDemand(state, tag))) / list.length);
+    const grade = heatGrade(value);
+    return { axis, name: AXIS_NAME[axis], tags: list, value, label: grade.label, tone: grade.tone };
+  });
 }
 // A title's heat: one multiplier per axis it uses, multiplied, then only six tenths of the deviation is
 // paid out, so market timing is worth chasing without ever overpowering how good the title is.
@@ -657,13 +688,9 @@ export function nominalWork(plan: any) {
   const modules = sum(expandModules(plan).map(id => sum(Object.values(partOf(id)?.work || {}) as number[])));
   return (sum(Object.values(contentWork(plan)) as number[]) + modules) * (1 + TEST_SHARE);
 }
-export const planScale = (plan: any) => {
-  // 中型 is measured against the same lines taken to level 2, not a flat floor: levelling one line up
-  // should not already read as a medium title. Half of that is the least a medium title can be.
-  const everyLineAtTwo = { ...plan, lineLevels: Object.fromEntries(planLines(plan).map(line => [line, 2])) };
-  const floor = Math.max(SCALE_BOUNDS[0], nominalWork(everyLineAtTwo) / 2);
-  return scaleOfWork(nominalWork(plan), floor);
-};
+export const planScale = (plan: any) => scaleOfWork(nominalWork(plan));
+// Nominal work stored on a project or book drives its continuous market and price; old saves fall back to scale.
+const projectNominalWork = (item: any) => (item?.nominalWork > 0 ? item.nominalWork : 0);
 // Every line's level written out, so a started plan no longer leans on a scale for it.
 export const fixLevels = (plan: any) => Object.fromEntries(planLines(plan).map(line => [line, levelFor(plan, line)]));
 
@@ -947,7 +974,9 @@ function blankProject(state: any, id: string, plan: any, day: number) {
   for (const key of DIM_KEYS) work[key] = { total: 0, done: 0, value: 0, batches: [] };
   const kind = plan.only || plan.rebuild ? 'module' : 'game';
   const project: any = {
-    id, kind, name: plan.name, type: plan.type || planType(plan), scale: plan.scale || 0, parentId: plan.parentId || null,
+    id, kind, name: plan.name, type: plan.type || planType(plan), scale: plan.scale || 0,
+    nominalWork: kind === 'game' ? round(plan.nominalWork > 0 ? plan.nominalWork : nominalWork(plan)) : 0,
+    parentId: plan.parentId || null,
     axes: clone(plan.axes || {}), only: plan.only ? [...plan.only] : null, rent: [...(plan.rent || [])], rebuild: plan.rebuild || null,
     lineLevels: plan.rebuild ? {} : fixLevels(plan),
     parts: items.filter(item => !item.rented).map(item => item.id), own, work, base: {}, progress: 0,
@@ -3138,18 +3167,19 @@ export function expectedScore(state: any, project: any) {
 export const PROMO_DELAY = 3;
 function promoBasis(state: any, project: any) {
   const scale = project.scale;
+  const work = projectNominalWork(project);
   const qe = marketScore(expectedScore(state, project), state.day);
   const demand = tagFactor(state, planTags(project), scale);
   const share = project.parentId ? SIDE_MARKET : 1;
   const priceShare = project.parentId ? SIDE_PRICE : 1;
-  return { scale, qe, demand, share, priceShare, market: marketCapacity(scale, qe) * demand * share };
+  return { scale, work, qe, demand, share, priceShare, market: marketCapacity(scale, qe, work) * demand * share };
 }
 // Index 0 is no campaign (the platform's own cover); 1..4 are the paid tiers. The price is what the cover
 // still missing costs at today's market, so a changed score never refunds or voids what was bought.
 export function promoteSteps(state: any, project: any) {
   const basis = promoBasis(state, project);
   const have = Math.max(ECONOMY.platform, project.promoCover || 0);
-  const price = (cover: number) => promotionCost(basis.scale, basis.qe, cover, basis.demand, basis.share) * basis.priceShare;
+  const price = (cover: number) => promotionCost(basis.scale, basis.qe, cover, basis.demand, basis.share, basis.work) * basis.priceShare;
   const tiers = [{ name: PROMOTION_TIERS[0][0], cover: ECONOMY.platform }, ...PROMOTE_TIERS];
   const top = tiers.reduce((best: number, tier: any, index: number) => have >= tier.cover - 1e-9 ? index : best, 0);
   return tiers.map((tier: any, index: number) => {
@@ -3446,6 +3476,7 @@ export function launchProject(state: any, projectId: string) {
   // One combined factor, shared with rivals; the genre trend is explanatory, not a second multiplier.
   const tags = planTags(project);
   const lean = tagFactor(next, tags, project.scale);
+  const leanDetail = tagBreakdown(next, tags);
   const score = round(clamp(projectScore(project) + (random(next) - 0.5) * 3, 0, 100));
   // Creativity breaks out through a tail jump, not a linear bonus: the chance stays low for most scores and
   // climbs steeply near the top, capped at BREAKOUT_MAX for a perfect score. There is no guarantee and it
@@ -3457,9 +3488,10 @@ export function launchProject(state: any, projectId: string) {
   // campaign bought, the platform's own push, last title's leftovers and whatever the team earned), and then
   // the daily loop in salesDay. A breakout multiplies the opening audience once.
   const share = project.parentId ? SIDE_MARKET : 1;
+  const work = projectNominalWork(project);
   const qe = marketScore(score, next.day);
-  const marketSize = marketCapacity(project.scale, qe) * lean * share;
-  const price = unitPriceOf(project.scale) * (project.parentId ? SIDE_PRICE : 1) / 10000;
+  const marketSize = marketCapacity(project.scale, qe, work) * lean * share;
+  const price = unitPriceOf(project.scale, work) * (project.parentId ? SIDE_PRICE : 1) / 10000;
   const platformCover = ECONOMY.platform * (1 + exposure);
   const cover = (project.promoCover > 0 ? project.promoCover : ECONOMY.platform) * (1 + exposure);
   const stock = next.catalog.find((item: any) => !item.parentId)?.attention || 0;
@@ -3476,15 +3508,15 @@ export function launchProject(state: any, projectId: string) {
   attention = day.attention;
   // What the campaign was worth over the valuation window, against only the platform's own push.
   const promo = project.promoCover > 0 ? (() => {
-    const bare = simulateTitle(project.scale, qe, platformCover, stock, lean * share);
-    const paid = simulateTitle(project.scale, qe, cover, stock, lean * share);
+    const bare = simulateTitle(project.scale, qe, platformCover, stock, lean * share, 1, work);
+    const paid = simulateTitle(project.scale, qe, cover, stock, lean * share, 1, work);
     return { cost: project.promoted, tier: (project.promoPlan || []).length === 1 && project.promoPlan[0] === 0 ? 0 : 1, cover: project.promoCover, followers: project.promoFollowers || 0, extraUnits: Math.round(Math.max(0, paid.sold - bare.sold)), receipt: round(Math.max(0, paid.sold - bare.sold) * price) };
   })() : null;
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
   const review = reviewOf(next, project, metrics);
   const book = {
-    id: project.id, name: project.name, type: project.type, scale: project.scale, axes: project.axes, lineLevels: project.lineLevels,
+    id: project.id, name: project.name, type: project.type, scale: project.scale, nominalWork: work, axes: project.axes, lineLevels: project.lineLevels,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
     price, units, openingUnits: units, openingReceipt: receipt, openingFollowers: launchFollowers,
     followers: launchFollowers, dailyUnits: units, reviewScore: score,
@@ -3496,7 +3528,7 @@ export function launchProject(state: any, projectId: string) {
     tutorial: next.catalog.length === 0, review,
     sequel: project.sequel, parentId: project.parentId || null, expectation: project.expectation, firstWeek: units, firstRanks: null, totalRanks: null, updates: 0, breakout, promo, patches: [], flawless: metrics.defects === 0, clash: clash.works.length,
     attention, demand: lean, share, capacity: marketSize, left: Math.max(0, marketSize - units), sale: false, saleFloor: 0, saleStart: null, saleUntil: 0, saleEnded: 0, saleDepth: 1, saleRuns: 0, saleWeeks: 0,
-    tags, lean, royalty: 0, rent: [...(project.rent || [])],
+    tags, lean, leanDetail, royalty: 0, rent: [...(project.rent || [])],
     marketFields: Array.from(new Set(tags.map((tag: string) => TAG_FIELD[tag]).filter(Boolean)))
   };
   next.cash = round(next.cash + receipt);
@@ -3942,7 +3974,7 @@ const fine = (value: number) => Math.round(value * 10000) / 10000;
 function ensureAttention(book: any) {
   if (book.attention !== undefined) return;
   const qe = marketScore(book.reviewScore, book.released);
-  const market = marketCapacity(book.scale, qe) * (book.lean ?? 1) * (book.parentId ? SIDE_MARKET : 1);
+  const market = marketCapacity(book.scale, qe, projectNominalWork(book)) * (book.lean ?? 1) * (book.parentId ? SIDE_MARKET : 1);
   book.demand = book.lean ?? 1;
   book.share = book.parentId ? SIDE_MARKET : 1;
   book.attention = Math.min(market, (book.lastDayUnits || 0) / Math.max(0.02, conversionRate(qe)));
@@ -3959,7 +3991,7 @@ function salesDay(state: any) {
     // Reception follows the review score against the bar of the release year, so a patch that lifts it
     // widens the market and the buying rate.
     const qe = marketScore(book.reviewScore, book.released);
-    const market = marketCapacity(book.scale, qe) * book.demand * book.share;
+    const market = marketCapacity(book.scale, qe, projectNominalWork(book)) * book.demand * book.share;
     book.capacity = market;
     book.left = Math.max(0, market - book.units);
     const lift = discounted ? 1 + saleReach(state, book, depth) : 1;
@@ -4014,7 +4046,7 @@ export function makeDLC(state: any, id: string) {
   if (book.parentId) throw new Error('请从原作立项资料片。');
   const siblings = next.projects.filter((item: any) => item.parentId === id);
   if (siblings.length >= 2) throw new Error('每部原作最多立项两部资料片。');
-  const plan = { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, axes: book.axes, rent: book.rent || [], lineLevels: book.lineLevels };
+  const plan = { name: `${book.name} · 资料片 ${siblings.length + 1}`, scale: book.scale, nominalWork: book.nominalWork, axes: book.axes, rent: book.rent || [], lineLevels: book.lineLevels };
   const project = blankProject(next, `${next.day}-${next.seed}-${next.projects.length}`, plan, next.day);
   project.parentId = id;
   project.followers = Math.round(book.units * 0.3 + book.followers * 0.2);

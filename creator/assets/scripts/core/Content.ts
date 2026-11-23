@@ -849,10 +849,14 @@ function bookMenu(state: any, id: string) {
         ['发售售价', price(book.price)],
         ['发售时市场', book.trend],
         ...((book.tags || []).length ? [['标签', book.tags.join('、')]] : []),
-        ...(book.lean ? [['赶上的行情', core.tagHeat(book.lean).label + ' · 需求 ' + (book.lean >= 1 ? '+' : '') + Math.round((book.lean - 1) * 100) + '%']] : []),
+        ...(book.lean && !(book.leanDetail || []).length ? [['赶上的行情', core.heatGrade(book.lean).label + ' · 需求 ' + (book.lean >= 1 ? '+' : '') + Math.round((book.lean - 1) * 100) + '%']] : []),
         ...(book.royalty ? [['租用分成', Math.round(book.royalty * 100) + '%']] : []),
         ...(book.rent || []).map((line: string) => { const record = core.rentRecord(state, line); return ['租用' + core.MODULES[line].name, '累计 ' + record.count + ' 次 · 已付约 ' + money(record.paid) + ' · 自己做约需 ' + money(core.rentPrice(line, book.scale).build)]; })
       ] },
+      ...((book.leanDetail || []).length ? [{ type: 'lines', title: '赶上的行情', items: [
+        ...book.leanDetail.map((item: any) => [item.name + ' · ' + (item.tags || []).join(' / '), item.label, item.tone === 'up' ? 'green' : item.tone === 'down' ? 'red' : 'muted']),
+        ['综合需求', (book.lean >= 1 ? '+' : '') + Math.round((book.lean - 1) * 100) + '%', book.lean >= 1.02 ? 'green' : book.lean <= 0.98 ? 'red' : 'muted']
+      ] }] : []),
       { type: 'lines', items: core.DIMENSIONS.map(dimension => [dimension.name, String(Math.round(dims[dimension.key] || 0))]) },
       { type: 'lines', items: [['首周销量', book.firstRanks ? number(book.firstWeek) + ' 份' : '首周统计中'], ['首周名次', rankText(book.firstRanks)], ['累计名次', rankText(book.totalRanks)], ['玩家期待', book.expectation ? '评分 −' + book.expectation : '无'], ['补丁', (book.updates || 0) + ' 次']] },
       ...(book.weekOne?.lost.length ? [{ type: 'lines', title: '首周撞档', items: [...book.weekOne.lost.map((item: any) => ['被《' + item.name + '》分流', '约 ' + number(item.units) + ' 份']), ['不撞档大约能卖', number(book.weekOne.without) + ' 份']] }] : []),
@@ -1411,33 +1415,33 @@ function industryMenu(state: any, id?: string) {
 // The 行情 tab: how hot each option of a category has been over the last year, one line per option, read
 // off the market itself (not the titles), so promotion cannot colour it. The legend filters to one line.
 const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0', '#6b8e3d', '#b5547f', '#3f7f9e', '#a8742f', '#5b6770'];
-function marketBlocks(state: any, id?: string) {
-  const [, groupText = '', rawTag = ''] = String(id || '').split(':');
+export function marketChartData(state: any, groupKey = '', rawTag = '') {
   const groups = core.heatGroups(state);
-  const group = groups.find((item: any) => item.key === groupText) || groups.find((item: any) => item.field === core.lensOf(state)) || groups[0];
-  // Nothing to compare yet: every axis has fewer than two unlocked options, so there is no chart to read.
-  if (!group) return [{ type: 'text', text: '还没有可以对比的选项。同一类里解锁两项以上，这里才会显示它们各自的冷热。', muted: true }];
-  // Only a name that really is one of this group's options narrows the chart to one line. Anything else
-  // (an empty segment, a tier index left over from another tab) means "draw all of them": filtering on a
-  // value that matches no line left the chart blank with nothing to explain why.
-  const tag = (group?.tags || []).includes(rawTag) ? rawTag : '';
-  const route = (key: string, nextTag: string) => ({ menu: 'industry', id: ['market', key, nextTag].join(':') });
+  const group = groups.find((item: any) => item.key === groupKey) || groups.find((item: any) => item.field === core.lensOf(state)) || groups[0];
+  if (!group) return null;
+  const tag = (group.tags || []).includes(rawTag) ? rawTag : '';
   const lines = group.tags.map((name: string, index: number) => {
     const series = core.heatSeries(state, name);
-    return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.tagHeat(series[series.length - 1].value).label, shown: !tag || tag === name };
+    return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.heatGrade(series[series.length - 1].value).label, shown: !tag || tag === name };
   });
   const first = (state.heatLog || [])[0];
-  // The chart only shows days that were really sampled: it starts at the first sample and grows to a
-  // year. Nothing is drawn in for the days before it — a short record stays short.
   const fromDay = first ? first.day : state.day;
   const span = Math.max(14, state.day - fromDay);
   const start = state.day - span;
   const fromLabel = span >= 330 ? '一年前' : '开业';
   const note = span >= 330 ? '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。' : '开业至今各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。记录满一年后就是完整的一年。';
+  return { groups, group, tag, lines, start, end: state.day, fromLabel, note };
+}
+function marketBlocks(state: any, id?: string) {
+  const [, groupText = '', rawTag = ''] = String(id || '').split(':');
+  const data = marketChartData(state, groupText, rawTag);
+  // Nothing to compare yet: every axis has fewer than two unlocked options, so there is no chart to read.
+  if (!data) return [{ type: 'text', text: '还没有可以对比的选项。同一类里解锁两项以上，这里才会显示它们各自的冷热。', muted: true }];
+  const route = (key: string, nextTag: string) => ({ menu: 'industry', id: ['market', key, nextTag].join(':') });
   return [
-    ...(groups.length > 1 ? [{ type: 'tabs', items: groups.map((item: any) => ({ text: item.name, route: route(item.key, ''), active: item.key === group.key })) }] : []),
-    { type: 'heat', lines, start, end: state.day, fromLabel, legend: lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === tag, route: route(group.key, line.name === tag ? '' : line.name) })) },
-    { type: 'text', text: note, muted: true }
+    ...(data.groups.length > 1 ? [{ type: 'tabs', items: data.groups.map((item: any) => ({ text: item.name, route: route(item.key, ''), active: item.key === data.group.key })) }] : []),
+    { type: 'heat', lines: data.lines, start: data.start, end: data.end, fromLabel: data.fromLabel, legend: data.lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === data.tag, route: route(data.group.key, line.name === data.tag ? '' : line.name) })) },
+    { type: 'text', text: data.note, muted: true }
   ];
 }
 

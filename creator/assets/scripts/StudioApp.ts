@@ -1908,9 +1908,8 @@ export class StudioApp extends Component {
       });
       cursor += 54;
     }
-    // The market is a detour, not a step: its link sits above the chart, so the estimate line and the
-    // confirm button stay next to each other.
-    this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.openMenu('industry', 'market'));
+    // The market chart opens in a floating modal so the player can inspect every axis without losing draft state.
+    this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.showMarketModal());
     cursor += 46;
     if (!core.planIssue(state, this.draft)) {
       const plan = core.planWork(state, this.draft);
@@ -2402,20 +2401,80 @@ export class StudioApp extends Component {
   }
 
   // The market page: one line per option over the last year, drawn from the monthly record. Higher is hotter;
+  private showMarketModal(groupKey = '', tag = '') {
+    const existing = this.stage.getChildByName('MarketModal');
+    if (existing) { existing.removeFromParent(); existing.destroy(); }
+    const overlay = this.box(this.stage, 'MarketModal', 0, 0, this.width, this.height);
+    const close = () => {
+      overlay.removeFromParent();
+      overlay.destroy();
+    };
+    const scrim = this.box(overlay, 'Scrim', 0, 0, this.width, this.height, colors.night, 0, 130);
+    this.clickable(scrim, close).getComponent(Button)!.transition = Button.Transition.NONE;
+    const data = content.marketChartData(this.state, groupKey, tag);
+    const cardW = this.width - 28;
+    const pad = 14;
+    const inner = cardW - pad * 2;
+    const card = this.box(overlay, 'MarketCard', 14, this.top + 16, cardW, 100, colors.paper, 14);
+    card.addComponent(BlockInputEvents);
+    this.text(card, '历史行情', pad, 10, inner - 42, 34, 16, colors.ink, true);
+    this.button(card, '', cardW - 46, 10, 34, 34, close, false, false, 'X');
+    let y = 52;
+    if (!data) {
+      y += this.paragraph(card, '还没有可以对比的选项。同一类里解锁两项以上，这里才会显示它们各自的冷热。', y, true, pad, inner, 12) + 10;
+    } else {
+      if (data.groups.length > 1) {
+        const cols = Math.min(3, data.groups.length);
+        const gap = 6;
+        const cell = (inner - gap * (cols - 1)) / cols;
+        data.groups.forEach((item: any, index: number) => {
+          const x = pad + (index % cols) * (cell + gap);
+          const rowY = y + Math.floor(index / cols) * 38;
+          this.button(card, item.name, x, rowY, cell, 32, () => this.showMarketModal(item.key, ''), item.key === data.group.key);
+        });
+        y += Math.ceil(data.groups.length / cols) * 38 + 6;
+      }
+      y += this.heat(card, y, {
+        width: inner,
+        offsetX: pad,
+        lines: data.lines,
+        start: data.start,
+        end: data.end,
+        fromLabel: data.fromLabel,
+        legend: data.lines.map((line: any) => ({
+          text: line.name + ' ' + line.heat,
+          color: line.color,
+          active: line.name === data.tag,
+          onClick: () => this.showMarketModal(data.group.key, line.name === data.tag ? '' : line.name)
+        }))
+      }) + 6;
+    }
+    const cardH = Math.min(this.height - this.top - this.bottom - 24, y + 12);
+    card.getComponent(UITransform)!.setContentSize(cardW, cardH);
+    const cardY = Math.max(this.top + 8, (this.height - cardH) / 2);
+    card.setPosition(14, -cardY);
+    const pen = card.getComponent(Graphics);
+    if (pen) { pen.clear(); new Pen(pen).rect(0, 0, cardW, cardH, colors.paper, 14); }
+  }
+
   // the middle line is a flat market. No figures are printed.
   private heat(parent: Node, y: number, block: any) {
-    const width = this.width - 40;
+    const width = block.width || (this.width - 40);
+    const offsetX = block.offsetX || 0;
     const origin = y;
     let x = 0;
     for (const item of block.legend) {
       const cell = Math.max(64, item.text.length * 14 + 34);
       if (x + cell > width) { x = 0; y += 36; }
-      const { node, pen } = this.canvasNode(parent, 'Legend', x, y, cell, 30);
+      const { node, pen } = this.canvasNode(parent, 'Legend', offsetX + x, y, cell, 30);
       pen.rect(0, 0, cell, 30, item.active ? colors.soft : colors.paper, 15);
       pen.frame(0, 0, cell, 30, item.active ? colors.green : colors.line, item.active ? 2 : 1, 15);
       pen.circle(15, 15, 6, item.color);
       this.text(node, item.text, 26, 0, cell - 30, 30, 12, colors.ink, item.active);
-      this.clickable(node, () => { this.routes[this.routes.length - 1] = item.route; this.render(); });
+      this.clickable(node, () => {
+        if (item.onClick) item.onClick();
+        else { this.routes[this.routes.length - 1] = item.route; this.render(); }
+      });
       x += cell + 6;
     }
     y += block.legend.length ? 40 : 0;
@@ -2426,10 +2485,18 @@ export class StudioApp extends Component {
     const bottom = height - 26;
     const low = 0.76;
     const high = 1.28;
-    const px = (day: number) => left + (right - left) * Math.max(0, Math.min(1, (day - block.start) / Math.max(1, block.end - block.start)));
+    const span = Math.max(1, block.end - block.start);
+    const px = (day: number) => left + (right - left) * Math.max(0, Math.min(1, (day - block.start) / span));
     const py = (value: number) => bottom - (bottom - top) * (Math.max(low, Math.min(high, value)) - low) / (high - low);
-    const { node, pen } = this.canvasNode(parent, 'Heat', 0, y, width, height);
+    const { node, pen } = this.canvasNode(parent, 'Heat', offsetX, y, width, height);
     pen.rect(left, top, right - left, bottom - top, '#fbf8f1', 4);
+    const step = span >= 240 ? 90 : span >= 120 ? 60 : span >= 45 ? 30 : 15;
+    for (let ago = step; ago < span; ago += step) {
+      const tx = px(block.end - ago);
+      if (tx - left < 44 || right - tx < 38) continue;
+      pen.line(tx, top, tx, bottom, '#e6dfd1', 1);
+      this.text(node, ago + '天前', tx - 26, height - 20, 52, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+    }
     pen.line(left, py(1), right, py(1), colors.line, 2);
     for (const [label, value] of [['热', 1.16], ['平', 1], ['冷', 0.84]] as [string, number][]) this.text(node, label, 0, py(value) - 8, left - 6, 16, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     this.text(node, block.fromLabel || '一年前', left, height - 20, 80, 16, 10, colors.muted);

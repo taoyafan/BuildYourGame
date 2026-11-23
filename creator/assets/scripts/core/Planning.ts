@@ -29,13 +29,11 @@ export const PLANNING_OFFICES = [
 export const PLANNING_SCALES = [
   { name: '小', w: 1, W: 47, price: 66.5, office: 1 },
   { name: '中', w: 5, W: 235, price: 70.2, office: 2 },
-  { name: '大', w: 20, W: 940, price: 78.2, office: 3 },
+  { name: '大', w: 20, W: 940, price: 77.4, office: 3 },
   { name: '超大', w: 90, W: 4230, price: 86.0, office: 4 }
 ];
-// A title's scale is read from its nominal person-days: the geometric middles between the W above.
-export const SCALE_BOUNDS = [105, 470, 2000];
-// `medium` lets the caller raise the 中型 floor (a plan is read against the work its own lines would
-// need at level 2); the other steps keep their fixed bounds.
+// A title's display scale is read from its nominal person-days: 85% of the next anchor W.
+export const SCALE_BOUNDS = [200, 800, 3600];
 export function scaleOfWork(work, medium = SCALE_BOUNDS[0]) {
   if (work < medium) return 0;
   const index = SCALE_BOUNDS.findIndex((bound, position) => position > 0 && work < bound);
@@ -98,26 +96,63 @@ export function industryShift(day) {
 }
 export function marketScore(q, day) { return bound(q - industryShift(day), 0, 100); }
 export function receptionOf(q) { return bound((q - ECONOMY.receptFrom) / (100 - ECONOMY.receptFrom), 0, 1); }
-export function marketCapacity(scale, q) {
-  return ECONOMY.pool * Math.pow(PLANNING_SCALES[scale].w, ECONOMY.poolExp) * Math.pow(q / 100, ECONOMY.scoreExp);
+export function scaleWeightOfWork(work) {
+  return Math.max(0.25, work / PLANNING_SCALES[0].W);
 }
-export function unitPriceOf(scale) { return PLANNING_SCALES[scale].price; }
+export function rentPerDayOfWork(work) {
+  const low = PLANNING_SCALES[0].W;
+  const mid = PLANNING_SCALES[1].W;
+  if (work <= low) return 125;
+  if (work >= mid) return 100;
+  return 125 - 25 * Math.log(work / low) / Math.log(mid / low);
+}
+export function marketCapacity(scale, q, work = 0) {
+  const w = work > 0 ? scaleWeightOfWork(work) : PLANNING_SCALES[scale].w;
+  return ECONOMY.pool * Math.pow(w, ECONOMY.poolExp) * Math.pow(q / 100, ECONOMY.scoreExp);
+}
+let breakEvenSoldRatio = 0;
+function soldRatioAtBreakEven() {
+  if (breakEvenSoldRatio > 0) return breakEvenSoldRatio;
+  const q = ECONOMY.breakEven;
+  const conv = conversionRate(q);
+  const spread = spreadRate(q);
+  let attention = ECONOMY.platform;
+  let sold = 0;
+  for (let day = 1; day <= ECONOMY.valuationDays; day++) {
+    if (1 - sold <= 1e-6) break;
+    const step = salesStep(attention, sold, 1, conv, spread, day);
+    attention = step.attention;
+    sold += step.units;
+  }
+  breakEvenSoldRatio = sold;
+  return sold;
+}
+export function unitPriceOfWork(work) {
+  const w = scaleWeightOfWork(work);
+  const wage = LABOR_PARAMETERS.wageDay * salaryFactor(ECONOMY.breakEven);
+  const cost = work * (wage + rentPerDayOfWork(work));
+  const market = ECONOMY.pool * Math.pow(w, ECONOMY.poolExp) * Math.pow(ECONOMY.breakEven / 100, ECONOMY.scoreExp);
+  return Math.round(cost / (market * soldRatioAtBreakEven()) * 10) / 10;
+}
+export function unitPriceOf(scale, work = 0) {
+  return work > 0 ? unitPriceOfWork(work) : PLANNING_SCALES[scale].price;
+}
 export function conversionRate(q) {
   return ECONOMY.convBase + ECONOMY.convGain * Math.pow(receptionOf(q), ECONOMY.convExp);
 }
 export function spreadRate(q) {
   return bound(ECONOMY.kSlope * receptionOf(q) - ECONOMY.kOffset, -1, ECONOMY.kMax);
 }
-export function attentionPrice(scale, cover) {
-  return unitPriceOf(scale) * (ECONOMY.unitBase + ECONOMY.unitSlope * Math.max(0, cover - ECONOMY.platform));
+export function attentionPrice(scale, cover, work = 0) {
+  return unitPriceOf(scale, work) * (ECONOMY.unitBase + ECONOMY.unitSlope * Math.max(0, cover - ECONOMY.platform));
 }
-export function promotionCost(scale, qe, cover, demand = 1, share = 1) {
+export function promotionCost(scale, qe, cover, demand = 1, share = 1, work = 0) {
   const paid = Math.max(0, cover - ECONOMY.platform);
-  return paid * marketCapacity(scale, qe) * share * demand * attentionPrice(scale, cover) / 10000;
+  return paid * marketCapacity(scale, qe, work) * share * demand * attentionPrice(scale, cover, work) / 10000;
 }
 // The inverse of promotionCost: the launch cover a total spend (in 万) reaches, never past the whole market.
-export function promotionReach(scale, qe, spend, demand = 1, share = 1) {
-  const k = marketCapacity(scale, qe) * share * demand * unitPriceOf(scale) / 10000;
+export function promotionReach(scale, qe, spend, demand = 1, share = 1, work = 0) {
+  const k = marketCapacity(scale, qe, work) * share * demand * unitPriceOf(scale, work) / 10000;
   const b = ECONOMY.unitBase;
   const s = ECONOMY.unitSlope;
   const paid = k > 0 && spend > 0 ? (-b + Math.sqrt(b * b + 4 * s * spend / k)) / (2 * s) : 0;
@@ -138,8 +173,8 @@ export function salesStep(attention, sold, market, conv, spread, day, push = 1) 
   };
 }
 // Sales over the valuation window for a launch at this relative score and coverage.
-export function simulateTitle(scale, qe, cover, stock = 0, demand = 1, share = 1) {
-  const market = marketCapacity(scale, qe) * demand * share;
+export function simulateTitle(scale, qe, cover, stock = 0, demand = 1, share = 1, work = 0) {
+  const market = marketCapacity(scale, qe, work) * demand * share;
   const conv = conversionRate(qe);
   const spread = spreadRate(qe);
   let attention = launchAttention(market, cover, stock);

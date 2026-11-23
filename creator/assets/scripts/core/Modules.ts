@@ -49,7 +49,7 @@ export const MODULES: any = {
 
   // Tech is what code builds: the engine every title runs on.
   engine2d: { name: '2D 引擎', field: 'tech', shelf: '引擎', glyph: 'gear', axis: 'engine', work: { fluidity: 10 }, tags: ['2D'], desc: '画面、输入与关卡的底层，每一作都跑在它上面。' },
-  engine3d: { name: '3D 引擎', field: 'tech', shelf: '引擎', glyph: 'gear', axis: 'engine', unlock: 4, work: { fluidity: 16 }, tags: ['3D'], desc: '三维场景、镜头与物理。' },
+  engine3d: { name: '3D 引擎', field: 'tech', shelf: '引擎', glyph: 'gear', axis: 'engine', unlock: 4, work: { fluidity: 30 }, tags: ['3D'], desc: '三维场景、镜头与物理。' },
 
   artPixel: { name: '像素画风素材库', field: 'art', shelf: '画风', style: '像素', glyph: 'person', axis: 'art', work: { picture: 18 }, tags: ['像素'], desc: '像素人物、地块与界面，一套统一的格子感。' },
   artHand: { name: '手绘画风素材库', field: 'art', shelf: '画风', style: '手绘', glyph: 'person', axis: 'art', unlock: 1, work: { picture: 22 }, tags: ['手绘'], desc: '手绘立绘、背景与道具，笔触统一。' },
@@ -61,8 +61,7 @@ export const MODULES: any = {
   retroMusic: { name: '复古配乐库', field: 'audio', shelf: '配乐库', style: '复古', glyph: 'note', axis: 'audio', work: { sound: 6 }, tags: ['复古'], desc: '芯片音色与短循环曲。' },
   lyricalMusic: { name: '抒情配乐库', field: 'audio', shelf: '配乐库', style: '抒情', glyph: 'note', axis: 'audio', unlock: 1, work: { sound: 8 }, tags: ['抒情'], desc: '钢琴与弦乐的情绪曲。' },
   electronicMusic: { name: '电子配乐库', field: 'audio', shelf: '配乐库', style: '电子', glyph: 'note', axis: 'audio', unlock: 3, work: { sound: 8 }, tags: ['电子'], desc: '合成器与节拍。' },
-  orchestralMusic: { name: '交响配乐库', field: 'audio', shelf: '配乐库', style: '交响', glyph: 'note', axis: 'audio', unlock: 4, work: { sound: 10 }, tags: ['交响'], desc: '管弦乐团的大场面。' },
-  sfxLibrary: { name: '通用音效库', field: 'audio', shelf: '音效库', style: '通用', glyph: 'speaker', axis: 'audio', unlock: 2, work: { sound: 4 }, tags: [], desc: '按键、脚步、打击等常用音效。' }
+  orchestralMusic: { name: '交响配乐库', field: 'audio', shelf: '配乐库', style: '交响', glyph: 'note', axis: 'audio', unlock: 4, work: { sound: 10 }, tags: ['交响'], desc: '管弦乐团的大场面。' }
 };
 
 // The six axes of a title, in the order the form shows them; each belongs to one field. `min`/`max` bound
@@ -73,7 +72,7 @@ export const AXES: any[] = [
   { key: 'theme', field: 'design', name: '题材', min: 1, max: 1, unlock: 0 },
   { key: 'engine', field: 'tech', name: '引擎', min: 1, max: 1, unlock: 0 },
   { key: 'art', field: 'art', name: '美术', min: 1, max: 1, unlock: 0 },
-  { key: 'audio', field: 'audio', name: '音乐', min: 1, max: 2, unlock: 1 }
+  { key: 'audio', field: 'audio', name: '音乐', min: 1, max: 1, unlock: 1 }
 ];
 // The second mechanic opens later than the first.
 export const SECOND_MECHANIC = 4;
