@@ -125,7 +125,7 @@ function recruitMenu(state: any, id: string) {
   return { title: '招聘' + core.ROLES[role].name, blocks };
 }
 
-export function menu(state: any, route: any, slots: any[] = []) {
+export function menu(state: any, route: any, slots: any[] = [], onlineRankings = false) {
   if (!route) return null;
   switch (route.menu) {
     case 'setup': return { title: '成立工作室', blocks: [] };
@@ -159,7 +159,7 @@ export function menu(state: any, route: any, slots: any[] = []) {
     case 'job': return jobDetailMenu(state, route.id);
     case 'rating': return ratingMenu(state);
     case 'archive':
-    case 'finance': return financeMenu(state);
+    case 'finance': return financeMenu(state, onlineRankings);
     case 'gameover': return { title: '经营失败', blocks: [
       { type: 'note', icon: 'Lock', text: '公司没能支付月底开支，时间已经停下。这份存档会保留，也可以换一份接着玩。' },
       { type: 'lines', items: [['现金', money(state.cash)], ['月开支（整月）', money(core.monthlyCost(state))], ['经营天数', state.day + ' 天']] },
@@ -1191,7 +1191,7 @@ function moduleMenu(state: any, line = '') {
   return { title: module.name, blocks };
 }
 
-function financeMenu(state: any) {
+function financeMenu(state: any, onlineRankings: boolean) {
   const ledger = state.ledger;
   const rating = core.ratingOf(state);
   const wins = state.awards.filter((award: any) => award.own).length;
@@ -1210,6 +1210,7 @@ function financeMenu(state: any) {
         { text: core.STAR_MARKS[rating.tier] + ' ' + core.STAR_NAMES[rating.tier] + '工作室 · 评级 ' + Math.round(rating.published) + ' 分', detail: core.RATING_MEDIA + (rating.watch ? '已列入观察名单' : '每季度评级') + ' · ' + core.dueText(state, rating.next), icon: 'Award', action: 'menu', data: { menu: 'rating' }, tag: rating.watch ? '观察' : '' },
         { text: '模块库', detail: Object.keys(core.MODULES).filter(line => core.lineInfo(state, line).level).length + ' 个已有模块 · 玩法、技术、美术、音乐' + (Object.keys(state.licenses || {}).length ? ' · 授权中 ' + Object.keys(state.licenses).length + ' 个' : ''), icon: 'Wrench', action: 'menu', data: { menu: 'library' }, anchor: 'library' },
         { text: '成就', detail: core.achievementsOf(state).count + ' / ' + core.ACHIEVEMENTS.length + ' · 里程碑与荣誉', icon: 'Trophy', action: 'menu', data: { menu: 'achievements' } },
+        ...(onlineRankings ? [{ text: '排行榜', detail: '', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'player-rankings' } }] : []),
         { text: '行业与日历', detail: '榜单、对手、日历、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
         { text: '经营记录', detail: '月度账单与大事记。', icon: 'ScrollText', action: 'menu', data: { menu: 'history' } }
       ] },
@@ -1228,6 +1229,37 @@ function financeMenu(state: any) {
       { type: 'foot', text: '版本 v' + core.VERSION }
     ]
   };
+}
+
+const rankNames: Record<core.StudioRecord, string> = { funds: '总资金', profit: '年度盈利', days: '创业天数' };
+
+function rankValue(record: core.StudioRecord, score: number) {
+  return record === 'days' ? number(score) + ' 天' : money(score);
+}
+
+export function playerRankingMenu(record: core.StudioRecord, scores: Record<core.StudioRecord, number | null>,
+    snapshot: { rows: { rank: number; nickname: string | null; score: number }[]; mine: { status: string; rank: number | null; score: number | null } } | null,
+    failed: boolean, submitting: boolean) {
+  const score = scores[record];
+  const mine = snapshot?.mine;
+  const rank = mine?.status === 'EXACT' && mine.score !== null ? '第 ' + mine.rank + ' 名 · ' + rankValue(record, mine.score)
+    : mine?.status === 'OVER_LIMIT' ? '500+' : snapshot ? '未上榜' : '—';
+  return { title: '排行榜', blocks: [
+    { type: 'help', title: '榜单规则', text: '各榜保留历史最佳。总资金取月末结算后现金；年度盈利取完整游戏年的净盈利，扣除创始人注资；创业天数只计已走完的游戏日。提交后，平台昵称和成绩会在榜上公开。' },
+    { type: 'segments', items: Object.entries(rankNames).map(([key, text]) => ({
+      text, active: key === record, action: 'rank-tab', data: { record: key }
+    })) },
+    { type: 'lines', items: [['我的排名', rank], ['本局最佳', score === null ? '—' : rankValue(record, score)]] },
+    { type: 'buttons', items: [{ text: submitting ? '提交中…' : '提交本局成绩', icon: 'Trophy', action: 'rank-submit',
+      disabled: submitting || !Object.values(scores).some(value => value !== null) }] },
+    ...(failed ? [
+      { type: 'text', text: '暂时无法读取排行榜。', muted: true },
+      { type: 'buttons', items: [{ text: '重试', icon: 'RotateCcw', action: 'rank-retry' }] }
+    ] : !snapshot ? [{ type: 'text', text: '排行榜加载中…', muted: true }]
+      : snapshot.rows.length ? [{ type: 'lines', lazy: true, items: snapshot.rows.map(row => [
+        row.rank + '  ' + Array.from(row.nickname?.trim() || '小红书玩家').slice(0, 12).join(''), rankValue(record, row.score)
+      ]) }] : [{ type: 'text', text: '本榜暂无成绩。', muted: true }])
+  ] };
 }
 
 function historyMenu(state: any) {

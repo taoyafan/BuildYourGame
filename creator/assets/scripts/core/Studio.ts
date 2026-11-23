@@ -3425,6 +3425,39 @@ function rateDay(state: any) {
   studioLog(state, '季度媒体评级', `${RATING_MEDIA}评分 ${score.toFixed(0)}，${line}。`);
 }
 
+export type StudioRecord = 'funds' | 'profit' | 'days';
+
+export function studioRecordScores(state: any): Record<StudioRecord, number | null> {
+  const scores: Record<StudioRecord, number | null> = {
+    funds: state.recordPeaks?.funds ?? null,
+    profit: state.recordPeaks?.profit ?? null,
+    days: state.company && state.day > 1 ? state.day - 1 : null
+  };
+  const months = new Map<number, { closing: number; net: number }>();
+  for (const report of state.reports || []) {
+    if (Number.isInteger(report.month) && report.month > 0) months.set(report.month, report);
+  }
+  if (state.report?.month > 0 && !months.has(state.report.month)) months.set(state.report.month, state.report);
+  const bridgeMonth = state.flags?.bridge ? Math.ceil(state.flags.bridge / 30) : 0;
+  // The one-off contribution arrives in the new month, after the report with the shortfall.
+  const shortfall = months.get(bridgeMonth - 1)?.closing;
+  const contribution = state.flags?.bridgeAmount ?? (Number.isFinite(shortfall) ? round(Math.max(0, -shortfall!) + BRIDGE) : null);
+  const years = new Map<number, { months: number; net: number }>();
+  for (const [month, report] of months) {
+    if (Number.isFinite(report.closing)) scores.funds = Math.max(scores.funds ?? -Infinity, report.closing);
+    if (!Number.isFinite(report.net) || (month === bridgeMonth && contribution === null)) continue;
+    const year = Math.ceil(month / 12);
+    const total = years.get(year) || { months: 0, net: 0 };
+    total.months += 1;
+    total.net += report.net - (month === bridgeMonth ? contribution! : 0);
+    years.set(year, total);
+  }
+  for (const total of years.values()) {
+    if (total.months === 12) scores.profit = Math.max(scores.profit ?? -Infinity, round(total.net));
+  }
+  return scores;
+}
+
 export function companyArchive(state: any) {
   return {
     wins: state.awards.filter((award: any) => award.own).length,
@@ -3757,7 +3790,7 @@ function resolveEvent(state: any, choice: string) {
     if (next.bridgeUsed) throw new Error('创始人积蓄已经用过了。');
     const amount = round(Math.max(0, -next.cash) + BRIDGE);
     next.bridgeUsed = true;
-    next.flags = { ...(next.flags || {}), bridge: next.day };
+    next.flags = { ...(next.flags || {}), bridge: next.day, bridgeAmount: amount };
     next.cash = round(next.cash + amount);
     next.ledger.income = round(next.ledger.income + amount);
     return next;
@@ -3903,7 +3936,12 @@ export function stepDay(state: any) {
     next.ledger.expense = round(next.ledger.expense + payroll);
     const report = { month: next.day / 30, ...next.ledger, closing: next.cash, net: round(next.ledger.income - next.ledger.expense) };
     next.report = report;
-    next.reports = [...next.reports, report].slice(-600);
+    next.reports = [...next.reports, report];
+    if (next.reports.length > 600) {
+      const { funds, profit } = studioRecordScores(next);
+      next.recordPeaks = { funds, profit };
+      next.reports = next.reports.slice(-600);
+    }
     next.ledger = { opening: next.cash, income: 0, expense: 0, payroll: 0 };
     next.accrued = 0;
     // Ending the month in the red is the end, unless the founder's savings are still there: offered once,

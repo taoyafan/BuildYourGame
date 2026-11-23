@@ -8,6 +8,7 @@ import * as core from './core/Studio';
 import * as content from './core/Content';
 import { Pen, drawRoom, drawTrophy, drawBrick, drawModulePlate, drawWork, seatLayout, roomProps } from './ui/Art';
 import { platform } from './Platform';
+import type { StudioRankings, RankingSnapshot } from './Platform';
 import { ArtPack, Look, RoomRect, Station, officeRooms } from './ui/People';
 import { WorkPreviews } from './ui/WorkPreview';
 
@@ -109,6 +110,11 @@ export class StudioApp extends Component {
   private guideAnchor = '';
   private helpKey = '';
   private tip: { title: string; text: string } | null = null;
+  private studioRankings: StudioRankings | null = null;
+  private rankingSnapshot: RankingSnapshot | null = null;
+  private rankingLoadId = 0;
+  private rankingFailed = false;
+  private rankingSubmitting = false;
   private overScreenShown = false;
   private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
@@ -177,6 +183,11 @@ export class StudioApp extends Component {
     // The storage warning stays until dismissed (no timer), so it is not lost while the player is still
     // reading the opening screen; normal notices still expire on their own.
     if (this.storageIssue) this.render();
+    void platform.studioRankings().then(rankings => {
+      if (!rankings || !this.isValid) return;
+      this.studioRankings = rankings;
+      if (this.routes[this.routes.length - 1]?.menu === 'finance') this.render();
+    });
   }
 
   onDestroy() {
@@ -1689,7 +1700,9 @@ export class StudioApp extends Component {
     const custom = ['setup', 'new-project', 'history'].includes(route.menu);
     // Save pages need the slot list, which lives in device storage rather than in the state.
     const slotPage = ['slots', 'new-slot-confirm', 'slot', 'slot-delete'].includes(route.menu);
-    const model = custom ? null : content.menu(this.state, route, slotPage ? this.slotSummaries() : []);
+    const model = custom ? null : route.menu === 'player-rankings'
+      ? content.playerRankingMenu(route.id, core.studioRecordScores(this.state), this.rankingSnapshot, this.rankingFailed, this.rankingSubmitting)
+      : content.menu(this.state, route, slotPage ? this.slotSummaries() : [], !!this.studioRankings);
     const title = route.menu === 'setup' ? '成立工作室' : route.menu === 'new-project' ? '新作立项' : route.menu === 'history' ? '经营记录' : model.title;
     const y = this.top;
     // Page-level explanations live behind one "?" button in the title bar; the text floats over the page.
@@ -1992,9 +2005,13 @@ export class StudioApp extends Component {
       case 'lines': {
         if (block.title) { this.text(parent, block.title, 0, y, width, 28, 16, colors.ink, true); y += 34; }
         for (const [name, value, tone] of block.items) {
-          this.text(parent, name, 0, y, width * 0.48, 34, 13, colors.muted);
-          this.text(parent, value, width * 0.48, y, width * 0.52, 34, 13, tone ? toneColors[tone] || colors.ink : colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
-          this.box(parent, 'RowDivider', 0, y + 38, width, 1, colors.line);
+          const row = y;
+          const draw = () => {
+            this.text(parent, name, 0, row, width * 0.48, 34, 13, colors.muted);
+            this.text(parent, value, width * 0.48, row, width * 0.52, 34, 13, tone ? toneColors[tone] || colors.ink : colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+            this.box(parent, 'RowDivider', 0, row + 38, width, 1, colors.line);
+          };
+          if (!block.lazy || !this.defer(row, 44, draw)) draw();
           y += 44;
         }
         return y + 8;
@@ -2029,8 +2046,10 @@ export class StudioApp extends Component {
         return y + 4;
       }
       case 'segments': {
-        this.text(parent, block.title, 0, y, width, 24, 13, colors.ink, true);
-        y += 28;
+        if (block.title) {
+          this.text(parent, block.title, 0, y, width, 24, 13, colors.ink, true);
+          y += 28;
+        }
         const cell = (width - (block.items.length - 1) * 8) / block.items.length;
         block.items.forEach((item: any, index: number) => this.button(parent, item.text, index * (cell + 8), y, cell, 42, () => this.dispatch(item.action, item.data), !!item.active, false, undefined, item.anchor));
         return y + 54;
@@ -2898,6 +2917,7 @@ export class StudioApp extends Component {
   }
 
   private openMenu(menu: string, id?: string, critical = false, dim?: string, bottom = false) {
+    if (menu === 'player-rankings' && !this.studioRankings) return;
     this.helpKey = '';
     // After a failed run the save/restart controls are at the bottom of the company page; a ready
     // release jumps to the bottom of the project page where the shipping button sits.
@@ -2913,8 +2933,72 @@ export class StudioApp extends Component {
     // 已发售的作品只在补丁期间算「在做的项目」，记它没有意义。
     const looking = id ? this.state.projects.find((item: any) => item.id === id && !item.released) : null;
     if (looking && this.state.focusProject !== looking.id) { this.state.focusProject = looking.id; this.saveSoon(); }
+    if (menu === 'player-rankings') {
+      this.routes.push({ menu, id: 'funds' });
+      void this.loadPlayerRanking();
+      return;
+    }
     this.routes.push({ menu, id, dim });
     this.render();
+  }
+
+  private async loadPlayerRanking() {
+    const rankings = this.studioRankings;
+    const route = this.routes[this.routes.length - 1];
+    if (!rankings || route?.menu !== 'player-rankings') return;
+    const loadId = ++this.rankingLoadId;
+    this.rankingSnapshot = null;
+    this.rankingFailed = false;
+    this.render();
+    try {
+      const snapshot = await rankings.read(route.id as core.StudioRecord);
+      if (!this.isValid || this.routes[this.routes.length - 1] !== route || this.rankingLoadId !== loadId) return;
+      this.rankingSnapshot = snapshot;
+    } catch (error) {
+      if (!this.isValid) return;
+      if (platform.rankingsUnavailable(error)) {
+        this.disablePlayerRankings();
+        return;
+      }
+      if (this.routes[this.routes.length - 1] !== route || this.rankingLoadId !== loadId) return;
+      this.rankingFailed = true;
+    }
+    this.render();
+  }
+
+  private disablePlayerRankings() {
+    this.studioRankings = null;
+    this.routes = this.routes.filter(route => route.menu !== 'player-rankings');
+    this.notify('当前小红书环境暂未开放排行榜。');
+  }
+
+  private async submitPlayerRankings() {
+    const rankings = this.studioRankings;
+    if (!rankings || this.rankingSubmitting) return;
+    const scores = core.studioRecordScores(this.state);
+    const records = (Object.keys(scores) as core.StudioRecord[]).filter(record => scores[record] !== null);
+    if (!records.length) return;
+    this.rankingSubmitting = true;
+    this.render();
+    const results = await Promise.all(records.map(async record => {
+      try {
+        await rankings.submit(record, scores[record]!);
+        return { submitted: true };
+      } catch (error) {
+        return { submitted: false, error };
+      }
+    }));
+    if (!this.isValid) return;
+    this.rankingSubmitting = false;
+    if (results.some(result => !result.submitted && platform.rankingsUnavailable(result.error))) {
+      this.disablePlayerRankings();
+      return;
+    }
+    const submitted = results.filter(result => result.submitted).length;
+    this.setNotice(submitted === records.length ? '本局成绩已提交。'
+      : submitted ? '部分成绩已提交，其余可重试。' : '成绩提交失败，请重试。');
+    if (submitted && this.routes[this.routes.length - 1]?.menu === 'player-rankings') await this.loadPlayerRanking();
+    else this.render();
   }
 
   private markReview(id?: string) {
@@ -2995,6 +3079,16 @@ export class StudioApp extends Component {
           }
           break;
         case 'menu': this.openMenu(data.menu, data.id); break;
+        case 'rank-tab': {
+          const index = this.routes.length - 1;
+          const route = this.routes[index];
+          if (route?.menu !== 'player-rankings' || route.id === data.record) break;
+          this.routes[index] = { ...route, id: data.record };
+          void this.loadPlayerRanking();
+          break;
+        }
+        case 'rank-submit': void this.submitPlayerRankings(); break;
+        case 'rank-retry': void this.loadPlayerRanking(); break;
         case 'form-submit': {
           const next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
           this.routes = [];

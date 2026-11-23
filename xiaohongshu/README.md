@@ -9,7 +9,7 @@ xiaohongshu/
   build_minitool.py   一键构建（web-mobile -> 适配 -> 审计 -> zip）
   patch-csp.py        引擎动态代码静态化（升级 Cocos 后要重新核对）
   serve-csp.js        本地复刻容器 CSP 的验证服务器
-  assets/cover.png    小红书专用封面（3:4 竖版），其它平台用不上
+  assets/cover-v2.png  小红书送审封面（3:4 竖版）
   build/              产物（git 忽略）
     minitool/         适配后的目录，可审计
     minitool.zip      上传用的包
@@ -107,6 +107,12 @@ redapp preview --source thirdAgent --file /tmp/preview.json --confirm <planHash>
 更新已有小工具时 `version` 必须是没用过的号，`edit` 改基础信息则**每次都必须同时传 `appName`、`slogan`、`iconFileId` 三项**。
 
 送审前必须走一遍扫码预览并明确通过；`status` 里 `0 未发布 / 1 审核中 / 2 已发布 / 3 未通过 / 4 已下架`。
+
+## 玩家排行榜
+
+「公司 → 排行榜」提供总资金、年度盈利和创业天数三个榜位，玩家主动提交本局成绩。游戏侧计算成绩，小红书适配层调用容器的 `window.xhs.miniTool`。入口要求小红书客户端 9.51 或更新版本及排行榜授权。
+
+提交含排行榜的版本时，在创服选择「用户头像和昵称」，CLI 的 `authorizations` 填 `["apiCloudStore"]`。真机预览要检查入口、三个榜位、本人排名、提交反馈以及未开启权限时的界面。
 
 ## 更新版本（游戏发新版后）
 

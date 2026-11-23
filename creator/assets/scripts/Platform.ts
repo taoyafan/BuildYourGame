@@ -1,4 +1,6 @@
 import { sys, view } from 'cc';
+import type { StudioRecord } from './core/Studio';
+import { createXiaohongshuRankings, rankingsUnavailable } from './XiaohongshuRankings';
 
 const host: any = globalThis as any;
 const api = host.wx || host.tt;
@@ -16,7 +18,25 @@ function webSafeArea() {
   return result;
 }
 
+export interface RankingRow {
+  rank: number;
+  score: number;
+  nickname: string | null;
+}
+
+export interface RankingSnapshot {
+  rows: RankingRow[];
+  mine: { status: 'EXACT' | 'OVER_LIMIT' | 'NO_SCORE' | 'NOT_PARTICIPATING'; rank: number | null; score: number | null };
+}
+
+export interface StudioRankings {
+  read(record: StudioRecord): Promise<RankingSnapshot>;
+  submit(record: StudioRecord, score: number): Promise<void>;
+}
+
 export const platform = {
+  studioRankings: () => createXiaohongshuRankings(host.xhs),
+  rankingsUnavailable,
   // True on the mini program (wx/tt), where the native capsule sits on top of the canvas and the
   // layout has to leave room for it. Web builds are only constrained by the notch safe area.
   get mini(): boolean { return !!api; },
