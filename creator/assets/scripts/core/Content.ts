@@ -1401,33 +1401,29 @@ function industryMenu(state: any, id?: string) {
 // The 行情 tab: how hot each option of a category has been over the last year, one line per option, read
 // off the market itself (not the titles), so promotion cannot colour it. The legend filters to one line.
 const OPTION_COLORS = ['#c8574f', '#4a6d8c', '#d39a1e', '#2f9a8a', '#8a5bb0', '#6b8e3d', '#b5547f', '#3f7f9e', '#a8742f', '#5b6770'];
-export function marketChartData(state: any, groupKey = '', rawTag = '') {
-  const groups = core.heatGroups(state);
-  const group = groups.find((item: any) => item.key === groupKey) || groups.find((item: any) => item.field === core.lensOf(state)) || groups[0];
+export function marketChartData(state: any, groupKey = '', rawTag = '', draft?: any) {
+  const groups = core.heatGroups(state, draft);
+  const group = groups.find(item => item.key === groupKey) || groups.find(item => item.key === state.marketCycle?.focus) || groups[0];
   if (!group) return null;
-  const tag = (group.tags || []).includes(rawTag) ? rawTag : '';
-  const lines = group.tags.map((name: string, index: number) => {
-    const series = core.heatSeries(state, name);
-    return { name, color: OPTION_COLORS[index % OPTION_COLORS.length], series, heat: core.heatGrade(series[series.length - 1].value).label, shown: !tag || tag === name };
-  });
+  const tag = group.options.some(option => option.tag === rawTag) ? rawTag : '';
+  const lines = group.options.map((option, index) => ({
+    ...option, color: OPTION_COLORS[index % OPTION_COLORS.length], series: core.heatSeries(state, option.tag), shown: !tag || tag === option.tag
+  }));
   const first = (state.heatLog || [])[0];
   const fromDay = first ? first.day : state.day;
   const span = Math.max(14, state.day - fromDay);
   const start = state.day - span;
   const fromLabel = span >= 330 ? '一年前' : '开业';
-  const note = span >= 330 ? '近一年各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。作品发售后，档案里写着它赶上的行情。' : '开业至今各选项的需求冷热，越高越热、越低越冷；只回顾，不预告。记录满一年后就是完整的一年。';
-  return { groups, group, tag, lines, start, end: state.day, fromLabel, note };
+  return { groups, group, tag, lines, start, end: state.day, fromLabel };
 }
 function marketBlocks(state: any, id?: string) {
   const [, groupText = '', rawTag = ''] = String(id || '').split(':');
   const data = marketChartData(state, groupText, rawTag);
-  // Nothing to compare yet: every axis has fewer than two unlocked options, so there is no chart to read.
-  if (!data) return [{ type: 'text', text: '还没有可以对比的选项。同一类里解锁两项以上，这里才会显示它们各自的冷热。', muted: true }];
+  if (!data) return [{ type: 'text', text: '解锁模块后可查看行情。', muted: true }];
   const route = (key: string, nextTag: string) => ({ menu: 'industry', id: ['market', key, nextTag].join(':') });
   return [
     ...(data.groups.length > 1 ? [{ type: 'tabs', items: data.groups.map((item: any) => ({ text: item.name, route: route(item.key, ''), active: item.key === data.group.key })) }] : []),
-    { type: 'heat', lines: data.lines, start: data.start, end: data.end, fromLabel: data.fromLabel, legend: data.lines.map((line: any) => ({ text: line.name + ' ' + line.heat, color: line.color, active: line.name === data.tag, route: route(data.group.key, line.name === data.tag ? '' : line.name) })) },
-    { type: 'text', text: data.note, muted: true }
+    { type: 'heat', lines: data.lines, start: data.start, end: data.end, fromLabel: data.fromLabel, legend: data.lines.map(line => ({ text: line.name, color: line.color, active: line.tag === data.tag, route: route(data.group.key, line.tag === data.tag ? '' : line.tag) })) }
   ];
 }
 

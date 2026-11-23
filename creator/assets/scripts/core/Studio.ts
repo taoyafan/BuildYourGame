@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.74';
+export const VERSION = '0.4.75';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -336,11 +336,12 @@ export const HEAT_REDEEM = 0.6;
 export const HEAT_FLOOR = 0.75;
 export const HEAT_CEIL = 1.45;
 export const axisTags = (axis: string): string[] => ALL_TAGS.filter(tag => TAG_GROUP[tag] === axis);
+const OPTION_SWING = 0.02;
 // Nine options fill the 12% swing; fewer options swing less, in proportion, rounded to a whole percent.
 export const axisAmplitude = (axis: string) => Math.round(Math.min(1, axisTags(axis).length / 9) * 12) / 100;
 const heatRound = (value: number) => Math.round(value * 1000) / 1000;
 
-// One field at a time leads the news; a field opens in the 行情 page once a title has shipped with it.
+// One field at a time leads the news and research.
 export const LENS_ORDER = ['design', 'art', 'audio', 'tech'];
 export const LENS_ABILITY: any = { design: 'creativity', art: 'picture', audio: 'sound', tech: 'fluidity' };
 
@@ -421,7 +422,7 @@ function startHandover(state: any) {
 function newMarketCycle(state: any) {
   const scale = Math.max(0, ...state.projects.filter((project: any) => project.kind === 'game' && !project.parentId && !project.port).map((project: any) => project.scale), ...state.catalog.filter((book: any) => !book.parentId).map((book: any) => book.scale));
   const seen = Array.isArray(state.marketCycle?.seen) && state.marketCycle.seen.length ? state.marketCycle.seen.filter((field: string) => LENS_ORDER.includes(field)) : ['design'];
-  const cycle: any = { scale, axes: {}, since: {}, focus: FOCUS_AXES[0], done: [FOCUS_AXES[0]], focusAt: releases(state), late: false, handover: null, seen: seen.length ? seen : ['design'] };
+  const cycle: any = { scale, axes: {}, since: {}, focus: FOCUS_AXES[0], done: [FOCUS_AXES[0]], focusAt: releases(state), late: false, handover: null, seen: seen.length ? seen : ['design'], enginePhase: state.seed % 360 };
   MARKET_AXES.forEach((axis, index) => { cycle.since[axis] = {}; cycle.axes[axis] = freshAxis(state, axis, scale, 0.35 + index * 0.09, cycle.since[axis]); });
   state.marketCycle = cycle;
   delete state.lens;
@@ -436,6 +437,7 @@ function ensureMarketCycle(state: any) {
     if (!Array.isArray(cycle.done)) cycle.done = cycle.focus ? [cycle.focus] : [];
     if (cycle.focusAt === undefined || cycle.focusAt === null) cycle.focusAt = releases(state);
     if (typeof cycle.late !== 'boolean') cycle.late = false;
+    if (!Number.isFinite(cycle.enginePhase)) cycle.enginePhase = state.seed % 360;
     if (!cycle.since || typeof cycle.since !== 'object') cycle.since = {};
     for (const axis of MARKET_AXES) if (!cycle.since[axis] || typeof cycle.since[axis] !== 'object') cycle.since[axis] = {};
     return cycle;
@@ -459,10 +461,10 @@ function extendMarketCycle(state: any, scale: number) {
 function advanceFocus(state: any) {
   const cycle = state.marketCycle;
   const left = FOCUS_AXES.filter(axis => !cycle.done.includes(axis));
+  startHandover(state);
   if (!left.length) {
     // Everyone gets the same full swing, but the last focus eases down and the quiet ones ease up: the
     // amplitudes still meet their targets over two months instead of switching on one day.
-    startHandover(state);
     cycle.late = true;
     cycle.focus = null;
     announce(state, { kind: 'unlock', title: '行情不再有唯一风口', text: '五个方向都当过焦点。现在每个方向都有自己的起落，靠组合判断时机，而不是跟着一条线走。', amount: 0 });
@@ -471,7 +473,6 @@ function advanceFocus(state: any) {
   cycle.focus = left[0];
   cycle.done = [...cycle.done, cycle.focus];
   cycle.focusAt = releases(state);
-  startHandover(state);
   announce(state, { kind: 'unlock', title: '行业关注转向', text: `接下来一段时间，新东西集中在${AXIS_NAME[cycle.focus]}方向，这一类的行情也最起伏。`, field: AXIS_FIELD[cycle.focus], amount: 0 });
 }
 function marketCycleDay(state: any) {
@@ -484,8 +485,10 @@ function marketCycleDay(state: any) {
       clock.len = axisLength(state, cycle.scale);
       clock.hot = rollHot(state, axis, cycle.since[axis]);
       if (axis === cycle.focus && !cycle.late) {
-        const tags = Object.keys(clock.hot).join('、');
-        news(state, state.focus || 0, false, `${AXIS_NAME[axis]}方向出现新窗口`, `最近的讨论集中在${tags}。行情只在发售当天结算，做完那天的冷热才算数。`, null, true);
+        const modules = planOptions(state, axis === 'genre' ? 'core' : axis)
+          .filter(line => MODULES[line].tags.some((tag: string) => has(clock.hot, tag)))
+          .map(line => MODULES[line].name);
+        if (modules.length) news(state, state.focus || 0, false, `${AXIS_NAME[axis]}方向出现新窗口`, `最近的讨论集中在${modules.join('、')}。行情只在发售当天结算，做完那天的冷热才算数。`, null, true);
       }
     }
   }
@@ -496,9 +499,7 @@ function reviewMarket(state: any, book: any) {
   if (book.parentId) return;
   const cycle = ensureMarketCycle(state);
   const fresh = (book.marketFields || []).filter((field: string) => LENS_ORDER.includes(field) && !cycle.seen.includes(field));
-  if (!fresh.length) return;
-  cycle.seen = [...cycle.seen, ...fresh];
-  announce(state, { kind: 'unlock', title: '看懂了更多市场变化', text: `行情页现在能看${fresh.map((field: string) => FIELDS[field].name).join('与')}了。每个方向都有自己的起落，不走同一条线。`, field: fresh[0], amount: 0 });
+  if (fresh.length) cycle.seen = [...cycle.seen, ...fresh];
 }
 export function tagHeat(value: number, amplitude = 0.12) {
   const edge = Math.max(0.012, amplitude * 0.6);
@@ -522,22 +523,20 @@ export function market(state: any, tag: string) {
   };
   return { multiplier: round(clamp(value, HEAT_FLOOR, HEAT_CEIL)), ...text[heat.label] };
 }
-// Demand of one option on a given day: its axis' swing, the direction picked for this round, plus a small
-// daily wobble. Relative to the other options of the same axis, so a busy market never drags all of them.
-// The day is a parameter because the chart fills in the days before the studio opened from the same clock,
-// so the history it shows is the real curve rather than a copy of today's round.
-function tagDemandOn(state: any, tag: string, day: number) {
+// Each option has its own small drift on top of the rise and fall of its axis.
+export function tagDemand(state: any, tag: string) {
   const axis = TAG_GROUP[tag];
   if (!axis) return 1;
+  const day = state.day;
+  const cycle = ensureMarketCycle(state);
   const wobbleValue = wobble(day, axisIndex(axis)) * 0.005;
   // Engine is a generational tier rather than a taste cycle: 2D stays near baseline (±3%) while 3D
   // rides above it (+3%..+10%) with smooth waves that can dip into flat and lightly brush 2D's peak.
   if (axis === 'engine') {
-    const phase = ((state.seed || 1) % 360);
+    const phase = cycle.enginePhase;
     if (tag === '3D') return heatRound(1.065 + 0.035 * Math.sin(2 * Math.PI * (day + phase) / 180 + 1.8) + wobbleValue);
     return heatRound(1 + 0.03 * Math.sin(2 * Math.PI * (day + phase) / 150) + wobbleValue);
   }
-  const cycle = ensureMarketCycle(state);
   const clock = cycle.axes[axis];
   if (!clock) return 1;
   const tags = axisTags(axis);
@@ -553,12 +552,9 @@ function tagDemandOn(state: any, tag: string, day: number) {
   const raw = day - clock.from;
   const age = lag > 0 ? (raw <= lag ? 0 : (raw - lag) * clock.len / (clock.len - lag)) : raw;
   const strength = strengthAt(clock, age);
-  // Handovers interpolate towards today's amplitude, so they only apply to the day being lived through.
-  const swing = day === state.day ? axisSwing(state, axis) : axisTarget(cycle, axis);
-  return heatRound(1 + axisAmplitude(axis) * swing * direction * strength + wobbleValue);
-}
-export function tagDemand(state: any, tag: string) {
-  return tagDemandOn(state, tag, state.day);
+  const phase = day / 113 + tags.indexOf(tag) / tags.length + axisIndex(axis) / MARKET_AXES.length;
+  const drift = OPTION_SWING * Math.sin(2 * Math.PI * phase);
+  return heatRound(1 + axisSwing(state, axis) * (axisAmplitude(axis) * direction * strength + drift) + wobbleValue);
 }
 // Per-axis breakdown of a title's launch heat so the archive can show which axes carried or dragged it.
 export function tagBreakdown(state: any, tags: string[]) {
@@ -601,30 +597,22 @@ function recordHeat(state: any) {
   state.heatLog = [...(state.heatLog || []), { day: state.day, v: sample }].slice(-HEAT_SAMPLES);
 }
 export function heatSeries(state: any, tag: string) {
-  const past = (state.heatLog || []).map((item: any) => ({ day: item.day, value: item.v[tag] ?? 1 }));
+  const past = (state.heatLog || []).filter((item: any) => Number.isFinite(item.v[tag]))
+    .map((item: any) => ({ day: item.day, value: item.v[tag] }));
   // Today is often already one of the samples; appending it again would draw a vertical stub.
   const last = past[past.length - 1];
   if (last && last.day >= state.day) return past;
   return [...past, { day: state.day, value: tagDemand(state, tag) }];
 }
-// The tags a player compares against each other: one group per axis. Only the fields learned are shown,
-// and only the options the player can actually put in a title: reading the heat of a genre that is not
-// unlocked yet is comparing against something the studio cannot make.
-const HEAT_GROUPS: any[] = MARKET_AXES.map(axis => ({ key: axis, name: AXIS_NAME[axis], field: AXIS_FIELD[axis] }));
-export function tagOpen(state: any, tag: string) {
-  return Object.keys(MODULES).some(line => (MODULES[line].tags || []).includes(tag) && moduleOpen(state, line));
-}
-export function heatGroups(state: any) {
-  const learned = marketFields(state);
-  return HEAT_GROUPS
-    .filter(group => learned.includes(group.field))
-    .map(group => ({ ...group, tags: axisTags(group.key).filter(tag => tagOpen(state, tag)) }))
-    // One option is not a comparison: an axis with a single open option is left out until a second arrives.
-    .filter(group => group.tags.length > 1);
+export function heatGroups(state: any, draft?: any) {
+  return AXES.map(axis => ({
+    key: axis.key === 'core' ? 'genre' : axis.key,
+    name: axis.name,
+    options: planOptions(state, axis.key, draft).map(line => ({ tag: MODULES[line].tags[0] as string, name: MODULES[line].name as string }))
+  })).filter(group => group.options.length);
 }
 
-// The field the news and the 行情 page currently lead with: the focus axis, or every learned field once
-// the focus has run its course.
+// Research and news follow the focus field, then use all learned fields.
 export const activeMarketFields = (state: any): string[] => {
   const cycle = state.marketCycle;
   if (!cycle || !cycle.axes || cycle.late || !cycle.focus) return marketFields(state);
@@ -781,6 +769,10 @@ export const moduleOpen = (state: any, line: string) => !!MODULES[line]
   && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis))
   // The two libraries the first title needs start gated and are learned one by one during the opening job.
   && !((state.openingGates || {})[line] && !(state.openingLearned || {})[line]);
+export function planOptions(state: any, axis: string, draft?: any) {
+  const fixed = draft?.sequel ? draft.axes?.[axis] || [] : null;
+  return Object.keys(MODULES).filter(line => MODULES[line].axis === axis && moduleOpen(state, line) && (!fixed || fixed.includes(line)));
+}
 // An axis opens together with one line to put in it. Returns the lines handed out.
 function ensureAxisLines(state: any) {
   const given: string[] = [];
@@ -807,7 +799,7 @@ export function recommendPlan(state: any) {
   const axes: any = {};
   for (const axis of AXES) {
     if (!axisOpen(state, axis) || axis.min < 1) continue;
-    const options = Object.keys(MODULES).filter(id => MODULES[id].axis === axis.key && moduleOpen(state, id) && !(MODULES[id].requires || []).length);
+    const options = planOptions(state, axis.key).filter(id => !(MODULES[id].requires || []).length);
     const score = (line: string) => { const info = lineInfo(state, line); return info.level + info.next; };
     const first = axis.key === 'core' ? firstGameCore(state) : '';
     axes[axis.key] = first && options.includes(first) ? [first] : [...options].sort((left, right) => score(right) - score(left)).slice(0, axis.min);
@@ -921,7 +913,7 @@ export function planIssue(state: any, plan: any) {
     if (ids.some((id: string) => MODULES[id]?.axis !== axis.key || !moduleOpen(state, id))) return `${axis.name}里有还不能用的模块。`;
     // An opened axis takes at least one module — but only once there is one to take, or a save whose
     // unlock never landed could not start any title at all.
-    const options = Object.keys(MODULES).filter((id: string) => MODULES[id].axis === axis.key && moduleOpen(state, id));
+    const options = planOptions(state, axis.key);
     if (ids.length < Math.max(1, axis.min) && (ids.length || options.length)) return `请选择${axis.name}。`;
     if (ids.length > axisMax(state, axis)) return `${axis.name}最多选 ${axisMax(state, axis)} 个。`;
   }
@@ -4200,7 +4192,7 @@ function totalRanks(state: any, book: any) {
   });
 }
 
-// The categories the page may sort points by: the ones learned so far and the one being learned.
+// The fields studied through released titles.
 export function marketFields(state: any) {
   return LENS_ORDER.filter(field => (state.marketCycle?.seen || ['design']).includes(field));
 }

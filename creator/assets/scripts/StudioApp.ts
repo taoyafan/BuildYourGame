@@ -1835,19 +1835,13 @@ export class StudioApp extends Component {
       this.clickable(row, () => { open[axis.key] = !expanded; this.render(); });
       cursor += 60;
       if (!expanded) continue;
-      const unlocked = Object.keys(core.MODULES).filter(key => core.MODULES[key].axis === axis.key && core.moduleOpen(state, key));
-      // A fixed axis still opens like any other; its list just holds the one choice already picked,
-      // so there is nothing to switch to. No grey 固定 label and no explanation popup.
-      const options = fixed ? unlocked.filter(key => chosen.includes(key)) : unlocked;
+      const options = core.planOptions(state, axis.key, this.draft);
       const cell = (inner - 16) / 3;
       options.forEach((key: string, index: number) => {
         const on = chosen.includes(key);
         const module = core.MODULES[key];
         const status = statusOf(key);
-        // An art title keeps one visual style: mixing pixel and hand-drawn libraries is not a choice.
-        const pickedStyle = chosen.map(line => core.MODULES[line].style).find(Boolean) || '';
-        const styleClash = axis.key === 'art' && !!pickedStyle && !!module.style && module.style !== pickedStyle;
-        const blocked = core.lineBlocked(this.draft, key) || (styleClash ? '与已选风格不同' : '');
+        const blocked = core.lineBlocked(this.draft, key);
         const x = (index % 3) * (cell + 8);
         const y = cursor + Math.floor(index / 3) * 92;
         const node = this.box(body, 'Pick', x, y, cell, 84, blocked ? colors.pale : on ? colors.soft : colors.paper, 10);
@@ -2409,7 +2403,7 @@ export class StudioApp extends Component {
     return 150;
   }
 
-  // The market page: one line per option over the last year, drawn from the monthly record. Higher is hotter;
+  // The plan's market chart uses the same options as the draft.
   private showMarketModal(groupKey = '', tag = '') {
     const existing = this.stage.getChildByName('MarketModal');
     if (existing) { existing.removeFromParent(); existing.destroy(); }
@@ -2420,7 +2414,7 @@ export class StudioApp extends Component {
     };
     const scrim = this.box(overlay, 'Scrim', 0, 0, this.width, this.height, colors.night, 0, 130);
     this.clickable(scrim, close).getComponent(Button)!.transition = Button.Transition.NONE;
-    const data = content.marketChartData(this.state, groupKey, tag);
+    const data = content.marketChartData(this.state, groupKey, tag, this.draft);
     const cardW = this.width - 28;
     const pad = 14;
     const inner = cardW - pad * 2;
@@ -2430,7 +2424,7 @@ export class StudioApp extends Component {
     this.button(card, '', cardW - 46, 10, 34, 34, close, false, false, 'X');
     let y = 52;
     if (!data) {
-      y += this.paragraph(card, '还没有可以对比的选项。同一类里解锁两项以上，这里才会显示它们各自的冷热。', y, true, pad, inner, 12) + 10;
+      y += this.paragraph(card, '解锁模块后可查看行情。', y, true, pad, inner, 12) + 10;
     } else {
       if (data.groups.length > 1) {
         const cols = Math.min(3, data.groups.length);
@@ -2450,11 +2444,11 @@ export class StudioApp extends Component {
         start: data.start,
         end: data.end,
         fromLabel: data.fromLabel,
-        legend: data.lines.map((line: any) => ({
-          text: line.name + ' ' + line.heat,
+        legend: data.lines.map(line => ({
+          text: line.name,
           color: line.color,
-          active: line.name === data.tag,
-          onClick: () => this.showMarketModal(data.group.key, line.name === data.tag ? '' : line.name)
+          active: line.tag === data.tag,
+          onClick: () => this.showMarketModal(data.group.key, line.tag === data.tag ? '' : line.tag)
         }))
       }) + 6;
     }
@@ -2492,8 +2486,8 @@ export class StudioApp extends Component {
     const right = width - 12;
     const top = 10;
     const bottom = height - 26;
-    const low = 0.76;
-    const high = 1.28;
+    const low = 0.71;
+    const high = 1.29;
     const span = Math.max(1, block.end - block.start);
     const px = (day: number) => left + (right - left) * Math.max(0, Math.min(1, (day - block.start) / span));
     const py = (value: number) => bottom - (bottom - top) * (Math.max(low, Math.min(high, value)) - low) / (high - low);
@@ -2510,11 +2504,25 @@ export class StudioApp extends Component {
     for (const [label, value] of [['热', 1.16], ['平', 1], ['冷', 0.84]] as [string, number][]) this.text(node, label, 0, py(value) - 8, left - 6, 16, 11, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
     this.text(node, block.fromLabel || '一年前', left, height - 20, 80, 16, 10, colors.muted);
     this.text(node, '现在', right - 40, height - 20, 40, 16, 10, colors.muted).horizontalAlign = HorizontalTextAlignment.RIGHT;
-    for (const line of block.lines.filter((item: any) => item.shown)) {
+    const visible = block.lines.filter((item: any) => item.shown);
+    const segments = new Map<string, { points: [number, number, number, number]; colors: string[]; index: number }>();
+    for (const line of visible) {
       const points = line.series;
-      for (let index = 1; index < points.length; index++) pen.line(px(points[index - 1].day), py(points[index - 1].value), px(points[index].day), py(points[index].value), line.color, 3);
+      for (let index = 1; index < points.length; index++) {
+        const previous = points[index - 1];
+        const current = points[index];
+        const key = [previous.day, previous.value, current.day, current.value].join(':');
+        const segment = segments.get(key);
+        if (segment) segment.colors.push(line.color);
+        else segments.set(key, { points: [px(previous.day), py(previous.value), px(current.day), py(current.value)], colors: [line.color], index });
+      }
+    }
+    // Alternate colors along shared historical segments so all their series remain visible.
+    for (const { points, colors: strokes, index } of segments.values()) pen.line(...points, strokes[index % strokes.length], 2);
+    for (const line of visible) {
+      const points = line.series;
       const last = points[points.length - 1];
-      pen.circle(px(last.day), py(last.value), 4, line.color);
+      pen.circle(px(last.day), py(last.value), 3, line.color);
     }
     return y + height + 6 - origin;
   }
