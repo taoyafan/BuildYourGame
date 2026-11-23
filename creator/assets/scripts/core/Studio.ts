@@ -654,7 +654,7 @@ export function expandModules(plan: any) {
 export const planLines = (plan: any): string[] => plan.only ? [...plan.only] : AXES.flatMap(axis => (plan.axes && plan.axes[axis.key]) || []);
 // Person-days the plan stands for if nothing were reused, testing included: it decides the title's scale.
 export function nominalWork(plan: any) {
-  const modules = sum(expandModules(plan).map(id => sum(Object.values(partOf(id).work) as number[])));
+  const modules = sum(expandModules(plan).map(id => sum(Object.values(partOf(id)?.work || {}) as number[])));
   return (sum(Object.values(contentWork(plan)) as number[]) + modules) * (1 + TEST_SHARE);
 }
 export const planScale = (plan: any) => {
@@ -941,7 +941,7 @@ function blankProject(state: any, id: string, plan: any, day: number) {
     own.done[key] = (own.done[key] || 0) + done;
     own.value[key] = (own.value[key] || 0) + done * quality;
   };
-  for (const [key, amount] of Object.entries(plan.rebuild ? partOf(plan.rebuild).work : contentWork(plan)) as any) addOwn(key, amount);
+  for (const [key, amount] of Object.entries(plan.rebuild ? partOf(plan.rebuild)?.work || {} : contentWork(plan)) as any) addOwn(key, amount);
   for (const item of items) if (item.rented) for (const [key, part] of Object.entries(item.kept) as any) addOwn(key, part.amount, part.amount, part.quality);
   const work: any = {};
   for (const key of DIM_KEYS) work[key] = { total: 0, done: 0, value: 0, batches: [] };
@@ -1021,7 +1021,7 @@ function prepareModuleUpdates(state: any, project: any) {
   for (const id of project.parts || []) {
     const record = state.modules[id];
     if (!record) continue;
-    for (const [key, planned] of Object.entries(partOf(id).work) as any) {
+    for (const [key, planned] of Object.entries(partOf(id)?.work || {}) as any) {
       const work = Math.min(planned, record.done[key] || 0);
       if (work <= 0) continue;
       const quality = record.done[key] > 0 ? record.value[key] / record.done[key] : 0;
@@ -1054,7 +1054,7 @@ function personalRemaining(state: any, project: any, person: any, workKey: strin
     const goal = goals[key];
     const record = state.modules[id];
     if (!goal || !record?.done[key]) continue;
-    left += moduleUpdateWork(Math.min(partOf(id).work[key], record.done[key]), record.value[key] / record.done[key], Math.min(cap, goal.target));
+    left += moduleUpdateWork(Math.min(partOf(id)?.work[key] || 0, record.done[key]), record.value[key] / record.done[key], Math.min(cap, goal.target));
   }
   return left;
 }
@@ -1067,7 +1067,7 @@ function deliverModuleUpdates(state: any, project: any, person: any, key: string
     const record = state.modules[id];
     if (!goal || !record?.done[key]) continue;
     const old = record.value[key] / record.done[key];
-    const work = Math.min(partOf(id).work[key], record.done[key]);
+    const work = Math.min(partOf(id)?.work[key] || 0, record.done[key]);
     const target = Math.min(cap, goal.target);
     const left = moduleUpdateWork(work, old, target);
     if (left > 0.000001) targets.push({ id, old, work, target, left });
@@ -1088,7 +1088,7 @@ function deliverModuleUpdates(state: any, project: any, person: any, key: string
 export function moduleUpdateSummary(state: any, project: any) {
   refreshWork(state, project);
   const work = sum(Object.values(project.updateWork || {}).map((row: any) => row.left));
-  return { work, modules: Object.entries(project.moduleUpdates || {}).filter(([, goals]: any) => Object.keys(goals).length).map(([id]) => MODULES[partOf(id).line].name) };
+  return { work, modules: Object.entries(project.moduleUpdates || {}).filter(([id, goals]: any) => partOf(id) && Object.keys(goals).length).map(([id]) => MODULES[partOf(id).line].name) };
 }
 
 // New work in a dimension goes to whatever still needs it there, in proportion to what each has left:
@@ -1402,7 +1402,7 @@ function refreshBoard(state: any) {
   const pool = fresh.length ? fresh : lines;
   const line = pool[Math.floor(random(state) * pool.length)];
   const level = levelOf(line);
-  const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id).work) as number[])));
+  const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id)?.work || {}) as number[])));
   const offer = { id: `offer-${state.day}`, line, level, pay: round(work * JOB_RATE), client: pick(state, JOB_CLIENTS), day: state.day, requires: jobRequires(state, line) };
   board.offers = [...board.offers, offer];
   announce(state, { kind: 'job', title: '收到新委托', text: `${offer.client}想要${MODULES[line].name} · ${moneyText(offer.pay)}`, route: { menu: 'job', id: offer.id }, amount: 0 });
@@ -5165,6 +5165,7 @@ export function restoreStudio(saved: any) {
     next.heatLog = [];
     next.rulesRevision = 19;
   }
+  forgetRemovedModules(next);
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   // The chart only ever draws what was really recorded: a short record stays short until the days pass.
   // 0.4.48 briefly prefilled the days before opening from the market clock; those samples are not real
@@ -5304,6 +5305,45 @@ function validStudio(state: any) {
   if (!Array.isArray(state.catalog) || !state.catalog.every((book: any) => book && text(book.name) && has(TYPES, book.type) && scaleIndex(book.scale) && number(book.price) && book.price > 0 && object(book.metrics) && nonnegative(book.received) && Array.isArray(book.weekly))) return false;
   if (!object(state.goals) || !object(state.tutorial) || !object(state.overtime) || !Array.isArray(state.rankings) || !Array.isArray(state.exhibitions) || !Array.isArray(state.awards) || !Array.isArray(state.history) || !Array.isArray(state.reports)) return false;
   return true;
+}
+
+// Runs on every load: earlier migrations missed some fields, and a line can be renamed or removed later.
+const LINE_RENAMES: any = { pixelCharacters: 'artPixel', pixelScenes: 'artPixel', handCharacters: 'artHand', handScenes: 'artHand' };
+function forgetRemovedModules(state: any) {
+  const line = (id: any) => { const now = LINE_RENAMES[id] || id; return MODULES[now] ? now : null; };
+  const part = (id: any) => { const [name, level] = String(id).split('#'); const now = partId(LINE_RENAMES[name] || name, Number(level)); return partOf(now) ? now : null; };
+  const unique = (list: any[]) => Array.from(new Set(list.filter(Boolean)));
+  const lines = (list: any) => Array.isArray(list) ? unique(list.map(line)) : list;
+  const done = (record: any) => sum(Object.values(record?.done || {}) as number[]);
+  const records: any = {};
+  for (const [id, record] of Object.entries(state.modules) as any) {
+    const now = part(id);
+    if (now && (!records[now] || done(record) > done(records[now]))) records[now] = record;
+  }
+  state.modules = records;
+  for (const key of ['unlocked', 'openingLearned', 'licenses', 'rentLog']) {
+    const map = state[key];
+    if (!map || typeof map !== 'object') continue;
+    const out: any = {};
+    for (const [id, value] of Object.entries(map)) { const now = line(id); if (now && out[now] === undefined) out[now] = value; }
+    state[key] = out;
+  }
+  if (Array.isArray(state.board?.offers)) state.board.offers = state.board.offers.filter((offer: any) => (offer.line = line(offer.line)));
+  const broken = () => new Error('这份存档里的模块在当前版本已经不存在。');
+  for (const item of [...state.projects, ...state.catalog]) {
+    if (Array.isArray(item.parts)) item.parts = unique(item.parts.map(part));
+    if (item.only) item.only = lines(item.only);
+    if (Array.isArray(item.rent)) item.rent = lines(item.rent);
+    if (item.axes && typeof item.axes === 'object') for (const axis of Object.keys(item.axes)) item.axes[axis] = lines(item.axes[axis]);
+    for (const defect of Array.isArray(item.defects) ? item.defects : []) if (defect?.module) defect.module = part(defect.module) || defect.module;
+    if (item.released) continue;
+    if (item.rebuild && !(item.rebuild = part(item.rebuild))) throw broken();
+    if (item.job && !(item.job.module = line(item.job.module))) throw broken();
+    if (item.kind === 'module' && !item.rebuild && !(item.only || []).length) throw broken();
+    const updates: any = {};
+    for (const [id, goals] of Object.entries(item.moduleUpdates || {})) { const now = part(id); if (now) updates[now] = goals; }
+    if (item.moduleUpdates) item.moduleUpdates = updates;
+  }
 }
 
 // ---- Save slots ----------------------------------------------------------------

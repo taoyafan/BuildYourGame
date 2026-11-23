@@ -338,7 +338,7 @@ export class StudioApp extends Component {
         const raw = platform.read(core.SAVE_SLOT_KEY(this.slot));
         if (raw) platform.write(raw, core.SAVE_RECOVERY_KEY);
       } catch { this.storageIssue = '设备存储不可用，进度可能无法保存。'; }
-      this.storageIssue ||= outdated ? '0.2.0 改为模块化玩法，旧存档无法继续，已另存为恢复副本，新开了一局。' : '这份存档无法读取，已另存为恢复副本，新开了一局。';
+      this.storageIssue ||= outdated ? '0.2.0 改为模块化玩法，旧存档无法继续，已另存为恢复副本，新开了一局。' : '这份存档与当前版本不兼容，已另存为恢复副本，新开了一局。';
     }
     return core.createStudio();
   }

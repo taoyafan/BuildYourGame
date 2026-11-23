@@ -288,7 +288,7 @@ function contentMenu(state: any, id?: string) {
   const project = core.activeProject(state, id) || core.projectOpen(state)[0];
   if (!project) return { title: '游戏内容', blocks: [{ type: 'text', text: '先立项。' }] };
   const line = (key: string) => ({ module: key, name: core.MODULES[key].name, level: core.levelFor(project, key), rented: (project.rent || []).includes(key) });
-  const only = project.kind === 'module' ? (project.rebuild ? [core.partOf(project.rebuild).line] : project.only || []) : [];
+  const only = project.kind === 'module' ? (project.rebuild ? [core.partOf(project.rebuild)?.line].filter(Boolean) : project.only || []) : [];
   const axes = core.AXES.map((axis: any) => ({ name: axis.name, field: axis.field, lines: ((project.axes || {})[axis.key] || []).map(line) })).filter((axis: any) => axis.lines.length);
   const items = only.length ? [{ name: '模块', field: core.MODULES[only[0]].field, lines: only.map(line) }, ...axes] : axes;
   return { title: '游戏内容', blocks: [
@@ -305,7 +305,7 @@ function projectMenu(state: any, id?: string) {
   ] }] };
   if (project.released) return patchProjectMenu(state, project);
   if (project.kind === 'module') {
-    const lines = project.rebuild ? [core.partOf(project.rebuild).line] : project.only || [];
+    const lines = project.rebuild ? [core.partOf(project.rebuild)?.line].filter(Boolean) : project.only || [];
     const status = project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing';
     const metrics = core.visibleMetrics(project);
     const forecast = core.projectForecast(state, project);
@@ -496,7 +496,7 @@ function jobDetailMenu(state: any, id: string) {
   const tiers = core.lineTiers(offer.line);
   const work = Array.from({ length: offer.level }, (_v, index) => core.partId(offer.line, index + 1))
     .filter((part: string) => !core.partBuilt(state, part))
-    .reduce((total: number, part: string) => total + (Object.values(core.partOf(part).work) as number[]).reduce((a, b) => a + b, 0), 0);
+    .reduce((total: number, part: string) => total + (Object.values(core.partOf(part)?.work || {}) as number[]).reduce((a, b) => a + b, 0), 0);
   // Six axes for the workload radar: a commission only has module work, so testing stays empty.
   const dims: any = {};
   for (const key of core.DIM_KEYS) dims[key] = 0;
