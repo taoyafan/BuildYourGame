@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.71';
+export const VERSION = '0.4.72';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -986,7 +986,7 @@ function blankProject(state: any, id: string, plan: any, day: number) {
     checkpoints: { prototype: false, demo: false, ready: false },
     test: null, tests: 0, testCount: 0,
     sequel: plan.sequel || null, expectation: plan.expectation || 0,
-    contributions: {}, priority: 0
+    contributions: {}
   };
   refreshWork(state, project);
   work.stability.total = kind === 'game' ? sum(CONTENT_KEYS.map(key => work[key].total)) * TEST_SHARE : 0;
@@ -1210,8 +1210,11 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 19, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 20, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, licenses: {}, unlocked: {}, rentLog: {},
+    // The title the player is looking at right now. New hires start on it, so nobody has to be sent to the
+    // assign page just to make a new colleague do something.
+    focusProject: '',
     event: null, over: false, accrued: 0,
     ledger: { opening: START_CASH, income: 0, expense: 0, payroll: 0 },
     report: null, reports: [], history: [], tutorial: { skipped: false, seen: {} }, notices: {}, bridgeUsed: false, lastRelease: null,
@@ -1444,7 +1447,6 @@ export function takeJob(state: any, id: string) {
   const module = MODULES[offer.line];
   const project = blankProject(next, `job-${next.day}-${next.seed}-${next.projects.length}`, { name: `委托：${module.name}${lineTiers(offer.line) > 1 ? ` ${offer.level} 级` : ''}`, scale: offer.level - 1, only: [offer.line], type: module.type || 'action' }, next.day);
   project.job = { pay: offer.pay, client: offer.client + '想要' + module.name, module: offer.line, requires: offer.requires || {} };
-  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   next.board.offers = next.board.offers.filter((item: any) => item.id !== id);
   studioLog(next, '接下委托', `${offer.client}：${module.name}，做完到账 ${moneyText(offer.pay)}。`);
@@ -1467,7 +1469,6 @@ export function startModuleProject(state: any, line: string, level: number, rebu
   if (!rebuild && partBuilt(next, id)) throw new Error('这一级已经做好了。');
   const name = (rebuild ? '重做：' : '研发：') + module.name + (lineTiers(line) > 1 ? ` ${level} 级` : '');
   const project = blankProject(next, `module-${next.day}-${next.seed}-${next.projects.length}`, rebuild ? { name, scale: level - 1, rebuild: id, type: module.type || 'action' } : { name, scale: level - 1, only: [line], type: module.type || 'action' }, next.day);
-  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   studioLog(next, rebuild ? '重做模块' : '研发模块', `${name}：安排人手后开始，做完自动收进模块库。`);
   return next;
@@ -1733,6 +1734,19 @@ export function hireReasons(state: any, id: string): string[] {
   return reasons;
 }
 
+// A new colleague starts on the title the player is looking at, doing their own trade. Without this
+// every hire needed a trip to the assign page before they did anything, and with priority gone the
+// question "who goes where" had no default left.
+function placeNewcomer(state: any, person: any) {
+  const live = state.projects.filter((item: any) => !item.released);
+  const focus = live.find((item: any) => item.id === state.focusProject) || live[0];
+  if (!focus) return;
+  if (!focus.assignments) focus.assignments = {};
+  focus.assignments[person.id] = [person.home || homeWork(person)];
+  refreshWork(state, focus);
+  focus.progress = projectMetrics(focus).progress;
+}
+
 export function hire(state: any, id: string) {
   const reasons = hireReasons(state, id);
   if (reasons.length) throw new Error(reasons.join('\n'));
@@ -1741,6 +1755,7 @@ export function hire(state: any, id: string) {
   person.hired = true;
   const joined = { ...person, joined: next.day, home: homeWork(person), snap: { ...person.abilities } };
   next.staff.push(joined);
+  placeNewcomer(next, joined);
   personNote(next, joined, `入职，月薪 ${person.wage.toFixed(2)} 万`);
   const talent = person.talent ? (next.talents || []).find((item: any) => item.id === person.talent) : null;
   if (talent) talent.status = 'hired';
@@ -1762,6 +1777,7 @@ export function hire(state: any, id: string) {
       potential: Math.min(98, Math.max(...ABILITY_KEYS.map(key => abilities[key])) + 10)
     });
     next.staff.push(mate);
+    placeNewcomer(next, mate);
     studioLog(next, `${mate.name} 一同入职`, `${person.name}的旧部，${ROLES[role].name}，月薪 ${mate.wage.toFixed(2)} 万。`);
   }
   return next;
@@ -1985,9 +2001,11 @@ function speedOf(state: any, person: any, workKey: string) {
 // One person's output for one day, spread across the works they are assigned to in proportion to the
 // remaining work of each, so several works finish roughly together. Nobody assigned means no progress.
 // A person belongs to exactly one project: the one they are explicitly assigned to, or — with no
-// assignment — the first open project of the highest priority. Shipped titles only get people the
-// player explicitly sends there, so patching and reworking a back title is always a deliberate
-// trade. A project that is not in the list (a hypothetical plan) counts everyone.
+// assignment — the first open project. Shipped titles only get people the player explicitly sends
+// there, so patching and reworking a back title is always a deliberate trade. New hires are written
+// into the project the player is looking at when they join, so this fallback only covers old saves and
+// people whose project was given up. A project that is not in the list (a hypothetical plan) counts
+// everyone.
 function belongsTo(state: any, project: any, person: any) {
   const known = state.projects.some((item: any) => item.id === project.id);
   if (!known) return true;
@@ -1998,8 +2016,7 @@ function belongsTo(state: any, project: any, person: any) {
   if (project.released) return false;
   const live = state.projects.filter((item: any) => !item.released);
   if (!live.length) return false;
-  const best = Math.min(...live.map((item: any) => item.priority ?? 0));
-  return live.indexOf(project) === live.findIndex((item: any) => (item.priority ?? 0) === best);
+  return live[0].id === project.id;
 }
 
 // One person's output for one day. Explicit assignments win; with none, the person works their trade
@@ -2577,7 +2594,7 @@ function keepPerson(state: any, id: string) {
   return state;
 }
 
-export function startProject(state: any, draft: any, priority = -1) {
+export function startProject(state: any, draft: any) {
   const next = studioAction(state);
   if (!next.company) throw new Error('请先命名公司。');
   if (!draft || !draft.axes) throw new Error('请选择模块。');
@@ -2605,12 +2622,10 @@ export function startProject(state: any, draft: any, priority = -1) {
   project.invested = payRent(next, plan, name);
   // Something new may come up while the title is being made: one moment between 30% and 70%.
   project.unlockAt = [Math.round(30 + random(next) * 40)];
-  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   next.projects.push(project);
   if (!project.parentId && !project.port) extendMarketCycle(next, project.scale);
   refreshWork(next, project);
   project.progress = projectMetrics(project).progress;
-  if (priority >= 0) return setPriority(next, project.id, priority);
   studioLog(next, '新作立项', `《${name}》面向${TYPES[project.type].audience}，${SCALES[plan.scale].name}作品。`);
   return next;
 }
@@ -2658,18 +2673,6 @@ export function toggleAssign(state: any, projectId: string, personId: string, wo
   return assign(state, projectId, personId, next);
 }
 
-export function setPriority(state: any, projectId: string, priority: number) {
-  const next = studioAction(state);
-  const project = next.projects.find((item: any) => item.id === projectId);
-  if (!project) throw new Error('项目不存在。');
-  const ordered = projectOrder(next).filter((item: any) => item.id !== projectId);
-  const rank = clamp(Math.round(Number(priority) || 0), 0, ordered.length);
-  ordered.splice(rank, 0, project);
-  ordered.forEach((item: any, index: number) => { item.priority = index; });
-  studioLog(next, '调整项目优先级', `《${project.name}》优先级第 ${rank + 1}。`);
-  return next;
-}
-
 // What each kind of project is and can do, in one place. The kind is read from the markers a project
 // already carries (module / job / patch / parentId), so saves need no migration.
 const ABANDON_GAME = '已花的钱不退，本作内容作废；用到的模块进度仍留在模块库。';
@@ -2700,15 +2703,14 @@ export function abandonProject(state: any, projectId: string) {
     project.patch = null;
     project.assignments = {};
   } else next.projects = next.projects.filter((item: any) => item.id !== projectId);
-  projectOrder(next).forEach((item: any, index: number) => { item.priority = index; });
   const label = kind === 'game' || kind === 'dlc' ? `《${project.name}》` : kind === 'patch' ? `《${project.name}》的补丁` : project.name;
   studioLog(next, `放弃${PROJECT_KINDS[kind].name}`, `${label}已放弃。${PROJECT_KINDS[kind].abandon}`);
   return next;
 }
 
 // A patch is its own small project on a shipped title: the scope is fixed when it starts (the defects
-// players have reported so far, plus an optional rework of one dimension), it has its own crew and
-// priority, and it ships by itself once the scope is done.
+// players have reported so far, plus an optional rework of one dimension), it has its own crew, and it
+// ships by itself once the scope is done.
 export const PATCH_REWORK = 0.3;
 // Bringing a shipped title up to date with the library is a small fixed job of its own.
 export const SYNC_WORK = 2;
@@ -2799,7 +2801,6 @@ export function startPatch(state: any, projectId: string, rework: string | null 
     before: { overall: metrics.overall, review: book ? book.reviewScore : null, daily: book ? book.lastDayUnits : 0 }
   };
   project.assignments = {};
-  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   const scope = [targets.length ? `修复 ${targets.length} 项已报告缺陷` : '', rework ? `返工${DIMENSIONS.find(item => item.key === rework)?.name}` : '', sync ? '同步更新' : ''].filter(Boolean).join('，');
   studioLog(next, `《${project.name}》开补丁`, `${scope}。安排人手后开始制作，做完自动上线。`);
   return next;
@@ -2952,13 +2953,6 @@ function addDefect(project: any, person: any, dimension: string, chance: number,
     const owner = owners.find((item: any) => (roll -= item.amount) < 0) || owners[owners.length - 1];
     project.defects.push({ id: `${project.id}-${project.defects.length}`, dimension, found: false, fixed: false, roll: random(state), module: owner?.id || null });
   }
-}
-
-// Priority is the player's ordering of parallel projects. A person belongs to one project at a time, so
-// it only decides where people without an explicit assignment go; running several projects costs no
-// extra efficiency beyond splitting the people.
-export function projectOrder(state: any) {
-  return state.projects.filter((project: any) => !project.released || project.patch).sort((left: any, right: any) => (left.priority || 0) - (right.priority || 0));
 }
 
 // Carries the 凝聚人心 boost, so every forecast and every day use the same project speed.
@@ -4054,7 +4048,6 @@ export function makeDLC(state: any, id: string) {
   const project = blankProject(next, `${next.day}-${next.seed}-${next.projects.length}`, plan, next.day);
   project.parentId = id;
   project.followers = Math.round(book.units * 0.3 + book.followers * 0.2);
-  project.priority = Math.max(-1, ...projectOrder(next).map((item: any) => item.priority ?? 0)) + 1;
   const cost = 4 + book.scale * 2;
   if (cost + planRentCost(next, plan) > next.cash) throw new Error('当前资金不足。');
   spend(next, cost, `《${book.name}》资料片立项`);
@@ -4392,6 +4385,7 @@ export function poach(state: any, talentId: string, bid: number) {
     story: freeAgent ? '离职后以自由身加盟' : `从${talent.studioName}挖来`
   });
   next.staff.push(person);
+  placeNewcomer(next, person);
   personNote(next, person, (freeAgent ? '自由身加盟' : `从${talent.studioName}挖来`) + `，月薪 ${moneyText(offer.wage)}`);
   talent.status = 'hired';
   talent.since = next.day;
@@ -4849,6 +4843,7 @@ function applyEffects(state: any, effects: any, ctx: any) {
   if (effects.junior && state.staff.length < seats(state)) {
     const junior = makeJunior(state, effects.junior.role, effects.junior.skill);
     state.staff.push(junior);
+    placeNewcomer(state, junior);
     studioLog(state, `${junior.name} 加入`, `${ROLES[junior.role].name}，月薪 ${junior.wage.toFixed(2)} 万。`);
   }
   if (effects.schedule) state.schedule = [...(state.schedule || []), { day: state.day + effects.schedule.days, amount: effects.schedule.amount, title: effects.schedule.title }];
@@ -5202,6 +5197,24 @@ export function restoreStudio(saved: any) {
     next.rulesRevision = 19;
   }
   forgetRemovedModules(next);
+  if (next.rulesRevision < 20) {
+    // 0.4.72: project priority is gone. Everyone it used to place without an explicit assignment is
+    // written down where they were — on the title that used to win — instead of all sliding onto the
+    // first project after the change. New hires follow the title the player is looking at.
+    const live = next.projects.filter((item: any) => !item.released);
+    const home = [...live].sort((left: any, right: any) => (left.priority ?? 0) - (right.priority ?? 0))[0];
+    if (home) {
+      for (const person of next.staff) {
+        if (live.some((item: any) => assignmentGiven(item, person))) continue;
+        if (!home.assignments) home.assignments = {};
+        home.assignments[person.id] = [person.home || homeWork(person)];
+      }
+    }
+    for (const project of next.projects) delete project.priority;
+    next.focusProject = '';
+    next.rulesRevision = 20;
+  }
+  if (!next.projects.some((project: any) => project.id === next.focusProject && !project.released)) next.focusProject = '';
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }
   // The chart only ever draws what was really recorded: a short record stays short until the days pass.
   // 0.4.48 briefly prefilled the days before opening from the market clock; those samples are not real
@@ -5212,7 +5225,6 @@ export function restoreStudio(saved: any) {
     v['剪影'] ??= v['水彩'];
     delete v['水彩'];
   }
-  projectOrder(next).forEach((project: any, index: number) => { project.priority = index; });
   for (const person of [...next.staff, ...(next.talents || []), ...Object.values(next.candidates || {}).flatMap((pool: any) => pool.people || [])]) fillLooks(next, person);
   return next;
 }

@@ -2025,7 +2025,7 @@ export class StudioApp extends Component {
           const line = Math.floor(index / columns);
           const left = column * (cell + gap);
           const row = y + line * 56;
-          const icon = item.icon || (item.action === 'priority' ? (String(item.text).includes('提高') ? 'ArrowUp' : 'ArrowDown') : actionIcons[item.action] || 'ChevronRight');
+          const icon = item.icon || actionIcons[item.action] || 'ChevronRight';
           this.button(parent, item.text, left, row, cell - (item.help ? 44 : 0), 46, () => this.dispatch(item.action, item.data), true, !!item.disabled, icon, item.anchor, item.reason);
           if (item.help) this.button(parent, '', left + cell - 38, row + 4, 38, 38, () => this.showTip(item.helpTitle || item.text, item.help), false, false, 'CircleHelp', 'hire-help');
         });
@@ -2910,6 +2910,10 @@ export class StudioApp extends Component {
     this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
+    // 新招的人会直接做玩家正在看的这部作品（见 core.placeNewcomer），所以每次打开带项目 id 的页面就记一下。
+    // 已发售的作品只在补丁期间算「在做的项目」，记它没有意义。
+    const looking = id ? this.state.projects.find((item: any) => item.id === id && !item.released) : null;
+    if (looking && this.state.focusProject !== looking.id) { this.state.focusProject = looking.id; this.saveSoon(); }
     this.routes.push({ menu, id, dim });
     this.render();
   }
@@ -3065,7 +3069,6 @@ export class StudioApp extends Component {
           this.apply(next, '委托已接下，请安排人手。');
           break;
         }
-        case 'priority': this.apply(core.setPriority(this.state, data.id, Number(data.priority))); break;
         case 'test': this.apply(core.testDemo(this.state, data.id)); break;
         case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;
         case 'promote': {

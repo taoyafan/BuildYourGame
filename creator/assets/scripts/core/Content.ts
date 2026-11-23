@@ -336,8 +336,6 @@ function projectMenu(state: any, id?: string) {
   const forecast = core.projectForecast(state, project);
   const live = core.liveProjects(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
-  const order = core.projectOrder(state);
-  const rank = order.findIndex((item: any) => item.id === project.id);
   const demo = project.checkpoints.demo;
   const fix = core.fixForecast(state, project);
   // The page opens on the six numbers that decide the date: who is on each one and how many days it needs.
@@ -349,12 +347,6 @@ function projectMenu(state: any, id?: string) {
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'lines', items: [['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
-    ...(order.length > 1 ? [
-      { type: 'buttons', columns: 2, items: [
-        { text: '提高优先级 · 现第 ' + (rank + 1), action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
-        { text: '降低优先级', action: 'priority', data: { id: project.id, priority: rank + 1 }, disabled: rank === order.length - 1 }
-      ] }
-    ] : []),
     { type: 'actions', items: [
       { text: '调整分工', detail: '谁做哪几项工作', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
       { text: '试玩', detail: demo ? (project.test ? '最近一次新发现 ' + (project.test.found ?? 0) + ' 项缺陷 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、看玩家买不买账') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
@@ -431,8 +423,6 @@ function patchProjectMenu(state: any, project: any) {
   const forecast = core.patchForecast(state, project);
   const crew = state.staff.filter((person: any) => core.personWorks(state, project, person).length);
   const rework = project.patch.rework ? core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : '';
-  const order = core.projectOrder(state);
-  const rank = order.findIndex((item: any) => item.id === project.id);
   return {
     title: '补丁',
     blocks: [
@@ -448,10 +438,6 @@ function patchProjectMenu(state: any, project: any) {
       ] },
       { type: 'radar', metrics: core.projectMetrics(project), genre: project.type, projectId: project.id },
       ...(book ? [{ type: 'lines', items: [['当前口碑', book.reviewScore.toFixed(1)], ['最近一日销量', number(book.lastDayUnits) + ' 份']] }] : []),
-      ...(order.length > 1 ? [{ type: 'buttons', columns: 2, items: [
-        { text: '提高优先级', action: 'priority', data: { id: project.id, priority: rank - 1 }, disabled: rank <= 0 },
-        { text: '降低优先级', action: 'priority', data: { id: project.id, priority: rank + 1 }, disabled: rank === order.length - 1 }
-      ] }] : []),
       { type: 'actions', items: [
         { text: '安排补丁人手', detail: '谁参与补丁', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
         { text: '立即上线', detail: '先发出已完成的部分', icon: 'Rocket', action: 'patch-release', data: { id: project.id } },
