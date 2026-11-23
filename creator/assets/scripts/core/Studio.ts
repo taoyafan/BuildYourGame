@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.70';
+export const VERSION = '0.4.71';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -2649,6 +2649,10 @@ export function toggleAssign(state: any, projectId: string, personId: string, wo
   const person = state.staff.find((item: any) => item.id === personId);
   if (!project) throw new Error('项目不存在，请返回重进。');
   if (!person) throw new Error('员工不存在，请返回重进。');
+  // 这个人根本没参与本项目时，第一下点击是「把人调过来做这一项」，不是取反。
+  // 没有这一段就会掉进 assignedWorks 的回落值（他本职那一项），于是一个在别的项目做本职的人，
+  // 点自己本职那一格反而变成空表——玩家眼里就是「点一下他就空闲了」。
+  if (!personWorks(state, project, person).length) return assign(state, projectId, personId, [workKey]);
   const current: string[] = assignedWorks(project, person);
   const next = current.includes(workKey) ? current.filter((key: string) => key !== workKey) : [...current, workKey];
   return assign(state, projectId, personId, next);

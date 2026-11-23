@@ -2343,16 +2343,14 @@ export class StudioApp extends Component {
             const projectId = block.projectId || route.id || (fallback ? fallback.id : '');
             const person = this.state.staff.find((item: any) => item.id === block.personId);
             if (!projectId || !person) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
-            const name = core.WORKS.find(entry => entry.key === work.key)?.name || work.key;
-            // 用 assignedWorks 而不是 personWorks 算 after：personWorks 受 belongsTo 门控，
-            // 而真正写状态的 toggleAssign 用的是 assignedWorks。两者不一致时，会把“调入本项目”误报成“已退出”，
-            // 且跨项目看人时按钮全灰。统一来源后提示才正确，点击也能把人真正调过来。
+            // 用 personWorks 而不是 assignedWorks 读 before：assignedWorks 对「没参与本项目的人」会回落到
+            // 他本职那一项，于是本项目和别处的分工看起来一样。真正写状态的是 toggleAssign，它先判断这人
+            // 在不在本项目，不在就把人调过来再按这一项开始做。
+            const before = core.projectOf(this.state, person);
             const next = core.toggleAssign(this.state, projectId, person.id, work.key);
-            const after = core.assignedWorks(core.activeProject(next, projectId) || { id: projectId }, person);
             // Turning the last box off no longer bounces back to the home trade: the person idles.
             // The message rides along with the redraw: notifying afterwards rebuilt the whole page twice.
-            if (!after.length) this.apply(next, person.name + '：已空闲，不做任何工作，工资照付。');
-            else this.apply(next, person.name + (after.includes(work.key) ? ' 已加入「' + name + '」' : ' 已退出「' + name + '」'));
+            this.apply(next, this.assignNotice(before, next, projectId, person.id, work.key));
           });
         });
         // The lesson is "everyone picks their work", so the ring has to hug the whole grid. Anchoring
@@ -2370,15 +2368,18 @@ export class StudioApp extends Component {
           if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
           // Best of the trade, not the first home key: coders and designers have two trades.
           const best = core.homeWork(target);
-          const name = core.WORKS.find((entry: any) => entry.key === best)?.name || best;
-          this.apply(core.assign(this.state, project.id, target.id, [best]), target.name + '：只做擅长的一项（' + name + '）。');
+          const before = core.projectOf(this.state, target);
+          const next = core.assign(this.state, project.id, target.id, [best]);
+          this.apply(next, this.assignNotice(before, next, project.id, target.id, best));
         }, false);
         this.button(card, '全部都做', chipX(1), header + rows * 50 + 2, chip, 36, () => {
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
           if (!project || !target) { this.notify('这个项目或成员已经不存在了，请返回重进。'); return; }
-          this.apply(core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]), target.name + '：所有工作都接手。');
+          const before = core.projectOf(this.state, target);
+          const next = core.assign(this.state, project.id, target.id, [...core.WORK_KEYS]);
+          this.apply(next, this.assignNotice(before, next, project.id, target.id, ''));
         }, false);
         // No idle shortcut: the two buttons above fill the row exactly. A third one used to sit at
         // chipX(2), which started past the card's right edge and showed up as a sliver of a button.
@@ -2387,6 +2388,23 @@ export class StudioApp extends Component {
       }
       default: return y;
     }
+  }
+
+  // Every way the assign page can move a person goes through here, so the message always says the
+  // same thing: which work they picked up, or which title they left for this one. Without the
+  // "退出《…》" half, pulling someone off a running title just looks like nothing happened.
+  private assignNotice(before: any, next: any, projectId: string, personId: string, workKey: string) {
+    const person = next.staff.find((item: any) => item.id === personId);
+    const project = next.projects.find((item: any) => item.id === projectId);
+    if (!person || !project) return '分工已更新。';
+    const after: string[] = core.personWorks(next, project, person);
+    const left = before && before.id !== projectId ? before.name : '';
+    const label = workKey ? (core.WORKS.find((entry: any) => entry.key === workKey)?.name || workKey) : '';
+    if (!after.length) return person.name + '：已空闲，不做任何工作，工资照付。';
+    if (left) return '已让 ' + person.name + ' 退出《' + left + '》' + (label ? '，改做「' + label + '」' : '') + '。';
+    if (label && !after.includes(workKey)) return person.name + ' 已退出「' + label + '」';
+    if (label) return person.name + ' 已加入「' + label + '」';
+    return person.name + '：接手全部 ' + after.length + ' 项工作。';
   }
 
   private cover(parent: Node, y: number, book: any) {
