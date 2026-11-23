@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.68';
+export const VERSION = '0.4.70';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -918,7 +918,10 @@ export function planWork(state: any, plan: any) {
     for (const [key, amount] of Object.entries(item.fresh) as any) fresh[key] = (fresh[key] || 0) + amount;
     for (const part of Object.values(item.kept) as any) saved += part.amount;
   }
-  return { fresh, total: sum(Object.values(fresh) as number[]), saved, tags: planTags(plan), rentCost: planRentCost(state, plan) };
+  const total = sum(Object.values(fresh) as number[]);
+  // Testing covers the whole title, reused and rented parts included, exactly as the started project counts it.
+  const test = plan.only ? 0 : (total + saved) * TEST_SHARE;
+  return { fresh, total, saved, test, tags: planTags(plan), rentCost: planRentCost(state, plan) };
 }
 export function planTags(plan: any) {
   const tags: string[] = [];

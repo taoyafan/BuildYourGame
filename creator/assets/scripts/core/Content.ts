@@ -228,9 +228,9 @@ export function planPreview(state: any, draft: any) {
   const issue = core.planIssue(state, draft);
   if (issue) return issue;
   const plan = core.planWork(state, draft);
-  const workload = plan.total * (1 + core.TEST_SHARE);
-  // Output per day is the team's combined speed, so the estimate is total work over total hands.
-  const capacity = state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > state.day ? 0 : person.speed / 100), 0);
+  const workload = plan.total + plan.test;
+  // Output per day is the team's combined speed. People on an outing still count: they are back in days.
+  const capacity = state.staff.reduce((total: number, person: any) => total + person.speed / 100, 0);
   const days = capacity > 0.0001 ? Math.ceil(workload / capacity) : null;
   // Wages buy person-days, so the cost follows the workload; a lone unpaid founder would make every plan look free.
   const paid = state.staff.filter((person: any) => !person.founder);

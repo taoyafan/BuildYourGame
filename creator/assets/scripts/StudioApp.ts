@@ -1528,8 +1528,8 @@ export class StudioApp extends Component {
     const radius = 52;
     const count = core.DIM_KEYS.length;
     const crew = this.state.staff.length;
-    const capacity = this.state.staff.reduce((total: number, person: any) => total + (person.leaveUntil > this.state.day ? 0 : person.speed / 100), 0);
-    const daysOf = (value: number) => value <= 0 ? 0 : single ? Math.round(value * 10) / 10 : capacity > 0.0001 ? Math.max(1, Math.ceil(value / capacity)) : 0;
+    const capacity = this.state.staff.reduce((total: number, person: any) => total + person.speed / 100, 0);
+    const daysOf = (value: number) => value <= 0 ? 0 : single ? Math.max(1, Math.round(value)) : capacity > 0.0001 ? Math.max(1, Math.ceil(value / capacity)) : 0;
     const max = Math.max(1, ...core.DIM_KEYS.map((key: string) => Number(values?.[key]) || 0));
     const point = (index: number, ratio: number) => {
       const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
@@ -1920,7 +1920,7 @@ export class StudioApp extends Component {
         const dim = key === 'discover' ? 'stability' : key;
         if (values[dim] !== undefined) values[dim] += amount;
       }
-      values.stability += plan.total * core.TEST_SHARE;
+      values.stability += plan.test;
       // The chart's corners count person-days for one person; the caption says so, and the green line
       // under it is the same work at the current team's speed, so the two can be read together.
       cursor += this.workRadar(body, cursor, values, '六项工作量', '六项工作单人完成分别所需时间', true) + 8;
