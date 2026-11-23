@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.72';
+export const VERSION = '0.4.73';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -2800,7 +2800,6 @@ export function startPatch(state: any, projectId: string, rework: string | null 
     sync, syncDone: 0,
     before: { overall: metrics.overall, review: book ? book.reviewScore : null, daily: book ? book.lastDayUnits : 0 }
   };
-  project.assignments = {};
   const scope = [targets.length ? `修复 ${targets.length} 项已报告缺陷` : '', rework ? `返工${DIMENSIONS.find(item => item.key === rework)?.name}` : '', sync ? '同步更新' : ''].filter(Boolean).join('，');
   studioLog(next, `《${project.name}》开补丁`, `${scope}。安排人手后开始制作，做完自动上线。`);
   return next;
