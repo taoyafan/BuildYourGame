@@ -366,6 +366,32 @@ function startHandover(state: any) {
   for (const axis of MARKET_AXES) from[axis] = axisSwing(state, axis);
   cycle.handover = { start: state.day, from };
 }
+function openingWaveSeed(baseSeed: number) {
+  const tags = axisTags('theme');
+  const hashes = tags.map(idHash);
+  const hotLimit = Math.max(1, Math.floor(tags.length / 2));
+  const amp = QUIET_SWING * axisAmplitude('theme');
+  for (let offset = 0; offset < 500; offset++) {
+    const seed = (baseSeed + offset) >>> 0;
+    let ok = true;
+    let sign = 0;
+    for (const day of [1, 7, 14, 21, 28]) {
+      const waves = hashes.map(h => marketWave(seed, h, day));
+      const competing = waves.filter(v => v > 0).sort((a, b) => b - a);
+      const threshold = competing.length > hotLimit ? (competing[hotLimit - 1] + competing[hotLimit]) / 2 : 0;
+      const d = (idx: number) => {
+        const rel = waves[idx] - threshold;
+        return 1 + amp * (rel < 0 ? rel / (1 + threshold) : rel);
+      };
+      const a = d(0), b = d(1);
+      const cur = a > 1.008 && b < 0.992 ? 1 : b > 1.008 && a < 0.992 ? -1 : 0;
+      if (!cur || (sign && cur !== sign)) { ok = false; break; }
+      sign = cur;
+    }
+    if (ok) return seed;
+  }
+  return baseSeed >>> 0;
+}
 function ensureMarketCycle(state: any) {
   const saved = state.marketCycle;
   if (Number.isInteger(saved?.waveSeed)) return saved;
@@ -381,7 +407,7 @@ function ensureMarketCycle(state: any) {
   const migration = saved && recent?.v && typeof recent.v === 'object' && !Array.isArray(recent.v)
     && recent.day >= state.day - HEAT_EVERY - 1 && recent.day <= state.day ? { start: state.day, values: recent.v } : null;
   const cycle = {
-    scale, waveSeed: state.seed >>> 0, clock: { day: state.day, time: state.day }, newsAt: state.day,
+    scale, waveSeed: saved ? (state.seed >>> 0) : openingWaveSeed(state.seed >>> 0), clock: { day: state.day, time: state.day }, newsAt: state.day,
     focus, done, focusAt: Number.isFinite(saved?.focusAt) ? saved.focusAt : releases(state),
     late: !!saved?.late, handover: saved?.handover ?? null, seen: seen.length ? seen : ['design'], migration
   };
@@ -685,10 +711,12 @@ export function moduleMetrics(state: any, id: string) {
   const record = (state.modules || {})[id] || {};
   const dimensions: any = {};
   const expected: any = {};
+  const active: any = {};
   let value = 0;
   let done = 0;
   for (const key of CONTENT_KEYS) {
     const total = part ? part.work[key] || 0 : 0;
+    active[key] = total > 0;
     const made = Math.min(total, record.done?.[key] || 0);
     const points = record.value?.[key] || 0;
     value += points;
@@ -700,7 +728,8 @@ export function moduleMetrics(state: any, id: string) {
   }
   const open = ((record.defects || []) as any[]).filter((defect: any) => !defect.fixed).length;
   dimensions.stability = expected.stability = round(clamp(100 - open * 8, 0, 100));
-  return { dimensions, expected, quality: done > 0 ? round(value / done) : 0, progress: partProgress(state, id), open };
+  active.stability = true;
+  return { dimensions, expected, active, quality: done > 0 ? round(value / done) : 0, progress: partProgress(state, id), open };
 }
 
 // Axes and lines open up with released titles, so the first game only shows a few choices.

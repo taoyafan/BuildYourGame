@@ -106,9 +106,9 @@ function recruitMenu(state: any, id: string) {
   const roles = Object.keys(core.ROLES).filter((key: string) => core.roleOpen(state, key));
   const channels = Object.keys(core.CHANNELS);
   const blocks: any[] = [
-    { type: 'tabs', anchor: 'recruit-roles', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role })) },
+    { type: 'tabs', anchor: 'recruit-roles', items: roles.map(key => ({ text: core.ROLES[key].name, route: { menu: 'recruit', id: key + ':' + channel }, active: key === role, anchor: 'recruit-role-' + key })) },
     { type: 'text', text: core.ROLES[role].task, muted: true },
-    { type: 'tabs', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
+    { type: 'tabs', anchor: 'recruit-channels', items: channels.map(key => ({ text: core.CHANNELS[key].name + (core.channelOpen(state, key) ? '' : ' · 待解锁'), route: { menu: 'recruit', id: role + ':' + key }, active: key === channel, locked: !core.channelOpen(state, key) })) },
     // Channels differ in who answers and in what they ask for, so each one gets its own line with
     // the wage band it actually pays instead of one shared note under the whole page.
     { type: 'text', text: core.CHANNELS[channel].text, muted: true }
@@ -1179,7 +1179,8 @@ function moduleMenu(state: any, line = '') {
   const module = core.MODULES[line];
   if (!module) return { title: '模块', blocks: [{ type: 'text', text: '没有找到这个模块。' }] };
   const info = core.lineInfo(state, line);
-  const blocks: any[] = [{ type: 'text', text: module.desc, muted: true }];
+  const brick = brickOf(state, line);
+  const blocks: any[] = [{ type: 'module-head', module: line, level: brick.level, status: brick.status, progress: brick.progress, text: module.desc }];
   if (!core.moduleOpen(state, line)) blocks.push({ type: 'text', text: '还没学会，做游戏的过程中会解锁。' });
   // A half-built module shows both the quality already reached and where the current crew would take it.
   const tier = Math.max(1, info.level + (info.next > 0 ? 1 : 0));
@@ -1502,9 +1503,9 @@ export function weakestRole(state: any) {
   return worst;
 }
 
-export function guide(state: any, route: any, playing: boolean): GuideStep | null {
+export function guide(state: any, route: any, playing: boolean, ui?: any): GuideStep | null {
   if (!state.company || state.tutorial.skipped) return null;
-  return (guideOn(state) ? tutorialStep(state, route, playing) : null) || unlockStep(state, route);
+  return (guideOn(state) ? tutorialStep(state, route, playing, ui) : null) || unlockStep(state, route);
 }
 
 // Once-only notes for features the tutorial does not reach or that open later. Overtime is taught in
@@ -1555,7 +1556,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
   }
 }
 
-function tutorialStep(state: any, route: any, playing: boolean): GuideStep | null {
+function tutorialStep(state: any, route: any, playing: boolean, ui?: any): GuideStep | null {
   const seen = state.tutorial.seen;
   const project = core.activeProject(state, route?.id) || core.projectOpen(state)[0];
   const hasTeammate = state.staff.some((person: any) => !person.founder);
@@ -1615,9 +1616,35 @@ function tutorialStep(state: any, route: any, playing: boolean): GuideStep | nul
     case 'finance':
       if (!project && !state.catalog.length && !seen.moduleLibrary) return { anchor: 'library', text: '这就是模块库：做好的模块会一直留在这里，以后立项直接复用。', tap: 'moduleLibrary' };
       return !project && state.catalog.length === 1 ? { anchor: 'book-0', text: '打开首作，看看复盘。', tap: 'reviewBook' } : null;
-    case 'recruit':
-      if (!state.candidates[route.id] && !hasTeammate && !seen.recruitRole) return { anchor: 'recruit-roles', text: '先选岗位：已替你选好最该补的「' + core.ROLES[String(route.id).split(':')[0]]?.name + '」，也可以点别的看看。', ack: 'recruitRole' };
-      return state.candidates[route.id] ? (hasTeammate ? null : { anchor: 'candidates', text: '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。' }) : { anchor: 'recruit', text: '发布招聘要花一点钱，熟人会推荐几位候选人。' };
+    case 'recruit': {
+      if (hasTeammate) return null;
+      const hasPosted = Object.keys(state.candidates || {}).length > 0;
+      if (!seen.recruitCode) return explain('recruitCode', 'recruit-role-code', '程序：擅长流畅和深度，负责把游戏做顺手、系统做扎实。');
+      if (!seen.recruitDesign) return explain('recruitDesign', 'recruit-role-design', '策划：擅长创意和深度，负责玩法点子与核心设计。');
+      if (!seen.recruitArt) return explain('recruitArt', 'recruit-role-art', '美术：擅长画面，负责场景、角色与整体视觉表现。');
+      if (!seen.recruitChannels) return explain('recruitChannels', 'recruit-channels', '不同渠道对应不同候选人：越往后能力越强、招聘费也越高，后续逐步解锁。');
+      if (!seen.recruitPost && !hasPosted) return explain('recruitPost', 'recruit', '选好岗位后点「发布招聘」花一点钱看一批候选人，也可以先切换别的岗位看看。');
+      if (state.candidates[route.id] && !seen.recruitCandidates) return explain('recruitCandidates', 'candidates', '六项能力决定作品各项能做多好，速度决定开发进度，月薪越高开支越大。');
+      return null;
+    }
+    case 'new-project': {
+      if (state.catalog.length || project) return null;
+      if (ui?.marketModal) {
+        if (!seen.planMarketTheme && ui.marketModal.group !== 'theme') return { anchor: 'modal-group-theme', text: '点「题材」，对比不同题材最近的冷热走势。', tap: 'planMarketTheme' };
+        if (!seen.planMarketTag && ui.marketModal.group === 'theme') return { anchor: 'modal-legend-0', text: '点任意一个类别标签，可以单独看它的走势，再点一次恢复全部。看完关闭行情回到立项。', tap: 'planMarketTag', tapGroup: 'modal-legend' };
+        return null;
+      }
+      if (!seen.planName) return explain('planName', 'plan-name', '这里是作品名字：可以直接用推荐名，也可以点输入框自己起一个。');
+      if (!seen.planTheme && !ui?.draft?.open?.theme) return { anchor: 'axis-theme', text: '点题材的「调整」，可以切换不同题材、或者调整模块等级。', tap: 'planTheme' };
+      if (!seen.planLevel) return ui?.draft?.open?.theme
+        ? explain('planLevel', 'plan-level', '每个模块都可以选等级：等级越高内容越丰富、市场越大，工作量也越多；2～4 级会在后续逐步开放。')
+        : { anchor: 'axis-theme', text: '点题材的「调整」，展开看看模块等级。' };
+      if (!seen.planMarketBtn) return { anchor: 'plan-market-btn', text: '点「查看历史行情」，看看最近市场上哪些方向更热门。', tap: 'planMarketBtn' };
+      if (!seen.planRadar) return explain('planRadar', 'workload', '工作量雷达图显示六项各自要花多少单人时间，能看出这部作品最吃哪个岗位。');
+      if (!seen.planEstimate) return explain('planEstimate', 'plan-preview', '这里按当前团队预估完成天数、成本和体量，帮你判断现金和工期扛不扛得住。');
+      if (!seen.planSubmit) return explain('planSubmit', 'plan-submit', '都选好后点「确认立项」，项目就会开工。');
+      return null;
+    }
     case 'candidate': return hasTeammate ? null : { anchor: 'hire', text: '工资按在职天数累计，月底结算。满意就录用。' };
     case 'project':
       // With no running title the page is a choice. Force the tap onto 新项目 so the tutorial leads

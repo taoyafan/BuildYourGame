@@ -110,6 +110,7 @@ export class StudioApp extends Component {
   private guideAnchor = '';
   private helpKey = '';
   private tip: { title: string; text: string } | null = null;
+  private marketModal: { group: string; tag: string } | null = null;
   private studioRankings: StudioRankings | null = null;
   private rankingSnapshot: RankingSnapshot | null = null;
   private rankingLoadId = 0;
@@ -931,6 +932,7 @@ export class StudioApp extends Component {
     // cards), and a restore after it would silently undo that scroll and misplace the highlight.
     if (keep > 1 && this.scrollView) this.scrollView.scrollToOffset(new Vec2(0, keep), 0);
     this.materialize();
+    if (this.marketModal) this.renderMarketModal();
     this.renderGuide();
     // Applied after the guide so a tip cannot undo the jump to the bottom of the company page.
     // If a tip points somewhere else, let its own scroll win and keep the request pending: the next
@@ -1515,7 +1517,9 @@ export class StudioApp extends Component {
       // Ability radars label the sixth axis 发现, the ability behind stability.
       const name = metrics.labels ? metrics.labels[index] : core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
       const score = Math.round(metrics.dimensions[key] || 0);
-      const label = this.text(node, name + '\n' + (key === 'stability' && metrics.untested ? '未测' : score + (metrics.labels ? '' : ' 分')), 0, 0, 56, 32, 11, metrics.labels ? toneColors[content.valueTone(score)] : colors.muted);
+      const inactive = metrics.active && !metrics.active[key];
+      const text = inactive ? '-' : key === 'stability' && metrics.untested ? '未测' : score + (metrics.labels ? '' : ' 分');
+      const label = this.text(node, name + '\n' + text, 0, 0, 56, 32, 11, metrics.labels ? toneColors[content.valueTone(score)] : colors.muted);
       label.horizontalAlign = HorizontalTextAlignment.CENTER;
       // setPosition uses engine coords (y up). Center the 32px label on the radial point.
       const spot = point(index, 120);
@@ -1706,7 +1710,7 @@ export class StudioApp extends Component {
     const y = this.top;
     // Page-level explanations live behind one "?" button in the title bar; the text floats over the page.
     const helps = model ? model.blocks.filter((block: any) => block.type === 'help') : [];
-    if (this.routes.length > 1) this.button(this.stage, '', 20, y, 40, 40, () => { this.routes.pop(); this.render(); }, false, false, 'ArrowLeft');
+    if (this.routes.length > 1) this.button(this.stage, '', 20, y, 40, 40, () => { this.marketModal = null; this.routes.pop(); this.render(); }, false, false, 'ArrowLeft');
     this.text(this.stage, title, 70, y, this.width - 140 - (helps.length ? 50 : 0), 40, 19, colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
     if (helps.length) this.button(this.stage, '', this.width - 108, y, 40, 40, () => this.showTip(helps.length === 1 ? helps[0].title : title, helps.map((block: any) => (helps.length === 1 ? '' : block.title + '\uff1a') + block.text).join('\n\n')), false, false, 'CircleHelp', 'page-help');
     // Event pages used to have no close button at all, so the release screen trapped the player in it.
@@ -1810,7 +1814,8 @@ export class StudioApp extends Component {
     // Same red prompt the studio form puts over its name field: the title is the one thing on this page
     // the player has to type, and the filled-in suggestion looks like a value they can keep.
     this.text(body, '输入作品的名字', 0, 0, inner, 22, 13, colors.danger, true);
-    this.input(body, this.draft.suggested, this.draft.name, 26, 48, value => { this.draft.name = value; });
+    const nameInput = this.input(body, this.draft.suggested, this.draft.name, 26, 48, value => { this.draft.name = value; });
+    if (nameInput.node.parent) this.anchors.set('plan-name', nameInput.node.parent);
     let cursor = 90;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
     const formTop = cursor;
@@ -1845,6 +1850,7 @@ export class StudioApp extends Component {
       this.text(row, summary, textLeft, 26, inner - textLeft - 40, 20, 11, colors.muted);
       this.text(row, expanded ? '收起' : '调整', inner - 48, 16, 40, 20, 11, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
       this.clickable(row, () => { open[axis.key] = !expanded; this.render(); });
+      this.anchors.set('axis-' + axis.key, row);
       cursor += 60;
       if (!expanded) continue;
       const options = core.planOptions(state, axis.key, this.draft);
@@ -1877,6 +1883,7 @@ export class StudioApp extends Component {
       cursor += Math.max(1, Math.ceil(options.length / 3)) * 92 + 4;
       // Each chosen line takes its own level; a locked level stays grey until the company gets there.
       for (const key of chosen.filter(line => core.lineTiers(line) > 1)) {
+        const levelTop = cursor;
         const levels = Array.from({ length: core.lineTiers(key) }, (_, index) => index + 1);
         this.text(body, core.MODULES[key].name, 0, cursor + 8, 96, 22, 11, colors.ink, true);
         const cell = (inner - 100 - 6 * (levels.length - 1)) / levels.length;
@@ -1884,6 +1891,7 @@ export class StudioApp extends Component {
           this.draft.lineLevels = { ...core.fixLevels(this.draft), [key]: level };
           this.render();
         }, core.levelFor(this.draft, key) === level, !core.levelOpen(state, level) || !!fixed, undefined, undefined, !fixed && !core.levelOpen(state, level) ? core.SCALE_LOCKS[level - 1] : undefined));
+        if (axis.key === 'theme' && !this.anchors.has('plan-level')) this.anchors.set('plan-level', this.box(body, 'PlanLevelAnchor', 0, levelTop, inner, 36));
         cursor += 42;
       }
       // A line the company does not have can be rented instead of built: no work, capped quality, paid
@@ -1915,7 +1923,7 @@ export class StudioApp extends Component {
       cursor += 54;
     }
     // The market chart opens in a floating modal so the player can inspect every axis without losing draft state.
-    this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.showMarketModal());
+    this.button(body, '查看历史行情', 0, cursor, inner, 38, () => this.showMarketModal(), false, false, undefined, 'plan-market-btn');
     cursor += 46;
     if (!core.planIssue(state, this.draft)) {
       const plan = core.planWork(state, this.draft);
@@ -1929,12 +1937,14 @@ export class StudioApp extends Component {
       // The chart's corners count person-days for one person; the caption says so, and the green line
       // under it is the same work at the current team's speed, so the two can be read together.
       cursor += this.workRadar(body, cursor, values, '六项工作量', '六项工作单人完成分别所需时间', true) + 8;
+      const previewTop = cursor;
       cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12, colors.green);
+      this.anchors.set('plan-preview', this.box(body, 'PlanPreviewAnchor', 0, previewTop, inner, Math.max(20, cursor - previewTop - 6)));
     }
     // A grey button with no reason reads as a bug: the missing choice is named right above it.
     const issue = core.planIssue(state, this.draft);
     if (issue) cursor += this.paragraph(body, issue, cursor, false, 0, inner, 12, colors.amber);
-    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!issue);
+    this.button(body, '确认立项', 0, cursor, inner, 48, () => this.dispatch('form-submit'), true, !!issue, undefined, 'plan-submit');
     return cursor + 66;
   }
 
@@ -2090,7 +2100,7 @@ export class StudioApp extends Component {
         const columns = Math.min(3, block.items.length);
         const cell = (width - (columns - 1) * 6) / columns;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, y, width, Math.ceil(block.items.length / columns) * 44 - 6));
-        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked));
+        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked, undefined, item.anchor));
         return y + Math.ceil(block.items.length / columns) * 44 + 6;
       }
       case 'card': {
@@ -2138,6 +2148,11 @@ export class StudioApp extends Component {
         this.portrait(parent, block.art, 0, y, 56);
         this.text(parent, block.text, 68, y + 8, width - 68, 40, 14, colors.ink, true);
         return y + 64;
+      }
+      case 'module-head': {
+        this.moduleBrick(parent, 0, y, 56, block.module, block.level, block.status, block.progress);
+        const h = this.paragraph(parent, block.text, y + 4, true, 68, width - 68, 13);
+        return y + Math.max(64, h + 12);
       }
       case 'story': {
         // RPG-style speech: the speaker's portrait and name on the left, what they say in a bubble beside it.
@@ -2423,16 +2438,21 @@ export class StudioApp extends Component {
 
   // The plan's market chart uses the same options as the draft.
   private showMarketModal(groupKey = '', tag = '') {
-    const existing = this.stage.getChildByName('MarketModal');
-    if (existing) { existing.removeFromParent(); existing.destroy(); }
+    this.marketModal = { group: groupKey, tag };
+    this.render();
+  }
+
+  private renderMarketModal() {
+    if (!this.marketModal) return;
     const overlay = this.box(this.stage, 'MarketModal', 0, 0, this.width, this.height);
     const close = () => {
-      overlay.removeFromParent();
-      overlay.destroy();
+      this.marketModal = null;
+      this.render();
     };
     const scrim = this.box(overlay, 'Scrim', 0, 0, this.width, this.height, colors.night, 0, 130);
     this.clickable(scrim, close).getComponent(Button)!.transition = Button.Transition.NONE;
-    const data = content.marketChartData(this.state, groupKey, tag, this.draft);
+    const data = content.marketChartData(this.state, this.marketModal.group, this.marketModal.tag, this.draft);
+    if (data) this.marketModal.group = data.group.key;
     const cardW = this.width - 28;
     const pad = 14;
     const inner = cardW - pad * 2;
@@ -2451,7 +2471,7 @@ export class StudioApp extends Component {
         data.groups.forEach((item: any, index: number) => {
           const x = pad + (index % cols) * (cell + gap);
           const rowY = y + Math.floor(index / cols) * 38;
-          this.button(card, item.name, x, rowY, cell, 32, () => this.showMarketModal(item.key, ''), item.key === data.group.key);
+          this.button(card, item.name, x, rowY, cell, 32, () => this.showMarketModal(item.key, ''), item.key === data.group.key, false, undefined, 'modal-group-' + item.key);
         });
         y += Math.ceil(data.groups.length / cols) * 38 + 6;
       }
@@ -2462,10 +2482,11 @@ export class StudioApp extends Component {
         start: data.start,
         end: data.end,
         fromLabel: data.fromLabel,
-        legend: data.lines.map(line => ({
+        legend: data.lines.map((line, index) => ({
           text: line.name,
           color: line.color,
           active: line.tag === data.tag,
+          anchor: 'modal-legend-' + index,
           onClick: () => this.showMarketModal(data.group.key, line.tag === data.tag ? '' : line.tag)
         }))
       }) + 6;
@@ -2496,6 +2517,7 @@ export class StudioApp extends Component {
         if (item.onClick) item.onClick();
         else { this.routes[this.routes.length - 1] = item.route; this.render(); }
       });
+      if (item.anchor) this.anchors.set(item.anchor, node);
       x += cell + 6;
     }
     y += block.legend.length ? 40 : 0;
@@ -2688,33 +2710,37 @@ export class StudioApp extends Component {
     const width = this.width - 40;
     if (item.kind === 'unlock') {
       const module = item.line ? core.MODULES[item.line] : null;
-      const color = core.FIELDS[module ? module.field : item.field]?.color || colors.green;
+      const color = module ? '#7d8683' : (core.FIELDS[item.field]?.color || colors.green);
+      const fill = module ? '#4e5754' : colors.paper;
+      const titleColor = module ? '#ffffff' : colors.ink;
+      const bodyColor = module ? '#e4eae7' : undefined;
       // The height is only known after the text has been laid out. Drawing the background at the
       // original 40px and then resizing the node left its lower half transparent, so the body text
       // sat on the page instead of on the bubble. Paint the paper at the final height instead.
       const bubble = this.box(this.effects, 'Bubble', 20, this.top + 98, width, 40);
-      const textHeight = this.paragraph(bubble, item.text, 34, false, 64, width - 78, 13);
+      const textHeight = this.paragraph(bubble, item.text, 34, false, 64, width - 78, 13, bodyColor);
       const height = Math.max(70, textHeight + 44);
       bubble.getComponent(UITransform).setContentSize(width, height);
-      const paper = this.box(bubble, 'Paper', 0, 0, width, height, colors.paper, 14, 250);
+      const paper = this.box(bubble, 'Paper', 0, 0, width, height, fill, 14, 245);
       paper.setSiblingIndex(0);
       if (module) this.moduleBrick(bubble, 10, 10, 44, item.line, 1);
       else drawBrick(this.canvasNode(bubble, 'Face', 10, 10, 44, 44).pen, 0, 0, 44, color, 'star', 1, 'have');
       new Pen(this.box(bubble, 'Rim', 0, 0, width, height).addComponent(Graphics)).frame(0, 0, width, height, color, 2, 14);
-      this.text(bubble, item.title, 64, 8, width - 78, 22, 14, colors.ink, true);
+      this.text(bubble, item.title, 64, 8, width - 78, 22, 14, titleColor, true);
       const opacity = bubble.addComponent(UIOpacity);
       opacity.opacity = 0;
       let closed = false;
-      const close = () => {
+      const close = (openModule = false) => {
         if (closed) return;
         closed = true;
         Tween.stopAllByTarget(opacity);
         bubble.destroy();
         this.celebrating = false;
-        this.celebrate();
+        if (openModule && module) this.openMenu('module', item.line);
+        else this.celebrate();
       };
-      this.clickable(bubble, close);
-      tween(opacity).to(0.2, { opacity: 255 }).delay(4).to(0.3, { opacity: 0 }).call(close).start();
+      this.clickable(bubble, () => close(!!module));
+      tween(opacity).to(0.2, { opacity: 255 }).delay(4).to(0.3, { opacity: 0 }).call(() => close(false)).start();
       return;
     }
     const big = ['breakeven', 'office', 'record', 'warning'].includes(item.kind);
@@ -2759,15 +2785,20 @@ export class StudioApp extends Component {
     this.menuTapNodes.clear();
     this.guideAnchor = '';
     const route = this.routes.length ? this.routes[this.routes.length - 1] : null;
-    const step = content.guide(this.state, route, this.playing);
+    const step = content.guide(this.state, route, this.playing, { draft: this.draft, marketModal: this.marketModal });
     if (!step) return;
     this.guideAnchor = step.anchor;
     // A forced tip can point at any card in a group. Highlight the first one, but accept every card
     // in the group as the tap that clears it. No matched anchors means no restriction, so a tip can
     // never trap the player on a page where its target failed to render.
-    if (route && step.tap && step.tapGroup) {
-      const prefix = step.tapGroup + '-';
-      this.anchors.forEach((node, key) => { if (key.startsWith(prefix)) this.menuTapNodes.add(node); });
+    if (route && step.tap) {
+      if (step.tapGroup) {
+        const prefix = step.tapGroup + '-';
+        this.anchors.forEach((node, key) => { if (key.startsWith(prefix)) this.menuTapNodes.add(node); });
+      } else {
+        const anchorNode = this.anchors.get(step.anchor);
+        if (anchorNode) this.menuTapNodes.add(anchorNode);
+      }
     }
     // A "知道了" tip is optional: the highlighted control stays live, so the player may act on it or
     // simply dismiss the tip. Never shield the highlight itself. Whatever the player presses counts
@@ -2918,6 +2949,7 @@ export class StudioApp extends Component {
   private openMenu(menu: string, id?: string, critical = false, dim?: string, bottom = false) {
     if (menu === 'player-rankings' && !this.studioRankings) return;
     this.helpKey = '';
+    this.marketModal = null;
     // After a failed run the save/restart controls are at the bottom of the company page; a ready
     // release jumps to the bottom of the project page where the shipping button sits.
     this.scrollBottom = bottom || (menu === 'finance' && !!this.state.over);
@@ -3007,6 +3039,7 @@ export class StudioApp extends Component {
 
   private closeMenu() {
     if (!this.state.company) return;
+    this.marketModal = null;
     if (this.state.event) {
       // 只有一个选项的事件（发售、月度结算这类）点 ✕ 就该等于收下结果。原来一律弹回事件页，
       // 右上角的关闭看起来完全没反应，玩家只能从页面里的按钮退出。
