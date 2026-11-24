@@ -846,16 +846,16 @@ export class StudioApp extends Component {
       const by = rowY + Math.floor((rowH - barH) / 2);
       pen.rect(barX, by, barW, barH, colors.pale, barH / 2);
       const totalPx = Math.max(barH, barW * item.total / maxTotal);
-      const freshPx = item.total > 0 ? Math.round(totalPx * item.fresh / item.total) : 0;
-      if (item.kept > 0.05) pen.rect(barX, by, totalPx, barH, '#a5ccb9', barH / 2);
-      if (freshPx > 0) pen.rect(barX, by, Math.max(barH, freshPx), barH, colors.green, barH / 2);
+      const keptPx = item.total > 0 ? Math.round(totalPx * item.kept / item.total) : 0;
+      if (item.fresh > 0.01) pen.rect(barX, by, totalPx, barH, '#a5ccb9', barH / 2);
+      if (keptPx > 0) pen.rect(barX, by, Math.max(barH, keptPx), barH, colors.green, barH / 2);
       this.text(node, name, 0, rowY, nameW, rowH, 11, colors.muted);
       const fDays = days(item.fresh);
       const tDays = days(item.total);
-      const label = item.kept > 0.05 ? `需 ${fDays} / 共 ${tDays} 天` : `${fDays} 天`;
+      const label = item.kept > 0.05 ? `还需 ${fDays} / 共 ${tDays} 天` : `${fDays} 天`;
       this.text(node, label, barX + barW + 6, rowY, valW, rowH, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     });
-    if (hasKept) this.text(node, '深绿为本作新增 · 浅绿为已有复用（单人约需天数）', 0, items.length * rowH, width, 16, 10, colors.muted);
+    if (hasKept) this.text(node, '深绿为已有复用 · 浅绿为本作还需（单人约需天数）', 0, items.length * rowH, width, 16, 10, colors.muted);
     return totalH;
   }
 
@@ -2567,6 +2567,7 @@ export class StudioApp extends Component {
       y += this.heat(card, y, {
         width: inner,
         offsetX: pad,
+        chartAnchor: 'modal-heat',
         lines: data.lines,
         start: data.start,
         end: data.end,
@@ -2621,6 +2622,7 @@ export class StudioApp extends Component {
     const px = (day: number) => left + (right - left) * Math.max(0, Math.min(1, (day - block.start) / span));
     const py = (value: number) => bottom - (bottom - top) * (Math.max(low, Math.min(high, value)) - low) / (high - low);
     const { node, pen } = this.canvasNode(parent, 'Heat', offsetX, y, width, height);
+    if (block.chartAnchor) this.anchors.set(block.chartAnchor, node);
     pen.rect(left, top, right - left, bottom - top, '#fbf8f1', 4);
     const step = span >= 45 ? 30 : 15;
     for (let ago = step; ago < span; ago += step) {
@@ -2812,7 +2814,7 @@ export class StudioApp extends Component {
       bubble.getComponent(UITransform).setContentSize(width, height);
       const paper = this.box(bubble, 'Paper', 0, 0, width, height, fill, 14, 245);
       paper.setSiblingIndex(0);
-      if (module) this.moduleBrick(bubble, 10, 10, 44, item.line, 1);
+      if (module) this.moduleBrick(bubble, 10, 10, 44, item.line, 1, 'missing');
       else drawBrick(this.canvasNode(bubble, 'Face', 10, 10, 44, 44).pen, 0, 0, 44, color, 'star', 1, 'have');
       new Pen(this.box(bubble, 'Rim', 0, 0, width, height).addComponent(Graphics)).frame(0, 0, width, height, color, 2, 14);
       this.text(bubble, item.title, 64, 8, width - 78, 22, 14, titleColor, true);

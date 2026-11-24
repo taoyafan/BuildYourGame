@@ -196,14 +196,13 @@ if re.search(r'\son[a-zA-Z]+\s*=', html):
 kept = len(re.findall(r'<script\b[^>]*\bsrc\s*=', html, re.I))
 print(f'  保留外链脚本 {kept} 段')
 
-# ------------------------------------------- 5. 清单 + 审计
-step('写清单并审计')
-manifest_js = os.path.join(SKILL_DIR, 'scripts', 'write_manifest.mjs')
+# ------------------------------------------- 5. 审计
+# 当前 minitool-zip-builder 规范不要求包内清单文件（mini_tool.json），
+# 只做文件体积等审计；manifest 脚本已随 Skill 版本更新移除。
+step('审计')
 audit_js = os.path.join(SKILL_DIR, 'scripts', 'audit_artifact.mjs')
-for p in (manifest_js, audit_js):
-    if not os.path.isfile(p):
-        fail(f'找不到 {p}，先安装 minitool-zip-builder Skill')
-subprocess.run(['node', manifest_js, DST, 'true'], check=True, cwd=ROOT)
+if not os.path.isfile(audit_js):
+    fail(f'找不到 {audit_js}，先安装 minitool-zip-builder Skill')
 subprocess.run(['node', audit_js, DST], check=True, cwd=ROOT)
 
 # ------------------------------------------- 6. 打包

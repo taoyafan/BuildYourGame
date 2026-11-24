@@ -1641,6 +1641,7 @@ function tutorialStep(state: any, route: any, playing: boolean, ui?: any): Guide
       if (state.catalog.length || project) return null;
       if (ui?.marketModal) {
         if (!seen.planMarketTheme && ui.marketModal.group !== 'theme') return { anchor: 'modal-group-theme', text: '点「题材」，对比不同题材最近的冷热走势。', tap: 'planMarketTheme' };
+        if (!seen.planMarketCurve && ui.marketModal.group === 'theme') return explain('planMarketCurve', 'modal-heat', '这里展示各题材最近的冷热走势：线上行代表升温、下行代表退潮，可以结合工期判断发售时可能落在哪。');
         if (!seen.planMarketTag && ui.marketModal.group === 'theme') return { anchor: 'modal-legend-0', text: '点任意一个类别标签，可以单独看它的走势，再点一次恢复全部。看完关闭行情回到立项。', tap: 'planMarketTag', tapGroup: 'modal-legend' };
         return null;
       }
