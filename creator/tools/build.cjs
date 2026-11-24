@@ -33,6 +33,15 @@ child.once('exit', code => {
   child.stderr.destroy();
   log.end();
   const success = code === 36 || code === 0;
+  if (success && target === 'web-mobile') {
+    try {
+      console.log(require('./web-pixel-ratio.cjs')(path.join(project, 'build', target)));
+    } catch (error) {
+      console.error('Pixel-ratio patch failed: ' + error.message);
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (success && target === 'wechatgame') {
     try {
       console.log(require('./wechat-subpackages.cjs')(path.join(project, 'build', target)));
