@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.77';
+export const VERSION = '0.4.78';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -4224,14 +4224,14 @@ export function scheduleOf(state: any) {
     .sort((left: any, right: any) => left.day - right.day);
 }
 
-// A rival takes a share of demand only once it is out and while it is in its own launch week, so the
-// title that ships first gets a few days to itself.
+// Only announced rival launches compete for launch-week attention, so every clash is visible on the
+// calendar in advance and can be dodged instead of hitting unannounced filler releases.
 export function clashOf(state: any, day: number, followers: number, released = day) {
-  const works = (state.works || []).filter((work: any) => work.released <= day && day - work.released <= 6 && Math.abs(work.released - released) <= 7);
+  const works = (state.works || []).filter((work: any) => work.announced !== null && work.released <= day && day - work.released <= 6 && Math.abs(work.released - released) <= 7);
   if (!works.length) return { factor: 1, works: [] };
   const pressure = sum(works.map((work: any) => work.firstWeek));
   const mine = Math.max(100, followers) * 0.6;
-  return { factor: round(clamp(1 - 0.4 * pressure / (pressure + mine * 3), 0.55, 1)), works };
+  return { factor: round(clamp(1 - 0.3 * pressure / (pressure + mine * 3), 0.7, 1)), works };
 }
 
 // Units lost to each rival during the first week, split by how big each rival's launch is.

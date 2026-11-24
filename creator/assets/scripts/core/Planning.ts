@@ -27,10 +27,10 @@ export const PLANNING_OFFICES = [
 ];
 // `price` is the unit price that makes a title scored at the break-even line pay back exactly.
 export const PLANNING_SCALES = [
-  { name: '小', w: 1, W: 47, price: 66.5, office: 1 },
-  { name: '中', w: 5, W: 235, price: 70.2, office: 2 },
-  { name: '大', w: 20, W: 940, price: 77.4, office: 3 },
-  { name: '超大', w: 90, W: 4230, price: 86.0, office: 4 }
+  { name: '小', w: 1, W: 47, price: 69.6, office: 1 },
+  { name: '中', w: 5, W: 235, price: 73.6, office: 2 },
+  { name: '大', w: 20, W: 940, price: 81.1, office: 3 },
+  { name: '超大', w: 90, W: 4230, price: 90.1, office: 4 }
 ];
 // A title's display scale is read from its nominal person-days: 85% of the next anchor W.
 export const SCALE_BOUNDS = [200, 800, 3600];
@@ -73,11 +73,11 @@ export function cyclePhase(scale, age) {
 // knows about save files; callers pass plain numbers.
 // Fitted so the best campaign moves none → full → none at scores 50 / 70 / 85 / 95 for every scale.
 export const ECONOMY = {
-  pool: 6000, poolExp: 0.93, scoreExp: 1.1474,
+  pool: 6000, poolExp: 0.93, scoreExp: 1.24,
   breakEven: 48, receptFrom: 36.207,
-  convBase: 0.0799, convGain: 0.343, convExp: 1.2124, forget: 0.1441,
-  kSlope: 4.5803, kOffset: 2.3364, kMax: 1.9676,
-  half: 21, natural: 0.002, platform: 0.30,
+  convBase: 0.032, convGain: 0.1372, convExp: 1.2124, forget: 0.0588,
+  kSlope: 4.85, kOffset: 2.4, kMax: 2.15,
+  half: 60, natural: 0.0008, platform: 0.30,
   fanCarry: 0.7, valuationDays: 540,
   unitBase: 0.289, unitSlope: 0.4387,
   drift: 1, driftCap: 10
