@@ -1252,19 +1252,17 @@ function rankValue(record: core.StudioRecord, score: number) {
 
 export function playerRankingMenu(record: core.StudioRecord, scores: Record<core.StudioRecord, number | null>,
     snapshot: { rows: { rank: number; nickname: string | null; score: number }[]; mine: { status: string; rank: number | null; score: number | null } } | null,
-    failed: boolean, submitting: boolean) {
+    failed: boolean) {
   const score = scores[record];
   const mine = snapshot?.mine;
   const rank = mine?.status === 'EXACT' && mine.score !== null ? '第 ' + mine.rank + ' 名 · ' + rankValue(record, mine.score)
     : mine?.status === 'OVER_LIMIT' ? '500+' : snapshot ? '未上榜' : '—';
   return { title: '排行榜', blocks: [
-    { type: 'help', title: '榜单规则', text: '各榜保留历史最佳。总资金取月末结算后现金；年度盈利取完整游戏年的净盈利，扣除创始人注资；创业天数只计已走完的游戏日。提交后，平台昵称和成绩会在榜上公开。' },
+    { type: 'help', title: '榜单规则', text: '各榜保留历史最佳，成绩每月结算时自动提交。总资金取月末结算后现金；年度盈利取完整游戏年的净盈利，扣除创始人注资；创业天数只计已走完的游戏日。榜上显示平台昵称和成绩。' },
     { type: 'segments', items: Object.entries(rankNames).map(([key, text]) => ({
       text, active: key === record, action: 'rank-tab', data: { record: key }
     })) },
     { type: 'lines', items: [['我的排名', rank], ['本局最佳', score === null ? '—' : rankValue(record, score)]] },
-    { type: 'buttons', items: [{ text: submitting ? '提交中…' : '提交本局成绩', icon: 'Trophy', action: 'rank-submit',
-      disabled: submitting || !Object.values(scores).some(value => value !== null) }] },
     ...(failed ? [
       { type: 'text', text: '暂时无法读取排行榜。', muted: true },
       { type: 'buttons', items: [{ text: '重试', icon: 'RotateCcw', action: 'rank-retry' }] }

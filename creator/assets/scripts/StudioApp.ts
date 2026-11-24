@@ -115,7 +115,8 @@ export class StudioApp extends Component {
   private rankingSnapshot: RankingSnapshot | null = null;
   private rankingLoadId = 0;
   private rankingFailed = false;
-  private rankingSubmitting = false;
+  private rankingSent: Partial<Record<core.StudioRecord, number>> = {};
+  private rankingBusy = false;
   private overScreenShown = false;
   private scrollBottom = false;
   private chartSelection: { id: string; index: number } | null = null;
@@ -187,6 +188,7 @@ export class StudioApp extends Component {
     void platform.studioRankings().then(rankings => {
       if (!rankings || !this.isValid) return;
       this.studioRankings = rankings;
+      void this.syncRankings();
       if (this.routes[this.routes.length - 1]?.menu === 'finance') this.render();
     });
   }
@@ -233,6 +235,7 @@ export class StudioApp extends Component {
     this.resumeAfterMenu = false;
     this.elapsed = 0;
     this.save();
+    void this.syncRankings();
     this.render();
   }
 
@@ -279,12 +282,13 @@ export class StudioApp extends Component {
         }
         if (content.guide(this.state, null, true)) { this.elapsed = 0; break; }
       }
-      if (this.state.over) this.playing = false;
+      if (this.state.over) { this.playing = false; void this.syncRankings(); }
       // Daily sales and payroll are summarised at month end instead of floating every day.
       if (changed && this.shown) this.shown.cash = this.state.cash;
       const report = this.state.report;
       if (changed && report && report.month !== settledMonth) {
         if (report.income > 0) this.playSound('income');
+        void this.syncRankings();
         this.celebrations.push({ kind: 'settle', title: core.monthText(report.month) + '结算', text: `收入 ${content.money(report.income)}，支出 ${content.money(report.expense)}，净 ${report.net >= 0 ? '+' : ''}${content.money(report.net)}`, amount: 0 });
       }
       if (changed) {
@@ -1784,7 +1788,7 @@ export class StudioApp extends Component {
     // Save pages need the slot list, which lives in device storage rather than in the state.
     const slotPage = ['slots', 'new-slot-confirm', 'slot', 'slot-delete'].includes(route.menu);
     const model = custom ? null : route.menu === 'player-rankings'
-      ? content.playerRankingMenu(route.id, core.studioRecordScores(this.state), this.rankingSnapshot, this.rankingFailed, this.rankingSubmitting)
+      ? content.playerRankingMenu(route.id, core.studioRecordScores(this.state), this.rankingSnapshot, this.rankingFailed)
       : content.menu(this.state, route, slotPage ? this.slotSummaries() : [], !!this.studioRankings);
     const title = route.menu === 'setup' ? '成立工作室' : route.menu === 'new-project' ? '新作立项' : route.menu === 'history' ? '经营记录' : model.title;
     const y = this.top;
@@ -3062,6 +3066,8 @@ export class StudioApp extends Component {
     const rankings = this.studioRankings;
     const route = this.routes[this.routes.length - 1];
     if (!rankings || route?.menu !== 'player-rankings') return;
+    await this.syncRankings();
+    if (!this.isValid || this.routes[this.routes.length - 1] !== route) return;
     const loadId = ++this.rankingLoadId;
     this.rankingSnapshot = null;
     this.rankingFailed = false;
@@ -3082,39 +3088,35 @@ export class StudioApp extends Component {
     this.render();
   }
 
-  private disablePlayerRankings() {
+  private disablePlayerRankings(notice = true) {
     this.studioRankings = null;
+    const had = this.routes.length;
     this.routes = this.routes.filter(route => route.menu !== 'player-rankings');
-    this.notify('当前小红书环境暂未开放排行榜。');
+    if (notice) this.notify('当前小红书环境暂未开放排行榜。');
+    else if (this.routes.length !== had) this.render();
   }
 
-  private async submitPlayerRankings() {
+  // Scores only ever improve and the platform keeps each account's best, so every higher score is sent as
+  // soon as it is worth sending: at each month's settlement, when the run ends and when the app is left.
+  // A failed send is simply tried again next time.
+  private async syncRankings() {
     const rankings = this.studioRankings;
-    if (!rankings || this.rankingSubmitting) return;
+    if (!rankings || this.rankingBusy || !this.state?.company) return;
     const scores = core.studioRecordScores(this.state);
-    const records = (Object.keys(scores) as core.StudioRecord[]).filter(record => scores[record] !== null);
+    const records = (Object.keys(scores) as core.StudioRecord[]).filter(record => scores[record] !== null && scores[record]! > (this.rankingSent[record] ?? -Infinity));
     if (!records.length) return;
-    this.rankingSubmitting = true;
-    this.render();
-    const results = await Promise.all(records.map(async record => {
+    this.rankingBusy = true;
+    let unavailable = false;
+    await Promise.all(records.map(async record => {
       try {
         await rankings.submit(record, scores[record]!);
-        return { submitted: true };
+        this.rankingSent[record] = scores[record]!;
       } catch (error) {
-        return { submitted: false, error };
+        if (platform.rankingsUnavailable(error)) unavailable = true;
       }
     }));
-    if (!this.isValid) return;
-    this.rankingSubmitting = false;
-    if (results.some(result => !result.submitted && platform.rankingsUnavailable(result.error))) {
-      this.disablePlayerRankings();
-      return;
-    }
-    const submitted = results.filter(result => result.submitted).length;
-    this.setNotice(submitted === records.length ? '本局成绩已提交。'
-      : submitted ? '部分成绩已提交，其余可重试。' : '成绩提交失败，请重试。');
-    if (submitted && this.routes[this.routes.length - 1]?.menu === 'player-rankings') await this.loadPlayerRanking();
-    else this.render();
+    this.rankingBusy = false;
+    if (this.isValid && unavailable) this.disablePlayerRankings(false);
   }
 
   private markReview(id?: string) {
@@ -3204,7 +3206,6 @@ export class StudioApp extends Component {
           void this.loadPlayerRanking();
           break;
         }
-        case 'rank-submit': void this.submitPlayerRankings(); break;
         case 'rank-retry': void this.loadPlayerRanking(); break;
         case 'form-submit': {
           const next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
