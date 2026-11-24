@@ -1651,7 +1651,7 @@ function tutorialStep(state: any, route: any, playing: boolean, ui?: any): Guide
         ? explain('planLevel', 'plan-level', '每个模块都可以选等级：等级越高内容越丰富、市场越大，工作量也越多；2～4 级会在后续逐步开放。')
         : { anchor: 'axis-theme', text: '点题材的「调整」，展开看看模块等级。' };
       if (!seen.planMarketBtn) return { anchor: 'plan-market-btn', text: '点「查看历史行情」，看看最近市场上哪些方向更热门。', tap: 'planMarketBtn' };
-      if (!seen.planRadar) return explain('planRadar', 'workload', '工作量雷达图显示六项各自要花多少单人时间，能看出这部作品最吃哪个岗位。');
+      if (!seen.planRadar) return explain('planRadar', 'workload', '六项工作量显示每项各自要花多少单人时间，能看出这部作品最吃哪个岗位。');
       if (!seen.planEstimate) return explain('planEstimate', 'plan-preview', '这里按当前团队预估完成天数、成本和体量，帮你判断现金和工期扛不扛得住。');
       if (!seen.planSubmit) return explain('planSubmit', 'plan-submit', '都选好后点「确认立项」，项目就会开工。');
       return null;

@@ -827,7 +827,13 @@ export class StudioApp extends Component {
     return totalH;
   }
 
-  private workBars(parent: Node, y: number, items: { key: string; fresh: number; kept: number; total: number }[], width: number) {
+  private workBars(
+    parent: Node,
+    y: number,
+    items: { key: string; fresh: number; kept: number; total: number; active?: boolean }[],
+    width: number,
+    options: { title?: string; caption?: string; anchor?: string; single?: boolean } = {}
+  ) {
     if (!items.length) return 0;
     const rowH = 22;
     const nameW = 36;
@@ -837,25 +843,36 @@ export class StudioApp extends Component {
     const barH = 8;
     const maxTotal = Math.max(1, ...items.map(item => item.total));
     const hasKept = items.some(item => item.kept > 0.05);
-    const totalH = items.length * rowH + (hasKept ? 16 : 4);
+    const titleH = options.title ? 24 : 0;
+    const caption = options.caption !== undefined ? options.caption : (hasKept ? '深绿为已有复用 · 浅绿为本作还需（单人约需天数）' : '');
+    const captionH = caption ? 18 : 4;
+    const totalH = titleH + items.length * rowH + captionH;
     const { node, pen } = this.canvasNode(parent, 'PlanWorkBars', 0, y, width, totalH);
-    const days = (v: number) => v <= 0.01 ? 0 : Math.max(1, Math.round(v));
+    if (options.anchor) this.anchors.set(options.anchor, node);
+    if (options.title) this.text(node, options.title, 0, 0, width, 22, 13, colors.ink, true);
+    const single = options.single !== false;
+    const capacity = single ? 1 : this.state.staff.reduce((total: number, person: any) => total + person.speed / 100, 0);
+    const days = (v: number) => v <= 0.01 ? 0 : single ? Math.max(1, Math.round(v)) : capacity > 0.0001 ? Math.max(1, Math.ceil(v / capacity)) : 0;
     items.forEach((item, index) => {
-      const rowY = index * rowH;
+      const rowY = titleH + index * rowH;
       const name = core.DIMENSIONS.find(dim => dim.key === item.key)?.name || item.key;
       const by = rowY + Math.floor((rowH - barH) / 2);
       pen.rect(barX, by, barW, barH, colors.pale, barH / 2);
-      const totalPx = Math.max(barH, barW * item.total / maxTotal);
-      const keptPx = item.total > 0 ? Math.round(totalPx * item.kept / item.total) : 0;
+      const totalPx = item.total > 0.01 ? Math.max(barH, barW * item.total / maxTotal) : 0;
+      const keptPx = item.total > 0.01 && item.kept > 0.01 ? Math.round(totalPx * item.kept / item.total) : 0;
       if (item.fresh > 0.01) pen.rect(barX, by, totalPx, barH, '#a5ccb9', barH / 2);
       if (keptPx > 0) pen.rect(barX, by, Math.max(barH, keptPx), barH, colors.green, barH / 2);
       this.text(node, name, 0, rowY, nameW, rowH, 11, colors.muted);
       const fDays = days(item.fresh);
       const tDays = days(item.total);
-      const label = item.kept > 0.05 ? `还需 ${fDays} / 共 ${tDays} 天` : `${fDays} 天`;
-      this.text(node, label, barX + barW + 6, rowY, valW, rowH, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+      const label = item.kept > 0.05
+        ? `还需 ${fDays} / 共 ${tDays} 天`
+        : item.total > 0.01
+          ? `${fDays} 天`
+          : item.active ? '0 天' : '—';
+      this.text(node, label, barX + barW + 6, rowY, valW, rowH, 11, item.total > 0.01 || item.active ? colors.ink : colors.muted, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
     });
-    if (hasKept) this.text(node, '深绿为已有复用 · 浅绿为本作还需（单人约需天数）', 0, items.length * rowH, width, 16, 10, colors.muted);
+    if (caption) this.text(node, caption, 0, titleH + items.length * rowH + 2, width, 16, 10, colors.muted);
     return totalH;
   }
 
@@ -1613,61 +1630,6 @@ export class StudioApp extends Component {
     return height;
   }
 
-  // Six axes of planned work, not score. The shape is the relative workload; each label is how many
-  // days that dimension takes — by the current crew, or by one person when `single` is set (the
-  // planning form needs that, because the line under its chart is already the whole team's estimate).
-  private workRadar(body: Node, y: number, values: any, title: string, caption = '', single = false, active?: Record<string, boolean>) {
-    const inner = this.width - 40;
-    const height = 184;
-    const { node, pen } = this.canvasNode(body, 'WorkRadar', 0, y, inner, height);
-    this.anchors.set('workload', node);
-    const center = { x: inner / 2, y: 82 };
-    const radius = 52;
-    const count = core.DIM_KEYS.length;
-    const crew = this.state.staff.length;
-    const capacity = this.state.staff.reduce((total: number, person: any) => total + person.speed / 100, 0);
-    const daysOf = (value: number) => value <= 0 ? 0 : single ? Math.max(1, Math.round(value)) : capacity > 0.0001 ? Math.max(1, Math.ceil(value / capacity)) : 0;
-    const max = Math.max(1, ...core.DIM_KEYS.map((key: string) => Number(values?.[key]) || 0));
-    const point = (index: number, ratio: number) => {
-      const angle = -Math.PI / 2 + index * Math.PI * 2 / count;
-      return { x: center.x + Math.cos(angle) * radius * ratio, y: center.y + Math.sin(angle) * radius * ratio };
-    };
-    for (const ring of [0.25, 0.5, 0.75, 1]) {
-      const points = core.DIM_KEYS.map((_key: string, index: number) => point(index, ring));
-      for (let index = 0; index < count; index += 1) {
-        const next = points[(index + 1) % count];
-        pen.line(points[index].x, points[index].y, next.x, next.y, ring === 1 ? colors.line : colors.pale, 1);
-      }
-    }
-    core.DIM_KEYS.forEach((_key: string, index: number) => {
-      const far = point(index, 1);
-      pen.line(center.x, center.y, far.x, far.y, colors.pale, 1);
-    });
-    const shape: number[] = [];
-    core.DIM_KEYS.forEach((key: string, index: number) => {
-      const spot = point(index, (Number(values?.[key]) || 0) / max);
-      shape.push(spot.x, spot.y);
-    });
-    pen.poly(shape, colors.green, 90);
-    for (let index = 0; index < count; index += 1) {
-      const next = (index + 1) % count;
-      pen.line(shape[index * 2], shape[index * 2 + 1], shape[next * 2], shape[next * 2 + 1], colors.green, 2);
-    }
-    core.DIM_KEYS.forEach((key: string, index: number) => {
-      const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
-      const days = daysOf(Number(values?.[key]) || 0);
-      const zeroText = active && active[key] ? '0 天' : '—';
-      const label = this.text(node, name + '\n' + (days ? days + ' 天' : zeroText), 0, 0, 56, 32, 11, colors.muted);
-      label.horizontalAlign = HorizontalTextAlignment.CENTER;
-      const spot = point(index, 1.2);
-      label.node.setPosition(spot.x - 28, -spot.y + 16);
-    });
-    // The caption under the chart is the one small line that explains the corners; a page can word it
-    // its own way (the planning form talks about one person's days per dimension).
-    this.text(node, caption || (title + ' · 现有 ' + crew + ' 人，每个角是这一项约需的天数'), 8, height - 16, inner - 16, 14, 10, colors.muted);
-    return height;
-  }
-
   // Dashed segment for the radar's "expected" layer (the Pen only draws solid lines).
   private dashedLine(pen: Pen, x1: number, y1: number, x2: number, y2: number, hex: string) {
     const dx = x2 - x1;
@@ -2015,16 +1977,18 @@ export class StudioApp extends Component {
     cursor += 46;
     if (!core.planIssue(state, this.draft)) {
       const plan = core.planWork(state, this.draft);
-      const values: any = {};
-      for (const key of core.DIM_KEYS) values[key] = 0;
-      for (const [key, amount] of Object.entries(plan.fresh) as any) {
-        const dim = key === 'discover' ? 'stability' : key;
-        if (values[dim] !== undefined) values[dim] += amount;
-      }
-      values.stability += plan.test;
-      // The chart's corners count person-days for one person; the caption says so, and the green line
-      // under it is the same work at the current team's speed, so the two can be read together.
-      cursor += this.workRadar(body, cursor, values, '六项工作量', '六项工作单人完成分别所需时间', true) + 8;
+      const items = core.DIM_KEYS.map((key: string) => {
+        const fresh = key === 'stability' ? plan.test : (plan.fresh[key] || 0);
+        const kept = key === 'stability' ? 0 : (plan.kept?.[key] || 0);
+        return { key, fresh, kept, total: fresh + kept, active: fresh + kept > 0.01 };
+      });
+      const hasKept = items.some((item: any) => item.kept > 0.05);
+      cursor += this.workBars(body, cursor, items, inner, {
+        title: '六项工作量',
+        caption: hasKept ? '深绿为已有复用 · 浅绿为本作还需（单人约需天数）' : '六项工作单人完成分别所需时间',
+        anchor: 'workload',
+        single: true
+      }) + 8;
       const previewTop = cursor;
       cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12, colors.green);
       this.anchors.set('plan-preview', this.box(body, 'PlanPreviewAnchor', 0, previewTop, inner, Math.max(20, cursor - previewTop - 6)));
@@ -2379,7 +2343,17 @@ export class StudioApp extends Component {
       case 'payout': return y + this.payout(parent, y, block) + 10;
       case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId), 0, true, block.expected || null) + 12;
       case 'module-bars': return y + this.moduleBars(parent, y, block.metrics, width, 0, false) + 12;
-      case 'workload': return y + this.workRadar(parent, y, block.values, block.title || '六项工作量', '', false, block.active) + 12;
+      case 'workload': {
+        const items = core.DIM_KEYS
+          .map((key: string) => ({ key, fresh: Number(block.values?.[key]) || 0, kept: 0, total: Number(block.values?.[key]) || 0, active: !!(block.active && block.active[key]) }))
+          .filter((item: any) => !block.active || item.active || item.total > 0.01);
+        return y + this.workBars(parent, y, items, width, {
+          title: block.title || '工作量',
+          caption: '现有 ' + (block.crew ?? this.state.staff.length) + ' 人，每项约需天数',
+          anchor: 'workload',
+          single: false
+        }) + 12;
+      }
       case 'dimensions': {
         // Each dimension shows the current crew and the days it needs; the slowest staffed one is the
         // bottleneck, and dimensions nobody works on are called out instead of pencilled in.

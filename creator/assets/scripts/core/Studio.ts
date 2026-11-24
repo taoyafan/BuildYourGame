@@ -910,15 +910,19 @@ export function planIssue(state: any, plan: any) {
 // New person-days per dimension, what reuse saves, the tags the lines add up to, and what renting costs.
 export function planWork(state: any, plan: any) {
   const fresh: any = { ...contentWork(plan) };
+  const kept: any = {};
   let saved = 0;
   for (const item of planModules(state, plan)) {
     for (const [key, amount] of Object.entries(item.fresh) as any) fresh[key] = (fresh[key] || 0) + amount;
-    for (const part of Object.values(item.kept) as any) saved += part.amount;
+    for (const [key, part] of Object.entries(item.kept) as any) {
+      saved += part.amount;
+      kept[key] = (kept[key] || 0) + part.amount;
+    }
   }
   const total = sum(Object.values(fresh) as number[]);
   // Testing covers the whole title, reused and rented parts included, exactly as the started project counts it.
   const test = plan.only ? 0 : (total + saved) * TEST_SHARE;
-  return { fresh, total, saved, test, tags: planTags(plan), rentCost: planRentCost(state, plan) };
+  return { fresh, kept, total, saved, test, tags: planTags(plan), rentCost: planRentCost(state, plan) };
 }
 
 // Per-dimension workload of one selected line in a draft (module work + integration + genre content),
