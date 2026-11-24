@@ -920,6 +920,31 @@ export function planWork(state: any, plan: any) {
   const test = plan.only ? 0 : (total + saved) * TEST_SHARE;
   return { fresh, total, saved, test, tags: planTags(plan), rentCost: planRentCost(state, plan) };
 }
+
+// Per-dimension workload of one selected line in a draft (module work + integration + genre content),
+// split into still-needed (`fresh`) and already-built/rented (`kept`) person-days.
+export function planLineWork(state: any, plan: any, line: string) {
+  const module = MODULES[line];
+  if (!module) return [];
+  const level = levelFor(plan, line);
+  const fresh: any = {};
+  const kept: any = {};
+  for (const item of planModules(state, plan)) {
+    if (item.line !== line) continue;
+    for (const [key, amount] of Object.entries(item.fresh) as any) fresh[key] = (fresh[key] || 0) + amount;
+    for (const [key, part] of Object.entries(item.kept) as any) kept[key] = (kept[key] || 0) + part.amount;
+  }
+  for (const [key, amount] of Object.entries(lineWork(line, level)) as any) {
+    fresh[key] = (fresh[key] || 0) + amount * INTEGRATION;
+  }
+  if (module.content) {
+    const mult = tierWork(level);
+    for (const [key, base] of Object.entries(module.content) as any) fresh[key] = (fresh[key] || 0) + base * mult;
+  }
+  return CONTENT_KEYS
+    .map(key => ({ key, fresh: fresh[key] || 0, kept: kept[key] || 0, total: (fresh[key] || 0) + (kept[key] || 0) }))
+    .filter(item => item.total > 0.001);
+}
 export function planTags(plan: any) {
   const tags: string[] = [];
   for (const line of planLines(plan)) for (const tag of MODULES[line]?.tags || []) if (!tags.includes(tag)) tags.push(tag);
@@ -1340,7 +1365,7 @@ export const JOB_EXPIRY = 60;
 export const JOB_FLOORS = [40, 50, 60, 70];
 const JOB_CLIENTS = ['一家做教育软件的公司', '隔壁的独立团队', '一家广告公司', '一位做桌游的朋友', '一家外包大厂', '本地的文旅项目'];
 export function jobBoard(state: any) {
-  return (state.board?.offers || []).filter((offer: any) => state.day - offer.day < JOB_EXPIRY);
+  return (state.board?.offers || []).filter((offer: any) => state.day - offer.day < JOB_EXPIRY && !partBuilt(state, partId(offer.line, offer.level)));
 }
 // The average of everyone's strongest ability: the studio's level as a client sees it.
 export function teamPeak(state: any) {
@@ -3261,10 +3286,13 @@ export function testDemo(state: any, projectId: string) {
   const conv = conversionRate(marketScore(score, next.day));
   const buy = Math.round(clamp(conv / (conv + ECONOMY.forget) * (1 + (random(next) - 0.5) * 0.5 * Math.sqrt(30 / count)), 0.01, 0.99) * 100);
   const wants = Math.round(gain * buy / 100);
+  const tags = planTags(target);
   const demand = demandHeat(next, target);
+  const demandDetail = tagBreakdown(next, tags);
+  const demandFactor = tagFactor(next, tags, target.scale);
   // Every run is kept (last five) so a retest can be compared against what changed in between.
   target.testLog = [...(target.testLog || []), { day: next.day, count, found: newlyFound, buy, gain, wants }].slice(-5);
-  target.test = { day: next.day, count, found: newlyFound, buy, gain, wants, demand, source: '试玩玩家' };
+  target.test = { day: next.day, count, found: newlyFound, buy, gain, wants, demand, demandDetail, demandFactor, source: '试玩玩家' };
   next.event = { id: 'feedback', project: projectId, title: '试玩反馈送达', text: `${count} 位玩家试玩，新发现 ${newlyFound} 项缺陷，新增关注 ${gain} 人，其中约 ${wants} 人明确想买。`, choices: [{ id: 'continue', title: '收下反馈，继续经营' }] };
   studioLog(next, '体验版试玩', `${count} 人参与，发现 ${newlyFound} 项缺陷，新增关注 ${gain} 人。`);
   return next;

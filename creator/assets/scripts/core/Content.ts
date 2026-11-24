@@ -485,7 +485,12 @@ function jobDetailMenu(state: any, id: string) {
     .reduce((total: number, part: string) => total + (Object.values(core.partOf(part)?.work || {}) as number[]).reduce((a, b) => a + b, 0), 0);
   // Six axes for the workload radar: a commission only has module work, so testing stays empty.
   const dims: any = {};
-  for (const key of core.DIM_KEYS) dims[key] = 0;
+  const active: any = {};
+  for (const key of core.DIM_KEYS) { dims[key] = 0; active[key] = false; }
+  for (const key of Object.keys(module.work || {})) {
+    const dim = key === 'discover' ? 'stability' : key;
+    if (active[dim] !== undefined) active[dim] = true;
+  }
   for (let tier = 1; tier <= offer.level; tier += 1) {
     const id = core.partId(offer.line, tier);
     if (core.partBuilt(state, id)) continue;
@@ -505,7 +510,7 @@ function jobDetailMenu(state: any, id: string) {
         ['工作量', crewDays(state, work)],
         ['有效期', '还剩 ' + jobDaysLeft(state, offer) + ' 天']
       ] },
-      { type: 'workload', values: dims, crew: state.staff.length },
+      { type: 'workload', values: dims, active, crew: state.staff.length },
       { type: 'buttons', items: [
         { text: '接下这份委托', action: 'take-job', data: { id: offer.id } },
         { text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }
@@ -673,7 +678,12 @@ function testReport(state: any, project: any) {
   const blocks: any[] = [
     { type: 'text', text: core.dateText(test.day) + ' · ' + test.count + ' 位玩家', muted: true },
     { type: 'stats', tone: 'plain', items: [['新发现缺陷', value(test.found, ' 项')], ['新增关注', value(test.gain, ' 人')], ['明确想买', wantsOf(test) === undefined ? '—' : '约 ' + wantsOf(test) + ' 人']] },
-    { type: 'lines', items: [['本作当下需求', test.demand || '—']] },
+    ...((test.demandDetail || []).length
+      ? [{ type: 'lines', title: '本作当下需求', items: [
+          ...test.demandDetail.map((item: any) => [item.name + ' · ' + (item.tags || []).join(' / '), item.label, item.tone === 'up' ? 'green' : item.tone === 'down' ? 'red' : 'muted']),
+          ...(test.demandFactor !== undefined ? [['综合需求', (test.demandFactor >= 1 ? '+' : '') + Math.round((test.demandFactor - 1) * 100) + '%', test.demandFactor >= 1.02 ? 'green' : test.demandFactor <= 0.98 ? 'red' : 'muted']] : [])
+        ] }]
+      : [{ type: 'lines', items: [['本作当下需求', test.demand || '—']] }])
   ];
   const history = project.testLog || [];
   if (history.length > 1) {
@@ -1129,10 +1139,12 @@ function brickOf(state: any, line: string, extra: any = {}) {
   const detail = locked ? '还没学会，做游戏的过程中会解锁'
     : info.level ? (tiers ? info.level + ' 级 · ' : '') + '用过 ' + info.uses + ' 次 · 质量 ' + Math.round(info.quality) + (info.next > 0 ? ' · 下一级做了 ' + Math.round(info.next * 100) + '%' : '')
     : info.next > 0 ? '做了 ' + Math.round(info.next * 100) + '%' : '还没有';
+  const tier = Math.max(1, info.level + (info.next > 0 ? 1 : 0));
+  const metrics = (info.level || info.next > 0) ? core.moduleMetrics(state, core.partId(line, Math.min(core.lineTiers(line), tier))) : null;
   return {
     module: line, name: module.name, field: module.field,
     level: Math.max(1, info.level), status: info.level ? 'have' : info.next > 0.001 ? 'partial' : 'missing',
-    progress: info.next,
+    progress: info.next, metrics,
     detail, note: module.desc, route: { menu: 'module', id: line }, actions: [], ...extra
   };
 }
@@ -1185,7 +1197,7 @@ function moduleMenu(state: any, line = '') {
   // A half-built module shows both the quality already reached and where the current crew would take it.
   const tier = Math.max(1, info.level + (info.next > 0 ? 1 : 0));
   const metrics = core.moduleMetrics(state, core.partId(line, Math.min(core.lineTiers(line), tier)));
-  if (info.level || info.next > 0) blocks.push({ type: 'radar', metrics, genre: module.type || '', projectId: null, expected: metrics.expected });
+  if (info.level || info.next > 0) blocks.push({ type: 'module-bars', metrics });
   if (info.level || info.next > 0) blocks.push({ type: 'lines', items: [['等级', info.level + ' / ' + info.top + ' 级' + (info.next > 0 ? '（下一级 ' + Math.round(info.next * 100) + '%）' : '')], ['质量', String(Math.round(info.quality))], ['首次来自', info.first ? '《' + info.first + '》' : '—'], ['用过', info.uses + ' 次'], ['未修缺陷', info.defects + ' 项'], ['标签', (module.tags || []).join('、') || '—']] });
   const actions = lineActions(state, line, info);
   if (actions.length) blocks.push({ type: 'buttons', columns: 2, items: actions });

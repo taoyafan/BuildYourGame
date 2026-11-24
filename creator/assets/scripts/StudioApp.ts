@@ -778,13 +778,91 @@ export class StudioApp extends Component {
     });
   }
 
+  private moduleBarKeys(metrics: any) {
+    return core.DIM_KEYS.filter((key: string) => !metrics?.active || metrics.active[key]);
+  }
+
+  private moduleBarsHeight(metrics: any, dark = false) {
+    const keys = this.moduleBarKeys(metrics);
+    if (!keys.length) return 0;
+    const hasExpect = !dark && keys.some((key: string) => Math.round(metrics.expected?.[key] || 0) > Math.round(metrics.dimensions?.[key] || 0));
+    return keys.length * (dark ? 20 : 28) + (hasExpect ? 18 : 4);
+  }
+
+  private moduleBars(parent: Node, y: number, metrics: any, width: number, offsetX = 0, dark = false) {
+    const keys = this.moduleBarKeys(metrics);
+    if (!keys.length) return 0;
+    const rowH = dark ? 20 : 28;
+    const nameW = dark ? 34 : 42;
+    const valW = dark ? 52 : 68;
+    const barX = nameW + 6;
+    const barW = Math.max(40, width - barX - valW - 6);
+    const barH = dark ? 8 : 10;
+    const hasExpect = keys.some((key: string) => Math.round(metrics.expected?.[key] || 0) > Math.round(metrics.dimensions?.[key] || 0));
+    const totalH = this.moduleBarsHeight(metrics, dark);
+    const { node, pen } = this.canvasNode(parent, 'ModuleBars', offsetX, y, width, totalH);
+    const trackBg = dark ? '#2b3d35' : colors.pale;
+    const expFill = dark ? '#e0a526' : '#e0b354';
+    const curFill = dark ? '#52b788' : colors.green;
+    const nameColor = dark ? '#cfe3d8' : colors.muted;
+    const valColor = dark ? '#ffffff' : colors.ink;
+    keys.forEach((key: string, index: number) => {
+      const rowY = index * rowH;
+      const name = core.DIMENSIONS.find(item => item.key === key)?.name || key;
+      const cur = Math.max(0, Math.min(100, Math.round(metrics.dimensions?.[key] || 0)));
+      const exp = Math.max(cur, Math.min(100, Math.round(metrics.expected?.[key] || cur)));
+      const by = rowY + Math.floor((rowH - barH) / 2);
+      pen.rect(barX, by, barW, barH, trackBg, barH / 2);
+      if (exp > 0) pen.rect(barX, by, Math.max(barH, barW * exp / 100), barH, expFill, barH / 2);
+      if (cur > 0) pen.rect(barX, by, Math.max(barH, barW * cur / 100), barH, curFill, barH / 2);
+      this.text(node, name, 0, rowY, nameW, rowH, dark ? 10 : 12, nameColor);
+      const label = exp > cur ? `${cur}→${exp}` : (dark ? String(cur) : cur + ' 分');
+      this.text(node, label, barX + barW + 6, rowY, valW, rowH, dark ? 10 : 12, valColor, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    });
+    if (!dark && hasExpect) this.text(node, '绿条为当前 · 黄条为做完预期', 0, keys.length * rowH, width, 16, 10, colors.muted);
+    return totalH;
+  }
+
+  private workBars(parent: Node, y: number, items: { key: string; fresh: number; kept: number; total: number }[], width: number) {
+    if (!items.length) return 0;
+    const rowH = 22;
+    const nameW = 36;
+    const valW = 86;
+    const barX = nameW + 6;
+    const barW = Math.max(40, width - barX - valW - 6);
+    const barH = 8;
+    const maxTotal = Math.max(1, ...items.map(item => item.total));
+    const hasKept = items.some(item => item.kept > 0.05);
+    const totalH = items.length * rowH + (hasKept ? 16 : 4);
+    const { node, pen } = this.canvasNode(parent, 'PlanWorkBars', 0, y, width, totalH);
+    const days = (v: number) => v <= 0.01 ? 0 : Math.max(1, Math.round(v));
+    items.forEach((item, index) => {
+      const rowY = index * rowH;
+      const name = core.DIMENSIONS.find(dim => dim.key === item.key)?.name || item.key;
+      const by = rowY + Math.floor((rowH - barH) / 2);
+      pen.rect(barX, by, barW, barH, colors.pale, barH / 2);
+      const totalPx = Math.max(barH, barW * item.total / maxTotal);
+      const freshPx = item.total > 0 ? Math.round(totalPx * item.fresh / item.total) : 0;
+      if (item.kept > 0.05) pen.rect(barX, by, totalPx, barH, '#a5ccb9', barH / 2);
+      if (freshPx > 0) pen.rect(barX, by, Math.max(barH, freshPx), barH, colors.green, barH / 2);
+      this.text(node, name, 0, rowY, nameW, rowH, 11, colors.muted);
+      const fDays = days(item.fresh);
+      const tDays = days(item.total);
+      const label = item.kept > 0.05 ? `需 ${fDays} / 共 ${tDays} 天` : `${fDays} 天`;
+      this.text(node, label, barX + barW + 6, rowY, valW, rowH, 11, colors.ink, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
+    });
+    if (hasKept) this.text(node, '深绿为本作新增 · 浅绿为已有复用（单人约需天数）', 0, items.length * rowH, width, 16, 10, colors.muted);
+    return totalH;
+  }
+
   // Where the open card sits on a board and how much room it needs below the tapped brick.
   private tipLayout(boardName: string) {
     const tip = this.brickTip;
     if (!tip || tip.board !== boardName) return null;
     const buttons = [...(tip.item.route ? [{ text: tip.item.route.menu === 'project' ? '看作品' : '看模块', route: tip.item.route }] : []), ...(tip.item.actions || [])];
-    const cardH = 72 + Math.ceil(buttons.length / 2) * 32;
-    return { tip, buttons, cardH, bottom: tip.y + tip.size + tip.gap + cardH + 6 };
+    const barsH = tip.item.metrics ? this.moduleBarsHeight(tip.item.metrics, true) + 6 : 0;
+    const cardH = 72 + barsH + Math.ceil(buttons.length / 2) * 32;
+    return { tip, buttons, barsH, cardH, bottom: tip.y + tip.size + tip.gap + cardH + 6 };
   }
 
   // The card for the tapped brick: name, state and a note, plus a way into the next layer and whatever
@@ -792,7 +870,7 @@ export class StudioApp extends Component {
   private brickTipCard(node: Node, width: number, _height: number) {
     const layout = this.tipLayout(node.name);
     if (!layout || !layout.tip.key.startsWith(node.name + '|')) return;
-    const { tip, buttons, cardH } = layout;
+    const { tip, buttons, barsH, cardH } = layout;
     const cardW = Math.min(250, width - 8);
     const x = Math.max(4, Math.min(width - cardW - 4, tip.x + tip.size / 2 - cardW / 2));
     const y = tip.y + tip.size + tip.gap;
@@ -805,10 +883,11 @@ export class StudioApp extends Component {
     this.text(card, tip.item.name, 10, 6, cardW - 20, 20, 13, '#ffffff', true);
     this.text(card, tip.item.detail || '', 10, 26, cardW - 20, 18, 11, '#cfe3d8');
     this.text(card, tip.item.note || '', 10, 44, cardW - 20, 28, 10, '#cfe3d8');
+    if (tip.item.metrics) this.moduleBars(card, 72, tip.item.metrics, cardW - 20, 10, true);
     const cell = (cardW - 26) / 2;
     buttons.forEach((item: any, index: number) => {
       const bx = 10 + (index % 2) * (cell + 6);
-      const by = 72 + Math.floor(index / 2) * 32;
+      const by = 72 + barsH + Math.floor(index / 2) * 32;
       this.button(card, item.text, bx, by, cell, 28, () => {
         this.brickTip = null;
         if (item.route) this.openMenu(item.route.menu, item.route.id);
@@ -1533,7 +1612,7 @@ export class StudioApp extends Component {
   // Six axes of planned work, not score. The shape is the relative workload; each label is how many
   // days that dimension takes — by the current crew, or by one person when `single` is set (the
   // planning form needs that, because the line under its chart is already the whole team's estimate).
-  private workRadar(body: Node, y: number, values: any, title: string, caption = '', single = false) {
+  private workRadar(body: Node, y: number, values: any, title: string, caption = '', single = false, active?: Record<string, boolean>) {
     const inner = this.width - 40;
     const height = 184;
     const { node, pen } = this.canvasNode(body, 'WorkRadar', 0, y, inner, height);
@@ -1573,7 +1652,8 @@ export class StudioApp extends Component {
     core.DIM_KEYS.forEach((key: string, index: number) => {
       const name = core.DIMENSIONS.find(dimension => dimension.key === key)?.name || '';
       const days = daysOf(Number(values?.[key]) || 0);
-      const label = this.text(node, name + '\n' + (days ? days + ' 天' : '—'), 0, 0, 56, 32, 11, colors.muted);
+      const zeroText = active && active[key] ? '0 天' : '—';
+      const label = this.text(node, name + '\n' + (days ? days + ' 天' : zeroText), 0, 0, 56, 32, 11, colors.muted);
       label.horizontalAlign = HorizontalTextAlignment.CENTER;
       const spot = point(index, 1.2);
       label.node.setPosition(spot.x - 28, -spot.y + 16);
@@ -1882,17 +1962,21 @@ export class StudioApp extends Component {
       });
       cursor += Math.max(1, Math.ceil(options.length / 3)) * 92 + 4;
       // Each chosen line takes its own level; a locked level stays grey until the company gets there.
-      for (const key of chosen.filter(line => core.lineTiers(line) > 1)) {
-        const levelTop = cursor;
-        const levels = Array.from({ length: core.lineTiers(key) }, (_, index) => index + 1);
-        this.text(body, core.MODULES[key].name, 0, cursor + 8, 96, 22, 11, colors.ink, true);
-        const cell = (inner - 100 - 6 * (levels.length - 1)) / levels.length;
-        levels.forEach((level, index) => this.button(body, level + ' 级', 100 + index * (cell + 6), cursor, cell, 36, () => {
-          this.draft.lineLevels = { ...core.fixLevels(this.draft), [key]: level };
-          this.render();
-        }, core.levelFor(this.draft, key) === level, !core.levelOpen(state, level) || !!fixed, undefined, undefined, !fixed && !core.levelOpen(state, level) ? core.SCALE_LOCKS[level - 1] : undefined));
-        if (axis.key === 'theme' && !this.anchors.has('plan-level')) this.anchors.set('plan-level', this.box(body, 'PlanLevelAnchor', 0, levelTop, inner, 36));
-        cursor += 42;
+      for (const key of chosen) {
+        if (core.lineTiers(key) > 1) {
+          const levelTop = cursor;
+          const levels = Array.from({ length: core.lineTiers(key) }, (_, index) => index + 1);
+          this.text(body, core.MODULES[key].name, 0, cursor + 8, 96, 22, 11, colors.ink, true);
+          const cell = (inner - 100 - 6 * (levels.length - 1)) / levels.length;
+          levels.forEach((level, index) => this.button(body, level + ' 级', 100 + index * (cell + 6), cursor, cell, 36, () => {
+            this.draft.lineLevels = { ...core.fixLevels(this.draft), [key]: level };
+            this.render();
+          }, core.levelFor(this.draft, key) === level, !core.levelOpen(state, level) || !!fixed, undefined, undefined, !fixed && !core.levelOpen(state, level) ? core.SCALE_LOCKS[level - 1] : undefined));
+          if (axis.key === 'theme' && !this.anchors.has('plan-level')) this.anchors.set('plan-level', this.box(body, 'PlanLevelAnchor', 0, levelTop, inner, 36));
+          cursor += 42;
+        }
+        const lineItems = core.planLineWork(state, this.draft, key);
+        if (lineItems.length) cursor += this.workBars(body, cursor, lineItems, inner) + 6;
       }
       // A line the company does not have can be rented instead of built: no work, capped quality, paid
       // once now. Gameplay never; the first title one line, later titles two. It never joins the library.
@@ -2290,7 +2374,8 @@ export class StudioApp extends Component {
         return y + 4;
       case 'payout': return y + this.payout(parent, y, block) + 10;
       case 'radar': return y + this.radar(parent, y, block.metrics, block.genre, core.activeProject(this.state, block.projectId), 0, true, block.expected || null) + 12;
-      case 'workload': return y + this.workRadar(parent, y, block.values, block.title || '六项工作量') + 12;
+      case 'module-bars': return y + this.moduleBars(parent, y, block.metrics, width, 0, false) + 12;
+      case 'workload': return y + this.workRadar(parent, y, block.values, block.title || '六项工作量', '', false, block.active) + 12;
       case 'dimensions': {
         // Each dimension shows the current crew and the days it needs; the slowest staffed one is the
         // bottleneck, and dimensions nobody works on are called out instead of pencilled in.
