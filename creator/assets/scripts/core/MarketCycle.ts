@@ -25,7 +25,7 @@ export function marketWave(seed: number, key: number, time: number) {
   const turn = age < valley(slot) ? slot - 1 : slot;
   const from = valley(turn);
   const t = (age - from) / (valley(turn + 1) - from);
-  const hold = 0.05 + sample(seed, key, turn, 5) * 0.15;
+  const hold = 0.2 + sample(seed, key, turn, 5) * 0.1;
   const rise = (1 - hold) * (0.2 + sample(seed, key, turn, 6) * 0.6);
   const high = 0.72 + sample(seed, key, turn, 7) * 0.28;
   if (t < rise) {

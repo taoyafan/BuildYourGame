@@ -505,7 +505,7 @@ function jobDetailMenu(state: any, id: string) {
   return {
     title: '委托详情',
     blocks: [
-      { type: 'text', text: offer.client + '。' + (module.desc || '') },
+      { type: 'text', text: offer.client + '。' + (module.desc || '') + (core.moduleOpen(state, offer.line) ? '' : ' 公司还不会这个模块，做完就学会了。') },
       { type: 'lines', items: [
         ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 级' : '')],
         ...Object.entries(offer.requires || {}).map(([key, floor]: any) => [dimensionName(key) + '至少', floor + ' 分']),
@@ -604,7 +604,7 @@ function dimensionMenu(state: any, projectId: string, dimKey: string) {
       const assigned = core.personWorks(state, project, person);
       const elsewhere = state.projects.find((item: any) => item.id !== projectId && core.personWorks(state, item, person).length);
       return {
-        type: 'person-assign', title: person.name + ' · ' + core.ROLES[person.role].name,
+        type: 'person-assign', art: core.artOf(person), title: person.name + ' · ' + core.ROLES[person.role].name,
         detail: core.personActivity(state, project, person),
         personId: person.id, projectId, index, assigned,
         status: elsewhere ? '在《' + elsewhere.name + '》' : '',
@@ -654,12 +654,13 @@ function assignMenu(state: any, projectId: string) {
     const assigned: string[] = core.personWorks(state, project, person);
     const home = core.projectOf(state, person);
     const elsewhere = home && home.id !== projectId ? home : null;
-    const works = core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001 }));
+    const works = core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001, special: specialOn(person, project, work.dimension) }));
     // With every assigned item finished the person is idle; the card says so instead of pointing at
     // six completed boxes. Nothing here asks the player to "hand back" hours — the day does that.
     const idle = !!assigned.length && works.every((work: any) => work.done);
     blocks.push({
       type: 'person-assign',
+      art: core.artOf(person),
       title: person.name + ' · ' + core.ROLES[person.role].name,
       detail: core.personActivity(state, project, person),
       personId: person.id,
@@ -674,6 +675,39 @@ function assignMenu(state: any, projectId: string) {
     });
   });
   return { title: '分工', blocks };
+}
+
+// A work box gets a star when the person's module specialty lifts it on this title.
+const specialOn = (person: any, project: any, dim: string) => { const bonus = core.specialtyBonus(person, project, dim); return bonus.ability > 0 || bonus.speed > 0; };
+
+// The crew for a title that is not started yet. Same cards as the assign page; the choice is kept with the
+// plan and takes effect the moment the title starts.
+export function draftAssignMenu(state: any, draft: any) {
+  const crew = draft.crew || {};
+  const forecast = core.planForecast(state, draft, crew);
+  const slots = Array.from({ length: core.TEMPLATE_SLOTS }, (_v, slot) => ({ slot, template: core.assignTemplate(state, slot) }));
+  const blocks: any[] = [
+    ...(forecast ? [{ type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], draft: true }] : [{ type: 'text', text: '先把立项选完整，才能估算工期。', muted: true }]),
+    { type: 'section', title: '分工模板' },
+    { type: 'buttons', columns: core.TEMPLATE_SLOTS, items: slots.map(({ slot, template }: any) => ({ text: template ? '导入模板' + (slot + 1) + ' · ' + template.people.length + '人' : '模板' + (slot + 1) + '（空）', action: 'draft-template', data: { slot }, disabled: !template })) },
+    { type: 'buttons', columns: core.TEMPLATE_SLOTS, items: slots.map(({ slot }: any) => ({ text: '存为模板' + (slot + 1), action: 'draft-template-save', data: { slot } })) },
+    { type: 'section', title: '每个人做什么' }
+  ];
+  state.staff.forEach((person: any, index: number) => {
+    const assigned: string[] = Array.isArray(crew[person.id]) ? crew[person.id] : [];
+    const home = core.projectOf(state, person);
+    blocks.push({
+      type: 'person-assign', draft: true, art: core.artOf(person),
+      title: person.name + ' · ' + core.ROLES[person.role].name,
+      detail: assigned.length ? '本作：' + assigned.map((key: string) => core.WORKS.find((work: any) => work.key === key)?.name).join('、') : '不参加本作',
+      personId: person.id, index, assigned,
+      status: !assigned.length && home ? '在《' + home.name + '》' : '',
+      stress: person.stressTags.map((key: string) => core.STRESS_TAGS[key].name),
+      fame: !!person.fame && state.day - (person.joined || 0) < 30,
+      works: core.WORKS.map((work: any) => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: false, special: specialOn(person, draft, work.dimension) }))
+    });
+  });
+  return { title: '本作分工', blocks };
 }
 
 // The playtest report: what the last round found, how the players took it, and every round so far.
@@ -860,7 +894,7 @@ function bookMenu(state: any, id: string) {
     blocks: [
       { type: 'cover', book },
       { type: 'stats', items: [['累计回款', money(book.received)], ['项目投入', money(book.invested)], [balance >= 0 ? '已盈利' : '尚差回本', money(Math.abs(balance))]], tone: balance >= 0 ? 'up' : 'down' },
-      ...(book.review.reasons.length ? [{ type: 'section', title: book.tutorial ? '首作复盘：下一作怎么改' : '复盘' }, { type: 'reasons', items: book.review.reasons }] : []),
+      ...(book.review.reasons.length ? [{ type: 'section', title: '下作可以这样改', help: '按这部作品发售时的情况估算：某一项各提高 5 分、推广多投或少投一档、体量大 10%，分别能让收入变化多少，列出变化最大的三条。' }, { type: 'reasons', items: book.review.reasons }] : []),
       { type: 'chart', book },
       ...(book.parentId ? [{ type: 'text', text: '原作：《' + (state.catalog.find((item: any) => item.id === book.parentId)?.name || '原作') + '》；本资料片独立核算。', muted: true }] : []),
       ...dlcs.map((item: any) => ({ type: 'buttons', items: [{ text: item.name + (item.released ? ' · 已发售' : ' · 开发中'), action: 'menu', data: { menu: item.released ? 'book' : 'project', id: item.id } }] })),
@@ -1041,6 +1075,7 @@ function personMenu(state: any, id: string) {
         ['工作速度', String(person.speed)],
         ['在岗', person.leaveUntil > state.day ? '外出中，' + core.dueText(state, person.leaveUntil) + '回来' : '正常在岗']
       ] },
+      ...(project ? [{ type: 'buttons', items: [{ text: '调整分工', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id, dim: person.id } }] }] : []),
       ...(core.personTags(person).length ? [{ type: 'tags', items: core.personTags(person) }] : []),
       ...(boost ? [{ type: 'note', icon: 'Users', text: '团队增益「' + boost.name + '」' + core.BOOST_GRADES[(person.boostLevel || 1) - 1] + '：' + boost.text + (boostLive ? '当前项目 ' + crew + ' 人受益。' : person.stressTags.length ? core.pronoun(person) + '现在状态不好，增益暂时失效。' : '同一项目已有更高档的同类增益或不在项目中，暂未生效。') + (person.boostLevel < 3 ? '在职越久或团建，可能升档。' : '') }] : []),
       ...(person.fame ? [{ type: 'note', icon: 'Star', text: '行业名人。' + (state.day - (person.joined || 0) < 30 ? '仍在磨合期，产出打八折。' : '已融入团队。') + (core.conditionText(person) ? ' 附带条件：' + core.conditionText(person) : '') + (person.story ? ' ' + person.story : '') }] : []),
@@ -1049,7 +1084,7 @@ function personMenu(state: any, id: string) {
       { type: 'text', text: pair ? '正在由' + pair.mentor.name + '带' + core.ABILITIES.find(item => item.key === pair.ability)?.name + '。' : person.mentor ? '带教暂停：两人不在同一个项目。' : pupils.length ? '正在带' + pupils.map((other: any) => other.name).join('、') + '。' : '可以找能力更强的同事带' + core.pronoun(person) + '。', muted: !pair },
       { type: 'buttons', anchor: 'mentor', columns: person.mentor ? 2 : 1, items: [{ text: person.mentor ? '换一位带教' : '找人带' + core.pronoun(person), action: 'menu', icon: 'GraduationCap', data: { menu: 'mentor', id: person.id } }, ...(person.mentor ? [{ text: '结束带教', action: 'mentor', icon: 'X', data: { id: person.id, mentor: null } }] : [])] },
       ...(person.stressTags.includes('leaving') && !person.founder ? [{ type: 'lines', title: '离职风险', items: [['每天提出离职的概率', Math.round(core.resignChance(state, person) * 100) + '%' + (state.overtime[person.id] ? '（加班中翻倍）' : ''), 'red'], ['说明', '停止加班可降到 ' + Math.round(core.RESIGN_CHANCE * 100) + '%。']] }] : []),
-      ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', Math.round((person.stressChance || 0) * 100) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
+      ...(state.overtime[person.id] ? [{ type: 'lines', title: '当前加班状态', items: [['负面标签概率', '每天 ' + ((person.stressChance || 0) * 100).toFixed(1) + '%'], ['说明', '继续加班会累积「疲惫」「想走」标签，拉低产出。']] }] : []),
       { type: 'toggle', anchor: 'overtime', text: '让 ' + person.name + ' 加班', value: !!state.overtime[id], action: 'overtime', data: { id } },
       ...(person.founder ? [] : (() => {
         const raise = core.raiseOffer(state, id);
@@ -1274,10 +1309,10 @@ function financeMenu(state: any, onlineRankings: boolean) {
   };
 }
 
-const rankNames: Record<core.StudioRecord, string> = { funds: '总资金', profit: '年度盈利', days: '创业天数' };
+const rankNames: Record<core.StudioRecord, string> = { funds: '总资金', profit: '年度盈利', days: '创业天数', achievements: '成就数' };
 
 function rankValue(record: core.StudioRecord, score: number) {
-  return record === 'days' ? number(score) + ' 天' : money(score);
+  return record === 'days' ? number(score) + ' 天' : record === 'achievements' ? number(score) + ' 个' : money(score);
 }
 
 export function playerRankingMenu(record: core.StudioRecord, scores: Record<core.StudioRecord, number | null>,
@@ -1285,14 +1320,15 @@ export function playerRankingMenu(record: core.StudioRecord, scores: Record<core
     failed: boolean) {
   const score = scores[record];
   const mine = snapshot?.mine;
-  const rank = mine?.status === 'EXACT' && mine.score !== null ? '第 ' + mine.rank + ' 名 · ' + rankValue(record, mine.score)
+  const rank = mine?.status === 'EXACT' && mine.score !== null ? '第 ' + mine.rank + ' 名'
     : mine?.status === 'OVER_LIMIT' ? '500+' : snapshot ? '未上榜' : '—';
   return { title: '排行榜', blocks: [
-    { type: 'help', title: '榜单规则', text: '总资金取月末结算后现金；年度盈利取完整游戏年的净盈利，扣除创始人注资；创业天数只计已走完的游戏日。' },
+    { type: 'help', title: '榜单规则', text: '总资金取每天现金的最高值；年度盈利取完整游戏年的净盈利，扣除创始人注资；创业天数只计已走完的游戏日；成就数是本局已解锁的成就。' },
     { type: 'segments', items: Object.entries(rankNames).map(([key, text]) => ({
       text, active: key === record, action: 'rank-tab', data: { record: key }
     })) },
-    { type: 'lines', items: [['我的排名', rank], ['本局最佳', score === null ? '—' : rankValue(record, score)]] },
+    { type: 'stats', tone: 'plain', items: [['我的名次', rank], ['本局最佳', score === null ? '—' : rankValue(record, score)]] },
+    { type: 'section', title: '总榜' },
     ...(failed ? [
       { type: 'text', text: '暂时无法读取排行榜。', muted: true },
       { type: 'buttons', items: [{ text: '重试', icon: 'RotateCcw', action: 'rank-retry' }] }
@@ -1573,7 +1609,7 @@ function unlockStep(state: any, route: any): GuideStep | null {
   switch (route.menu) {
     case 'team': {
       if (!state.staff.some((person: any) => !person.founder)) return null;
-      if (!seen.overtimeAllIntro) return once('overtimeAllIntro', 'overtime-all', '全员加班：一键让所有人加班，产出 +45%。代价是缺陷更多，还会累积「疲惫」「想走」负面标签，加班越久越容易。');
+      if (!seen.overtimeAllIntro) return once('overtimeAllIntro', 'overtime-all', '全员加班：一键让所有人加班，' + core.OVERTIME_TEXT + '。还会累积「疲惫」「想走」负面标签，加班越久越容易。');
       // Saves that already learned the personal switch skip the new forced tap, so the next thing
       // they see is still the outing note rather than a lesson they have clearly outgrown.
       if (!seen.overtimePersonTap && !seen.overtimeIntro) return { anchor: 'staff-0', text: '点一位成员看看：每个人也能单独设置加班。', tap: 'overtimePersonTap', tapGroup: 'staff' };

@@ -1,7 +1,7 @@
 import type { StudioRecord } from './core/Studio';
 import type { RankingSnapshot, StudioRankings } from './Platform';
 
-const boards: Record<StudioRecord, number> = { funds: 1, profit: 2, days: 3 };
+const boards: Record<StudioRecord, number> = { funds: 1, profit: 2, days: 3, achievements: 4 };
 const minClient = 9510;
 const cacheMs = 45000;
 const maxScore = 1000000;

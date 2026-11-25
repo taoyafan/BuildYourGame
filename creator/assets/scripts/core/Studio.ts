@@ -1,15 +1,15 @@
 // Pure business rules without engine imports, so they can also run in Node for balance checks.
 // This is the six-dimension skeleton: every work unit is judged by the person who did it, and the
 // score of a dimension is the ability of its finished work times its progress, never capped.
-import { MODULES, AXES, FIELDS, ORIGINS, SECOND_MECHANIC } from './Modules';
+import { MODULES, AXES, FIELDS, ORIGINS } from './Modules';
 import { marketWave, rotationSpan, smoothMarket } from './MarketCycle';
-import { moduleUpdateWork, moduleUpdatedQuality, PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, SCALE_BOUNDS, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
+import { PLANNING_OFFICES, LABOR_PARAMETERS, PROMOTION_TIERS, ECONOMY, monthlyWage, marketScore, industryShift, scaleOfWork, SCALE_BOUNDS, firstWeekOf, marketCapacity, unitPriceOf, conversionRate, spreadRate, attentionPrice, promotionCost, launchAttention, salesStep, simulateTitle } from './Planning';
 export { MODULES, AXES, FIELDS, ORIGINS };
 export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.82';
+export const VERSION = '0.4.83';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -196,11 +196,83 @@ export function tagInfo(tag: any, person: any = null) {
   return { name: String(key || ''), text: '', kind: '', rank: 0, tone: 'green' };
 }
 
+// Module specialties: someone who knows one line well does better work on it, only in titles that use it,
+// and only on the dimensions their trade covers. A common one gives ability or speed, rarer ones both.
+export const SPECIALTY_GRADES = [
+  { name: '普通', rank: 0, ability: 3, speed: 0.05 },
+  { name: '稀有', rank: 2, ability: 5, speed: 0.05 },
+  { name: '史诗', rank: 3, ability: 8, speed: 0.1 }
+];
+const SPECIALTY_CHANCE: any = { friends: 0.2, web: 0.3, headhunt: 0.45 };
+const SPECIALTY_ODDS: any = { friends: [0.7, 0.25, 0.05], web: [0.7, 0.25, 0.05], headhunt: [0.5, 0.35, 0.15] };
+const SPECIALTY_DIMS: any = { code: ['fluidity', 'depth'], design: ['creativity', 'depth'], art: ['picture'], audio: ['sound'], test: [] };
+const SPECIALTY_AWAKEN = 0.15;
+const SPECIALTY_RAISE = 0.1;
+export function specialtyLines(role: string) {
+  return Object.keys(MODULES).filter(line => {
+    const module = MODULES[line];
+    const gameplay = module.axis === 'core' || module.axis === 'mechanic';
+    if (role === 'art') return module.axis === 'art';
+    if (role === 'audio') return module.axis === 'audio';
+    if (role === 'code') return module.axis === 'engine' || gameplay && (module.work.depth || 0) >= (module.work.creativity || 0);
+    if (role === 'design') return gameplay || module.axis === 'theme';
+    return false;
+  });
+}
+const specialtyMax = (person: any) => person.fame ? 2 : 1;
+function rollSpecialty(state: any, role: string, odds: number[], taken: string[] = []) {
+  const lines = specialtyLines(role).filter(line => !taken.includes(line));
+  if (!lines.length) return null;
+  const line = lines[Math.floor(random(state) * lines.length)];
+  let roll = random(state);
+  const grade = roll < odds[0] ? 1 : (roll -= odds[0]) < odds[1] ? 2 : 3;
+  return { line, grade, kind: random(state) < 0.5 ? 'ability' : 'speed' };
+}
+// What a person's specialties add to one dimension of their work on this project (or plan).
+export function specialtyBonus(person: any, project: any, dim: string) {
+  const out = { ability: 0, speed: 0 };
+  if (!project || !(SPECIALTY_DIMS[person.role] || []).includes(dim)) return out;
+  const lines = planLines(project);
+  for (const item of person.specialties || []) {
+    if (!lines.includes(item.line) || !(MODULES[item.line]?.work[dim] > 0)) continue;
+    const grade = SPECIALTY_GRADES[clamp(item.grade, 1, 3) - 1];
+    if (item.grade > 1 || item.kind !== 'speed') out.ability += grade.ability;
+    if (item.grade > 1 || item.kind === 'speed') out.speed += grade.speed;
+  }
+  return out;
+}
+function specialtyTag(person: any, item: any) {
+  const grade = SPECIALTY_GRADES[clamp(item.grade, 1, 3) - 1];
+  const module = MODULES[item.line];
+  const dims = (SPECIALTY_DIMS[person.role] || []).filter((dim: string) => module?.work[dim] > 0).map((dim: string) => DIMENSIONS.find(entry => entry.key === dim)?.name).join('、');
+  const effect = [item.grade > 1 || item.kind !== 'speed' ? `能力 +${grade.ability}` : '', item.grade > 1 || item.kind === 'speed' ? `速度 +${Math.round(grade.speed * 100)}%` : ''].filter(Boolean).join('、');
+  return { name: '擅长' + (module?.name || item.line), text: `作品用到${module?.name}时，做${dims}${effect}。`, kind: '模块专长 · ' + grade.name, rank: grade.rank, tone: RARITY_TONES[grade.rank] };
+}
+// After a release, people who worked on it may pick up a specialty in one of its lines, or raise one.
+function awakenSpecialties(state: any, project: any) {
+  const lines = planLines(project);
+  for (const person of state.staff) {
+    if (!((project.contributions || {})[person.id] > 0)) continue;
+    const mine = person.specialties || (person.specialties = []);
+    const fit = lines.filter(line => specialtyLines(person.role).includes(line));
+    if (!fit.length) continue;
+    const line = fit[Math.floor(random(state) * fit.length)];
+    const held = mine.find((item: any) => item.line === line);
+    if (held && held.grade < 3 && random(state) < SPECIALTY_RAISE) held.grade += 1;
+    else if (!held && mine.length < specialtyMax(person) && random(state) < SPECIALTY_AWAKEN) mine.push({ line, grade: 1, kind: random(state) < 0.5 ? 'ability' : 'speed' });
+    else continue;
+    const tag = specialtyTag(person, mine.find((item: any) => item.line === line));
+    personNote(state, person, `${held ? '专长升档' : '觉醒专长'}「${tag.name}」`);
+    announce(state, { kind: 'record', title: `${person.name}：「${tag.name}」${tag.kind.split(' · ')[1]}`, text: tag.text, amount: 0 });
+  }
+}
+
 // Everything shown on a person: stress first, then the rest by rarity. Ability tags follow the numbers —
 // only abilities of 80 or more show (at most two), purple, then gold from 90.
 export function personTags(person: any) {
   const out: any[] = [];
   if (person.boost) out.push(tagInfo(person.boost, person));
+  for (const item of person.specialties || []) out.push(specialtyTag(person, item));
   for (const tag of person.tags || []) if (tag.kind !== 'ability' && !has(ABILITY_TAGS, tag.key)) out.push(tagInfo(tag, person));
   const notable = ABILITY_KEYS.filter(ability => valueRank(person.abilities[ability]) >= 2).sort((left, right) => person.abilities[right] - person.abilities[left]).slice(0, 2);
   for (const ability of notable) out.push(abilityTag(ability, person.abilities[ability]));
@@ -247,8 +319,9 @@ const BRIDGE = 3;
 const PROTO = 0.25;
 const TRIAL = 0.55;
 // Months of wage a layoff costs per year of service, plus one (N+1).
-const OVERTIME_BOOST = 1.45;
+const OVERTIME_BOOST = 1.25;
 const OVERTIME_DEFECT = 1.45;
+export const OVERTIME_TEXT = `产出 +${Math.round((OVERTIME_BOOST - 1) * 100)}%，缺陷 +${Math.round((OVERTIME_DEFECT - 1) * 100)}%`;
 const FAMILY_NAMES = ['林', '陈', '周', '许', '沈', '叶', '宋', '程', '顾', '苏', '陆', '江', '王', '李', '张', '刘', '赵', '吴', '郑', '孙', '马', '朱', '胡', '郭', '何', '高', '罗', '梁', '谢', '韩', '唐', '冯', '董', '萧', '曹', '袁', '邓', '傅', '彭', '曾', '温', '白', '秦', '姚', '崔', '段', '谭', '姜'];
 const GIVEN_NAMES: Record<string, string[]> = {
   m: ['明远', '星河', '亦舟', '思齐', '予墨', '一帆', '子谦', '景行', '沐白', '少庭', '云起', '桓宁', '绍光', '敬之', '听澜', '尚文', '江来', '观潮', '嘉树', '启航', '书翼', '远山', '顺之', '守一', '晴川', '彦庭', '修远', '北辰', '黎明', '晨阳', '仲庭', '雨生'],
@@ -331,7 +404,18 @@ export const AXIS_NAME: any = { genre: '类型', mechanic: '机制', theme: '题
 const AXIS_FIELD: any = { genre: 'design', mechanic: 'design', theme: 'design', engine: 'tech', art: 'art', audio: 'audio' };
 export const FOCUS_SWING = 2;
 export const QUIET_SWING = 0.5;
-export const HANDOVER_DAYS = 60;
+export const HANDOVER_DAYS = 30;
+// The focus moves on a fixed clock; the market only stops having one lead axis once every axis has led
+// and the studio is big enough to bet on several at once.
+export const FOCUS_DAYS = 90;
+export const LATE_STAFF = 20;
+// A module's hot-cold round: 150–210 days in the starter hut, longer in bigger offices; a move eases in.
+const MARKET_SLOW = 1.8;
+const OFFICE_CYCLE = [1, 1, 1.3, 1.7, 2.2, 3];
+const PACE_SHIFT_DAYS = 60;
+const officeRate = (office: number) => 1 / (MARKET_SLOW * (OFFICE_CYCLE[office] ?? OFFICE_CYCLE[OFFICE_CYCLE.length - 1]));
+// One locked module opens on this clock, on the focus axis while it still has some.
+export const UNLOCK_DAYS = 20;
 export const HEAT_REDEEM = 0.6;
 export const HEAT_FLOOR = 0.75;
 export const HEAT_CEIL = 1.45;
@@ -407,8 +491,8 @@ function ensureMarketCycle(state: any) {
   const migration = saved && recent?.v && typeof recent.v === 'object' && !Array.isArray(recent.v)
     && recent.day >= state.day - HEAT_EVERY - 1 && recent.day <= state.day ? { start: state.day, values: recent.v } : null;
   const cycle = {
-    scale, waveSeed: saved ? (state.seed >>> 0) : openingWaveSeed(state.seed >>> 0), clock: { day: state.day, time: state.day }, newsAt: state.day,
-    focus, done, focusAt: Number.isFinite(saved?.focusAt) ? saved.focusAt : releases(state),
+    scale, waveSeed: saved ? (state.seed >>> 0) : openingWaveSeed(state.seed >>> 0), clock: { day: state.day, time: state.day, from: officeRate(state.office || 0), to: officeRate(state.office || 0) }, office: state.office || 0, newsAt: state.day,
+    focus, done, focusDay: state.day,
     late: !!saved?.late, handover: saved?.handover ?? null, seen: seen.length ? seen : ['design'], migration
   };
   state.marketCycle = cycle;
@@ -417,38 +501,50 @@ function ensureMarketCycle(state: any) {
   delete state.tags;
   return cycle;
 }
+// Market time runs at the office's rate; after a move the rate slides to the new one over two months.
+function marketRate(cycle: any, day: number) {
+  const clock = cycle.clock;
+  if (clock.to === undefined) return 1 / Math.max(1, rotationSpan(cycle.scale).production / 55);
+  const d = day - clock.day;
+  return d <= 0 ? clock.from : d >= PACE_SHIFT_DAYS ? clock.to : clock.from + (clock.to - clock.from) * d / PACE_SHIFT_DAYS;
+}
 function marketTime(cycle: any, day: number) {
-  const pace = Math.max(1, rotationSpan(cycle.scale).production / 55);
-  return cycle.clock.time + (day - cycle.clock.day) / pace;
+  const clock = cycle.clock;
+  const d = day - clock.day;
+  if (clock.to === undefined) return clock.time + d * marketRate(cycle, day);
+  if (d <= 0) return clock.time + d * clock.from;
+  const ease = Math.min(d, PACE_SHIFT_DAYS);
+  return clock.time + clock.from * ease + (clock.to - clock.from) * ease * ease / (2 * PACE_SHIFT_DAYS) + clock.to * Math.max(0, d - PACE_SHIFT_DAYS);
 }
-function extendMarketCycle(state: any, scale: number) {
-  const cycle = ensureMarketCycle(state);
-  if (scale <= cycle.scale) return;
-  cycle.clock = { day: state.day, time: marketTime(cycle, state.day) };
-  cycle.scale = scale;
+function followOffice(state: any, cycle: any) {
+  if (cycle.office === state.office && cycle.clock.to !== undefined) return;
+  cycle.clock = { day: state.day, time: marketTime(cycle, state.day), from: marketRate(cycle, state.day), to: officeRate(state.office) };
+  cycle.office = state.office;
 }
-// A focus lasts at least two shipped titles: long enough to meet a peak on the axis being pushed, short
-// enough that the attention visibly moves. The clock itself never restarts when the focus changes.
+// The focus moves on round the five axes on a fixed clock, with no announcement: the player reads it
+// from the market. The clock itself never restarts when the focus changes.
 function advanceFocus(state: any) {
   const cycle = state.marketCycle;
-  const left = FOCUS_AXES.filter(axis => !cycle.done.includes(axis));
   startHandover(state);
-  if (!left.length) {
-    // Everyone gets the same full swing, but the last focus eases down and the quiet ones ease up: the
-    // amplitudes still meet their targets over two months instead of switching on one day.
+  const round = FOCUS_AXES.every(axis => cycle.done.includes(axis));
+  if (round) cycle.round = true;
+  if (cycle.round && state.staff.length >= LATE_STAFF) {
     cycle.late = true;
     cycle.focus = null;
-    announce(state, { kind: 'unlock', title: '行情不再有唯一风口', text: '五个方向都当过焦点。现在每个方向都有自己的起落，靠组合判断时机，而不是跟着一条线走。', amount: 0 });
     return;
   }
-  cycle.focus = left[0];
-  cycle.done = [...cycle.done, cycle.focus];
-  cycle.focusAt = releases(state);
-  announce(state, { kind: 'unlock', title: '行业关注转向', text: `接下来一段时间，新东西集中在${AXIS_NAME[cycle.focus]}方向，这一类的行情也最起伏。`, field: AXIS_FIELD[cycle.focus], amount: 0 });
+  const next = FOCUS_AXES[(FOCUS_AXES.indexOf(cycle.focus) + 1) % FOCUS_AXES.length];
+  cycle.focus = next;
+  cycle.done = round ? [next] : [...cycle.done, next];
+  cycle.focusDay = state.day;
 }
 function marketCycleDay(state: any) {
   const cycle = ensureMarketCycle(state);
-  if (!cycle.late && cycle.focus && releases(state) - cycle.focusAt >= 2) advanceFocus(state);
+  followOffice(state, cycle);
+  if (!cycle.late && cycle.focus) {
+    if (!Number.isFinite(cycle.focusDay)) cycle.focusDay = state.day;
+    if (state.day - cycle.focusDay >= FOCUS_DAYS) advanceFocus(state);
+  }
   if (cycle.handover && state.day - cycle.handover.start >= HANDOVER_DAYS) cycle.handover = null;
   if (cycle.migration && state.day - cycle.migration.start >= MARKET_MIGRATION_DAYS) cycle.migration = null;
 
@@ -735,7 +831,7 @@ export function moduleMetrics(state: any, id: string) {
 // Axes and lines open up with released titles, so the first game only shows a few choices.
 export const releases = (state: any) => (state.catalog || []).filter((book: any) => !book.parentId).length;
 export const axisOpen = (state: any, axis: any) => !!axis && releases(state) >= (axis.unlock || 0);
-export const axisMax = (state: any, axis: any) => axis.key === 'mechanic' && releases(state) < SECOND_MECHANIC ? 1 : axis.max;
+export const axisMax = (_state: any, axis: any) => axis.max;
 // Two gameplay lines carry no level in the data because each origin starts on one of them: the programmer
 // on side-scrolling action, the designer and the artist on branching story. Only the founder's own line is
 // known on day one; the other one is learned like any later line, during production, and shows up in the
@@ -819,7 +915,7 @@ export function fillPlanAxes(state: any, axes: any) {
 // The axes that open with the next release, for the one-line teaser under the form.
 export function nextUnlocks(state: any) {
   const next = releases(state) + 1;
-  return [...AXES.filter(axis => (axis.unlock || 0) === next).map(axis => axis.name), ...(next === SECOND_MECHANIC ? ['第二个机制'] : [])];
+  return AXES.filter(axis => (axis.unlock || 0) === next).map(axis => axis.name);
 }
 
 // What a plan would build: each module, what the company already has of it (carried over at its own
@@ -994,7 +1090,7 @@ function blankProject(state: any, id: string, plan: any, day: number) {
     parentId: plan.parentId || null,
     axes: clone(plan.axes || {}), only: plan.only ? [...plan.only] : null, rent: [...(plan.rent || [])], rebuild: plan.rebuild || null,
     lineLevels: plan.rebuild ? {} : fixLevels(plan),
-    parts: items.filter(item => !item.rented).map(item => item.id), own, work, base: {}, progress: 0,
+    parts: items.filter(item => !item.rented).map(item => item.id), reused: items.filter(item => !item.rented && Object.keys(item.kept).length).map(item => item.id), own, work, base: {}, progress: 0,
     levels: Object.fromEntries(planLines(plan).map(line => [line, lineInfo(state, line).level])),
     defects: [], found: 0, repairProgress: 0,
     followers: 0, promoted: 0, invested: 0, started: day, released: null,
@@ -1041,105 +1137,31 @@ function refreshWork(state: any, project: any) {
       work.batches = done > 0 ? [{ amount: done, quality: value / done }] : [];
     }
   }
-  prepareModuleUpdates(state, project);
 }
 
-// Updates are a separate effort ledger: quality points still describe the original module work,
-// so spending time on an update never dilutes the score or creates a second copy of the module.
-function prepareModuleUpdates(state: any, project: any) {
-  if (project.released || project.rebuild || !state.projects.some((item: any) => item.id === project.id)) return;
-  project.updateHands = project.updateHands || {};
-  project.moduleUpdates = project.moduleUpdates || {};
-  project.updateWork = {};
-  const hands: any = {};
-  for (const person of state.staff) {
-    if (!belongsTo(state, project, person)) continue;
-    const saved = project.updateHands[person.id] || (project.updateHands[person.id] = {});
-    for (const key of assignedWorks(project, person)) {
-      const work = WORKS.find(item => item.key === key);
-      if (!work || work.dimension === 'stability') continue;
-      if (saved[key] === undefined) saved[key] = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
-      hands[work.dimension] = Math.max(hands[work.dimension] || 0, saved[key]);
-    }
-  }
-  for (const id of project.parts || []) {
-    const record = state.modules[id];
-    if (!record) continue;
-    for (const [key, planned] of Object.entries(partOf(id)?.work || {}) as any) {
-      const work = Math.min(planned, record.done[key] || 0);
-      if (work <= 0) continue;
-      const quality = record.done[key] > 0 ? record.value[key] / record.done[key] : 0;
-      const goals = project.moduleUpdates[id] || (project.moduleUpdates[id] = {});
-      let goal = goals[key];
-      const target = hands[key] || goal?.target || 0;
-      const left = moduleUpdateWork(work, quality, target);
-      if (!goal && left <= 0.0001) continue;
-      if (!goal) goal = goals[key] = { target, total: left };
-      else if (target !== goal.target) {
-        goal.total = Math.max(0, goal.total + left - moduleUpdateWork(work, quality, goal.target));
-        goal.target = target;
-      }
-      const row = project.updateWork[key] || (project.updateWork[key] = { total: 0, done: 0, left: 0, gain: 0 });
-      row.total += Math.max(goal.total, left);
-      row.left += left;
-      row.done += Math.max(0, goal.total - left);
-      row.gain += Math.max(0, target - quality) * work;
-    }
-  }
+function personalRemaining(_state: any, project: any, _person: any, workKey: string) {
+  return WORKS.some(item => item.key === workKey) ? remainingOf(project, workKey) : 0;
 }
 
-function personalRemaining(state: any, project: any, person: any, workKey: string) {
-  const work = WORKS.find(item => item.key === workKey);
-  if (!work) return 0;
-  return remainingOf(project, workKey) + updateLeft(state, project, person, workKey);
-}
-
-// Module updates this person could still make on one item: up to their own level, never required.
-function updateLeft(state: any, project: any, person: any, workKey: string) {
-  const work = WORKS.find(item => item.key === workKey);
-  if (!work || work.dimension === 'stability') return 0;
-  const key = work.dimension;
-  let left = 0;
-  const cap = Math.min(project.updateHands?.[person.id]?.[workKey] ?? 100, able(person, work.ability) + rareBonus(state, project, key));
-  for (const [id, goals] of Object.entries(project.moduleUpdates || {}) as any) {
-    const goal = goals[key];
-    const record = state.modules[id];
-    if (!goal || !record?.done[key]) continue;
-    left += moduleUpdateWork(Math.min(partOf(id)?.work[key] || 0, record.done[key]), record.value[key] / record.done[key], Math.min(cap, goal.target));
+// Integrating a reused module into this title lifts its quality towards whoever does the integration:
+// by the time the title's own work in that dimension is done, half the gap is closed. No extra work.
+const LIFT_SHARE = 0.5;
+function liftReused(state: any, project: any, key: string, amount: number, quality: number) {
+  const total = project.own?.total?.[key] || 0;
+  if (total <= 0 || amount <= 0) return;
+  const step = 1 - Math.pow(1 - LIFT_SHARE, amount / total);
+  for (const id of reusedParts(state, project)) {
+    const record = state.modules?.[id];
+    const done = record?.done?.[key] || 0;
+    if (!(partOf(id)?.work[key] > 0) || done <= 0) continue;
+    const old = record.value[key] / done;
+    if (quality <= old) continue;
+    record.value[key] = done * (old + (quality - old) * step);
   }
-  return left;
 }
-
-function deliverModuleUpdates(state: any, project: any, person: any, key: string, budget: number, quality: number) {
-  const targets: any[] = [];
-  const cap = Math.min(quality, project.updateHands?.[person.id]?.[key] ?? quality);
-  for (const [id, goals] of Object.entries(project.moduleUpdates || {}) as any) {
-    const goal = goals[key];
-    const record = state.modules[id];
-    if (!goal || !record?.done[key]) continue;
-    const old = record.value[key] / record.done[key];
-    const work = Math.min(partOf(id)?.work[key] || 0, record.done[key]);
-    const target = Math.min(cap, goal.target);
-    const left = moduleUpdateWork(work, old, target);
-    if (left > 0.000001) targets.push({ id, old, work, target, left });
-  }
-  const total = sum(targets.map(item => item.left));
-  const used = Math.min(budget, total);
-  project.lastOwners = { ...(project.lastOwners || {}), [key]: [] };
-  if (used <= 0) return 0;
-  for (const item of targets) {
-    const effort = used * item.left / total;
-    const record = state.modules[item.id];
-    record.value[key] = record.done[key] * moduleUpdatedQuality(item.work, item.old, item.target, effort);
-    project.lastOwners[key].push({ id: item.id, amount: effort });
-  }
-  return used;
-}
-
-export function moduleUpdateSummary(state: any, project: any) {
-  refreshWork(state, project);
-  const work = sum(Object.values(project.updateWork || {}).map((row: any) => row.left));
-  return { work, modules: Object.entries(project.moduleUpdates || {}).filter(([id, goals]: any) => partOf(id) && Object.keys(goals).length).map(([id]) => MODULES[partOf(id).line].name) };
+function reusedParts(state: any, project: any) {
+  if (!project.reused) project.reused = (project.parts || []).filter((id: string) => partBuilt(state, id));
+  return project.reused;
 }
 
 // New work in a dimension goes to whatever still needs it there, in proportion to what each has left:
@@ -1163,6 +1185,7 @@ function creditWork(state: any, project: any, key: string, amount: number, quali
     if (owner.id === null) {
       project.own.done[key] = (project.own.done[key] || 0) + share;
       project.own.value[key] = (project.own.value[key] || 0) + share * quality;
+      liftReused(state, project, key, share, quality);
     } else {
       const record = moduleRecord(state, owner.id);
       record.done[key] = (record.done[key] || 0) + share;
@@ -1380,15 +1403,19 @@ function startJob(state: any) {
   state.projects.push(project);
 }
 
-// The job board: clients who each want one module the studio lacks, at a fixed fee per person-day. A small
-// title earns less than this per person-day until the team scores about 58, and more after, so jobs carry
-// a young studio and fade once it is good; the module stays in the library either way.
-export const JOB_RATE = 0.08;
-export const JOB_EVERY = 10;
+// The job board: clients who each want one module the studio lacks. In the starter hut jobs pay well, so a
+// young studio can save up to move; once it can make medium titles they pay little and come rarely, so
+// games are the better use of the team. Clients stop coming once the team is strong.
+export const JOB_RATE = [0.25, 0.06];
+export const JOB_MIN_PAY = [2, 0];
+export const JOB_EVERY = [7, 15];
 export const JOB_SLOW = 35;
+export const JOB_FROM = 65;
 export const JOB_STOP = 80;
 export const JOB_EXPIRY = 60;
 export const JOB_FLOORS = [40, 50, 60, 70];
+const jobStage = (state: any) => state.office >= 2 ? 1 : 0;
+const marketAxisOf = (line: string) => MODULES[line]?.axis === 'core' ? 'genre' : MODULES[line]?.axis;
 const JOB_CLIENTS = ['一家做教育软件的公司', '隔壁的独立团队', '一家广告公司', '一位做桌游的朋友', '一家外包大厂', '本地的文旅项目'];
 export function jobBoard(state: any) {
   return (state.board?.offers || []).filter((offer: any) => state.day - offer.day < JOB_EXPIRY && !partBuilt(state, partId(offer.line, offer.level)));
@@ -1403,7 +1430,8 @@ export function teamPeak(state: any) {
 export function jobGap(state: any) {
   const peak = teamPeak(state);
   if (peak >= JOB_STOP) return null;
-  return Math.round(JOB_EVERY + clamp((peak - 50) / (JOB_STOP - 50), 0, 1) * (JOB_SLOW - JOB_EVERY));
+  const every = JOB_EVERY[jobStage(state)];
+  return Math.round(every + clamp((peak - JOB_FROM) / (JOB_STOP - JOB_FROM), 0, 1) * (JOB_SLOW - every));
 }
 // A floor on every dimension the module needs, one the team can actually reach: no more than its best hand
 // there minus 5. A dimension nobody is near 40 in gets no floor.
@@ -1441,14 +1469,19 @@ function refreshBoard(state: any) {
   if (!state.company || state.office < 1) return;
   const board = state.board || (state.board = { next: state.day, offers: [] });
   board.offers = jobBoard(state);
-  if (state.day < board.next) return;
+  // The starter hut always has a couple of jobs to choose from.
+  const short = jobStage(state) === 0 && board.offers.length < 2;
+  if (state.day < board.next && !short) return;
   const gap = jobGap(state);
   if (gap === null) return;
   board.next = state.day + gap;
-  const levelOf = (line: string) => Math.min(lineTiers(line), lineInfo(state, line).level + 1, scaleOpen(state, 1) ? 2 : 1);
+  const levelOf = (line: string) => Math.min(lineTiers(line), lineInfo(state, line).level + 1, 2);
   const jobs = state.projects.filter((project: any) => project.job).map((project: any) => project.job.module);
   const busy = [...board.offers.map((offer: any) => offer.line), ...jobs];
-  const lines = Object.keys(MODULES).filter(line => moduleOpen(state, line) && !busy.includes(line) && !partBuilt(state, partId(line, levelOf(line))));
+  // Lines still locked can be asked for too, outside the market's focus: delivering one teaches it.
+  const focus = state.marketCycle?.focus;
+  const upcoming = (line: string) => !moduleOpen(state, line) && !(state.openingGates || {})[line] && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis)) && marketAxisOf(line) !== focus;
+  const lines = Object.keys(MODULES).filter(line => (moduleOpen(state, line) || upcoming(line)) && !busy.includes(line) && !partBuilt(state, partId(line, levelOf(line))));
   if (!lines.length) return;
   const asked = busy.map(mainDimension);
   const fresh = lines.filter(line => !asked.includes(mainDimension(line)));
@@ -1456,7 +1489,8 @@ function refreshBoard(state: any) {
   const line = pool[Math.floor(random(state) * pool.length)];
   const level = levelOf(line);
   const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id)?.work || {}) as number[])));
-  const offer = { id: `offer-${state.day}`, line, level, pay: round(work * JOB_RATE), client: pick(state, JOB_CLIENTS), day: state.day, requires: jobRequires(state, line) };
+  const stage = jobStage(state);
+  const offer = { id: `offer-${state.day}`, line, level, pay: round(Math.max(JOB_MIN_PAY[stage], work * JOB_RATE[stage])), client: pick(state, JOB_CLIENTS), day: state.day, requires: jobRequires(state, line) };
   board.offers = [...board.offers, offer];
   announce(state, { kind: 'job', title: '收到新委托', text: `${offer.client}想要${MODULES[line].name} · ${moneyText(offer.pay)}`, route: { menu: 'job', id: offer.id }, amount: 0 });
 }
@@ -1541,6 +1575,7 @@ export function setLicense(state: any, line: string, on: boolean) {
 function finishJob(state: any, project: any) {
   const gained = keepModules(state, project);
   const pay = project.job.pay;
+  if (!moduleOpen(state, project.job.module) && !project.job.opening) state.unlocked = { ...(state.unlocked || {}), [project.job.module]: state.day };
   state.cash = round(state.cash + pay);
   state.ledger.income = round(state.ledger.income + pay);
   state.projects = state.projects.filter((item: any) => item.id !== project.id);
@@ -1718,6 +1753,8 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     const { gender, name } = identity(next);
     const wage = round(monthlyWage(abilities[strongest], speed));
     people.push(freshPerson(next, { id: `${role}-${channel}-${batch}-${index}-${next.seed}`, name, gender, art: pickArt(next, gender, people), role, abilities, speed, tags, wage, hired: false, potential: potentialFor(next, abilities, channel) }));
+    const special = random(next) < (SPECIALTY_CHANCE[channel] || 0) ? rollSpecialty(next, role, SPECIALTY_ODDS[channel] || SPECIALTY_ODDS.friends) : null;
+    people[people.length - 1].specialties = special ? [special] : [];
   }
   // Three candidates, three independent rolls. Odds are per person and scale with star level and
   // channel: at five stars an industry referral gives each candidate a 1-in-10 chance. A shortlist
@@ -1745,6 +1782,11 @@ export function publishRecruitment(state: any, role: string, channel = 'friends'
     star.speed = Math.min(140, star.speed + 12);
     star.wage = round(star.wage * 1.6);
     star.fame = true;
+    star.specialties = [];
+    for (let count = 0; count < 2; count++) {
+      const special = rollSpecialty(next, role, SPECIALTY_ODDS.headhunt, star.specialties.map((item: any) => item.line));
+      if (special) star.specialties.push(special);
+    }
     star.rampup = 30;
     star.tags = [...star.tags.filter((tag: any) => tag.kind !== 'ability').slice(0, 2), { kind: 'personality', key: 'eager' }];
     // A name comes with terms: half of them insist on bringing an old crewmate, the rest only take
@@ -2106,7 +2148,7 @@ export function personActivity(state: any, project: any, person: any) {
   if (!busy.length) return '空闲（不做工作，工资照付）';
   // Finished items drop out of the split; with everything done `split` is empty and the branch above
   // has already reported the person as idle, so whatever is left here is always real work.
-  const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}${remainingOf(project, key) > 0.0001 ? '制作' : '模块更新'}`;
+  const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}制作`;
   return busy.map(label).join('、');
 }
 
@@ -2114,27 +2156,111 @@ function assignDay(state: any, project: any, person: any) {
   const usable = assignedWorks(project, person);
   // Nothing assigned: no output at all. Without this guard an idle person still picked up defect repair.
   if (!usable.length) return {};
-  // New work first; module updates only fill the time once every assigned item is made.
-  const baseLeft = (key: string) => WORKS.some(item => item.key === key) ? remainingOf(project, key) : 0;
-  const measure = usable.some(key => baseLeft(key) > 0.0001) ? baseLeft : (key: string) => updateLeft(state, project, person, key);
-  const pending = usable.some(key => measure(key) > 0.0001);
-  if (!pending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
-  const remaining: any = {};
-  const open: string[] = [];
-  // One threshold both here and in `pending`: the box that counts as finished must be the box that
-  // stops taking time, otherwise a sliver of work keeps soaking up a share of the day.
-  for (const key of usable) {
-    const left = measure(key);
-    if (left > 0.0001) { remaining[key] = left; open.push(key); }
+  const pending = usable.some(key => remainingOf(project, key) > 0.0001);
+  if (!pending) return project.defects.some((defect: any) => defect.found && !defect.fixed) ? { repair: 1 } : {};
+  return { ...(allocation(state, project).split[person.id] || {}) };
+}
+
+// Max flow from people to dimensions: can the team finish every remaining dimension within `days`?
+function flowWithin(people: any[], left: any, days: number) {
+  const dims = Object.keys(left);
+  const flow: any = {};
+  const cap: any = {};
+  for (const person of people) cap[person.id] = person.speed * days;
+  const need: any = { ...left };
+  // Augmenting paths through the residual graph; the graph has at most a few dozen edges.
+  for (let guard = 0; guard < 500; guard++) {
+    const prev: any = {};
+    const queue: any[] = [];
+    for (const person of people) if (cap[person.id] > 1e-9) { queue.push({ type: 'p', id: person.id }); prev['p' + person.id] = null; }
+    let end: any = null;
+    while (queue.length && !end) {
+      const node = queue.shift();
+      if (node.type === 'p') {
+        const person = people.find(item => item.id === node.id);
+        for (const key of person.keys) {
+          const dim = WORKS.find(work => work.key === key).dimension;
+          if (('d' + dim) in prev) continue;
+          prev['d' + dim] = node;
+          if (need[dim] > 1e-9) { end = { type: 'd', id: dim }; break; }
+          queue.push({ type: 'd', id: dim });
+        }
+      } else {
+        for (const person of people) {
+          const key = person.keys.find((item: string) => WORKS.find(work => work.key === item).dimension === node.id);
+          if (!key || ('p' + person.id) in prev || !(flow[person.id]?.[key] > 1e-9)) continue;
+          prev['p' + person.id] = node;
+          queue.push({ type: 'p', id: person.id });
+        }
+      }
+    }
+    if (!end) break;
+    const path: any[] = [];
+    for (let node = end; node; node = prev[node.type + node.id]) path.unshift(node);
+    let push = Math.min(cap[path[0].id], need[end.id]);
+    for (let index = 1; index < path.length - 1; index += 2) {
+      const dim = path[index].id;
+      const back = path[index + 1];
+      const key = people.find(item => item.id === back.id).keys.find((item: string) => WORKS.find(work => work.key === item).dimension === dim);
+      push = Math.min(push, flow[back.id][key]);
+    }
+    if (push <= 1e-9) break;
+    cap[path[0].id] -= push;
+    need[end.id] -= push;
+    for (let index = 0; index < path.length - 1; index += 2) {
+      const person = people.find(item => item.id === path[index].id);
+      const key = person.keys.find((item: string) => WORKS.find(work => work.key === item).dimension === path[index + 1].id);
+      flow[person.id] = flow[person.id] || {};
+      flow[person.id][key] = (flow[person.id][key] || 0) + push;
+      if (index + 2 < path.length) {
+        const giver = people.find(item => item.id === path[index + 2].id);
+        const giverKey = giver.keys.find((item: string) => WORKS.find(work => work.key === item).dimension === path[index + 1].id);
+        flow[giver.id][giverKey] -= push;
+      }
+    }
   }
-  // Finished items stop taking time. When every assigned item is done and no defect is waiting, the
-  // person idles instead of quietly reworking a finished dimension.
-  const list = open;
-  const total = sum(list.map((key: string) => remaining[key] ?? 1));
-  if (!list.length) return {};
-  const out: any = {};
-  for (const key of list) out[key] = total > 0 ? (remaining[key] ?? 1) / total : 1 / list.length;
-  return out;
+  return { ok: dims.every(dim => need[dim] <= Math.max(1e-6, left[dim] * 1e-6)), flow, cap };
+}
+
+// The most balanced split: the shortest time in which the people on this project, each only on the works
+// they were given, can finish every remaining dimension. Each person's day is divided so all dimensions
+// land on that day; a person with time to spare spreads it over their own works.
+const allocationCache = new WeakMap<any, any>();
+function allocation(state: any, project: any) {
+  const crew = state.staff.filter((person: any) => belongsTo(state, project, person));
+  const factor = priorityFactor(state, project);
+  const people = crew.map((person: any) => ({ id: person.id, speed: speedOf(state, person, 'creativity') * factor * conditionFactor(person, project), keys: assignedWorks(project, person).filter((key: string) => remainingOf(project, key) > 0.0001) }))
+    .filter((person: any) => person.keys.length && person.speed > 0);
+  const left: any = {};
+  for (const person of people) for (const key of person.keys) left[WORKS.find(work => work.key === key).dimension] = remainingOf(project, key);
+  const signature = state.day + '|' + JSON.stringify(people) + '|' + JSON.stringify(left);
+  const cached = allocationCache.get(project);
+  if (cached?.signature === signature) return cached.result;
+  let result: any = { days: 0, split: {}, critical: [] };
+  if (people.length) {
+    let low = 0;
+    let high = sum(Object.values(left) as number[]) / Math.min(...people.map((person: any) => person.speed)) + 1;
+    for (let step = 0; step < 40 && high - low > 1e-4 * Math.max(1, high); step++) {
+      const mid = (low + high) / 2;
+      if (flowWithin(people, left, mid).ok) high = mid; else low = mid;
+    }
+    const { flow, cap } = flowWithin(people, left, high);
+    const split: any = {};
+    for (const person of people) {
+      const shares: any = {};
+      for (const key of person.keys) shares[key] = (flow[person.id]?.[key] || 0) / (person.speed * high);
+      const used = sum(Object.values(shares) as number[]);
+      const spare = Math.max(0, 1 - used);
+      for (const key of person.keys) shares[key] += used > 1e-9 ? spare * shares[key] / used : spare / person.keys.length;
+      split[person.id] = shares;
+    }
+    // A dimension is critical when everyone on it is already at full stretch.
+    const saturated = new Set(people.filter((person: any) => cap[person.id] <= person.speed * high * 1e-3).map((person: any) => person.id));
+    const critical = Object.keys(left).filter(dim => people.filter((person: any) => person.keys.some((key: string) => WORKS.find(work => work.key === key).dimension === dim)).every((person: any) => saturated.has(person.id)));
+    result = { days: high, split, critical };
+  }
+  allocationCache.set(project, { signature, result });
+  return result;
 }
 
 function remainingOf(project: any, workKey: string) {
@@ -2163,7 +2289,7 @@ function spreadSpare(state: any, project: any, person: any, budget: number, skip
     const room = personalRemaining(state, project, person, key);
     if (room <= 0.0001) continue;
     const amount = Math.min(left, room);
-    const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
+    const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + specialtyBonus(person, project, work.dimension).ability);
     recordWork(project, person, work.dimension, amount, quality, state);
     if (work.dimension !== 'stability') addDefect(project, person, work.dimension, amount * (100 - quality) / 100 * DEFECT_RATE * defects, state);
     practice(person, work.ability, amount, growth);
@@ -2284,13 +2410,29 @@ export function expectedDimensions(state: any, project: any) {
       const split = assignDay(state, project, person);
       const on = split[job.key] || 0;
       if (!on) continue;
-      const output = on * speedOf(state, person, job.key) * conditionFactor(person, project);
-      weighted += able(person, job.ability) * output;
+      const special = specialtyBonus(person, project, key);
+      const output = on * speedOf(state, person, job.key) * conditionFactor(person, project) * (1 + special.speed);
+      weighted += Math.min(100, able(person, job.ability) + special.ability) * output;
       hands += output;
     }
     if (key === 'stability') testHands = hands;
     if (!hands) { out[key] = dimensionScore(work); continue; }
-    out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
+    const hand = weighted / hands;
+    // Reused modules keep rising towards today's hands while the integration still has work left.
+    const ownTotal = project.own?.total?.[key] || 0;
+    const ownLeft = Math.max(0, ownTotal - (project.own?.done?.[key] || 0));
+    let lift = 0;
+    if (ownTotal > 0 && ownLeft > 0 && key !== 'stability') {
+      const step = 1 - Math.pow(1 - LIFT_SHARE, ownLeft / ownTotal);
+      for (const id of reusedParts(state, project)) {
+        const record = state.modules?.[id];
+        const have = Math.min(partOf(id)?.work[key] || 0, record?.done?.[key] || 0);
+        if (have <= 0) continue;
+        const old = record.value[key] / record.done[key];
+        if (hand > old) lift += have * (hand - old) * step;
+      }
+    }
+    out[key] = round(clamp((work.value + remaining * hand + lift) / work.total, 0, 100));
   }
   // The dashed stability line is where today's team would land by finishing the remaining test work
   // and clearing what it finds: the coverage the projected test score reaches, with no open defects.
@@ -2329,7 +2471,8 @@ export function dimensionPipeline(state: any, project: any) {
     const split = assignDay(state, project, person);
     const mood = conditionFactor(person, project);
     for (const [key, share] of Object.entries(split)) {
-      const speed = speedOf(state, person, key) * factor * mood;
+      const dim = key === 'repair' ? '' : WORKS.find(work => work.key === key).dimension;
+      const speed = speedOf(state, person, key) * factor * mood * (1 + (dim ? specialtyBonus(person, project, dim).speed : 0));
       if (key === 'repair') { repair += speed * (share as number); continue; }
       if (key === 'discover') discover += speed * (share as number);
       rate[WORKS.find(work => work.key === key).dimension] += speed * (share as number);
@@ -2350,13 +2493,13 @@ export function dimensionPipeline(state: any, project: any) {
   // other unstaffed dimension: the title cannot be finished until someone is put on it.
   const idle = pending.filter((row: any) => row.days === null).map((row: any) => row.key);
   const scheduled = pending.filter((row: any) => row.days !== null);
-  // A bottleneck is a dimension that finishes latest. A narrow tie of two or three rows is still a
-  // real bottleneck — the player has to speed all of them up — but when every row lands together the
-  // day split is balanced, and naming them all would just mean "nothing stands out".
+  // A bottleneck is a dimension whose people are all at full stretch in the balanced split: only more
+  // hands there bring the date forward. When nearly everything is critical, nothing stands out.
+  const critical = allocation(state, project).critical || [];
   const slowestDays = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : 0;
-  const slowest = scheduled.filter((row: any) => row.days === slowestDays);
-  const bottlenecks = scheduled.length > 1 && slowestDays > 0 && slowest.length <= 3 ? slowest.map((row: any) => row.key) : [];
-  const bottleneck = bottlenecks.length ? slowest[0] : null;
+  const bottlenecks = scheduled.length > 1 && slowestDays > 0 ? scheduled.filter((row: any) => critical.includes(row.key)).map((row: any) => row.key) : [];
+  if (bottlenecks.length > 3 || bottlenecks.length === scheduled.length) bottlenecks.length = 0;
+  const bottleneck = bottlenecks.length ? scheduled.find((row: any) => row.key === bottlenecks[0]) : null;
   return { rows, discover: round(discover), repair: round(repair), bottleneck, bottlenecks, idle, blocked: idle.length > 0 };
 }
 
@@ -2392,7 +2535,7 @@ export function setOvertime(state: any, id: string, enabled: boolean) {
   if (enabled && person.noOvertime) throw new Error(pronoun(person) + '答应过你，不再加班了。');
   if (enabled) next.overtime[id] = true;
   else { delete next.overtime[id]; delete next.outing.paused[id]; }
-  studioLog(next, `${person.name}${enabled ? '开始加班' : '结束加班'}`, enabled ? '产出 +45%，缺陷更多，并会累积负面标签。' : '恢复正常工作。');
+  studioLog(next, `${person.name}${enabled ? '开始加班' : '结束加班'}`, enabled ? OVERTIME_TEXT + '，加班越久越容易累积负面标签。' : '恢复正常工作。');
   return next;
 }
 
@@ -2406,7 +2549,7 @@ export function setAllOvertime(state: any, enabled: boolean) {
     if (enabled) next.overtime[person.id] = true;
     else { delete next.overtime[person.id]; delete next.outing.paused[person.id]; }
   }
-  studioLog(next, enabled ? '全员加班' : '全员结束加班', enabled ? '产出 +45%，缺陷更多，并会累积负面标签。' : '恢复正常工作。');
+  studioLog(next, enabled ? '全员加班' : '全员结束加班', enabled ? OVERTIME_TEXT + '，加班越久越容易累积负面标签。' : '恢复正常工作。');
   return next;
 }
 
@@ -2671,7 +2814,6 @@ export function startProject(state: any, draft: any) {
   project.unlockAt = [Math.round(30 + random(next) * 40)];
   next.projects.push(project);
   if (!plan.sequel && !plan.parentId) next.lastPlan = { axes: clone(plan.axes), scale: draft.scale || 0, lineLevels: { ...plan.lineLevels } };
-  if (!project.parentId && !project.port) extendMarketCycle(next, project.scale);
   refreshWork(next, project);
   project.progress = projectMetrics(project).progress;
   studioLog(next, '新作立项', `《${name}》面向${TYPES[project.type].audience}，${SCALES[plan.scale].name}作品。`);
@@ -2759,17 +2901,24 @@ export function assignTemplate(state: any, slot: number) {
 }
 
 export function saveTemplate(state: any, projectId: string, slot: number) {
-  if (!Number.isInteger(slot) || slot < 0 || slot >= TEMPLATE_SLOTS) throw new Error('模板位置无效。');
-  const next = studioAction(state);
-  const project = next.projects.find((item: any) => item.id === projectId && !item.released);
+  const project = state.projects.find((item: any) => item.id === projectId && !item.released);
   if (!project) throw new Error('项目不存在。');
   const works: any = {};
-  for (const person of next.staff) if (belongsTo(next, project, person)) works[person.id] = assignedWorks(project, person);
-  if (!Object.keys(works).length) throw new Error('这个项目还没有人。');
+  for (const person of state.staff) if (belongsTo(state, project, person)) works[person.id] = assignedWorks(project, person);
+  return saveTemplateWorks(state, slot, works);
+}
+
+export function saveTemplateWorks(state: any, slot: number, works: any) {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= TEMPLATE_SLOTS) throw new Error('模板位置无效。');
+  const kept: any = {};
+  for (const person of state.staff) if (Array.isArray(works?.[person.id])) kept[person.id] = works[person.id].filter((key: string) => WORK_KEYS.includes(key));
+  if (!Object.keys(kept).length) throw new Error('还没有人可以存。');
+  const next = studioAction(state);
   const templates = [...(next.assignTemplates || [])];
-  templates[slot] = { works, day: next.day };
+  templates[slot] = { works: kept, day: next.day };
   next.assignTemplates = templates;
-  studioLog(next, '保存分工模板', `模板 ${slot + 1}：${Object.keys(works).length} 人。`);
+  next.lastTemplate = slot;
+  studioLog(next, '保存分工模板', `模板 ${slot + 1}：${Object.keys(kept).length} 人。`);
   return next;
 }
 
@@ -2778,29 +2927,25 @@ export function applyTemplate(state: any, projectId: string, slot: number) {
   if (!template) throw new Error('这个模板是空的。');
   let next = state;
   for (const person of template.people) next = assign(next, projectId, person.id, template.works[person.id]);
-  return next;
+  return { ...next, lastTemplate: slot };
 }
 
-// Days a template would need for a plan: each person splits their day across their works by what is left.
-export function templateForecast(state: any, slot: number, plan: any) {
-  const template = assignTemplate(state, slot);
-  if (!template) return null;
-  const work = planWork(state, plan);
-  const left: any = {};
-  for (const key of CONTENT_KEYS) left[key] = work.fresh[key] || 0;
-  left.stability = work.test || 0;
-  const rate: any = {};
-  for (const person of template.people) {
-    const keys = template.works[person.id].filter((key: string) => left[WORKS.find(item => item.key === key)?.dimension] > 0.0001);
-    const total = sum(keys.map((key: string) => left[WORKS.find(item => item.key === key).dimension]));
-    for (const key of keys) {
-      const dim = WORKS.find(item => item.key === key).dimension;
-      rate[dim] = (rate[dim] || 0) + speedOf(state, person, key) * left[dim] / total;
-    }
-  }
-  const missing = DIM_KEYS.filter(key => left[key] > 0.0001 && !(rate[key] > 0.0001));
-  const days = missing.length ? null : Math.max(0, ...DIM_KEYS.filter(key => left[key] > 0.0001).map(key => Math.ceil(left[key] / rate[key])));
-  return { days, missing, people: template.people.length };
+// The crew a new title starts with: the template last used, or everyone with nothing to do on their own trade.
+export function defaultCrew(state: any) {
+  const template = Number.isInteger(state.lastTemplate) ? assignTemplate(state, state.lastTemplate) : null;
+  const crew: any = {};
+  if (template) for (const person of template.people) crew[person.id] = [...template.works[person.id]];
+  else for (const person of idleStaff(state)) crew[person.id] = [homeWork(person)];
+  return crew;
+}
+
+// The project page's six-cell forecast for a plan that is not started yet, with the crew drafted for it.
+export function planForecast(state: any, plan: any, crew: any) {
+  if (planIssue(state, plan)) return null;
+  const project = blankProject(state, 'draft-plan', { ...plan, name: plan.name || '新作', lineLevels: fixLevels(plan), scale: planScale(plan) }, state.day);
+  project.assignments = {};
+  for (const person of state.staff) project.assignments[person.id] = Array.isArray(crew?.[person.id]) ? crew[person.id] : [];
+  return projectForecast(state, project);
 }
 
 // What each kind of project is and can do, in one place. The kind is read from the markers a project
@@ -3031,15 +3176,8 @@ function recordWork(project: any, person: any, key: string, amount: number, qual
     work.value += used * quality;
     if (state && key !== 'stability') creditWork(state, project, key, used, quality);
   }
-  // Module updates only take the hours left after the new work of this item is done.
-  let updating = 0;
-  if (state && key !== 'stability' && amount - used > 0.000001) {
-    const baseOwners = used > 0 ? [...(project.lastOwners?.[key] || [])] : [];
-    updating = deliverModuleUpdates(state, project, person, key, amount - used, quality);
-    project.lastOwners[key] = [...baseOwners, ...(updating ? project.lastOwners[key] : [])];
-  }
-  project.contributions[person.id] = (project.contributions[person.id] || 0) + used + updating;
-  person.work = round(person.work + used + updating);
+  project.contributions[person.id] = (project.contributions[person.id] || 0) + used;
+  person.work = round(person.work + used);
   if (state) refreshWork(state, project);
 }
 
@@ -3187,14 +3325,15 @@ function produceProject(state: any, project: any) {
     for (const key of keys) {
       const share = split[key];
       const work = WORKS.find(item => item.key === key);
-      const amount = speedOf(state, person, key) * share * factor * mood;
+      const special = work ? specialtyBonus(person, project, work.dimension) : { ability: 0, speed: 0 };
+      const amount = speedOf(state, person, key) * share * factor * mood * (1 + special.speed);
       if (amount <= 0) continue;
       if (key === 'repair') {
         repair(state, project, amount, person);
         project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
         person.work = round(person.work + amount);
       } else {
-        const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension));
+        const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + special.ability);
         const remaining = personalRemaining(state, project, person, key);
         const used = Math.min(amount, Math.max(0, remaining));
         if (remaining > 0) {
@@ -3237,14 +3376,12 @@ function produceProject(state: any, project: any) {
     }
     if (project.progress >= 100) project.checkpoints.ready = true;
   }
-  // A commission can teach things too: the opening job unlocks the first title's remaining lines
-  // one at a time, while ordinary titles (and later jobs) learn random new lines from the lens.
+  // The opening job unlocks the first title's remaining lines one at a time; later lines open on the clock.
   if (!project.released && (project.kind === 'game' || project.job)) {
     while ((project.unlockAt || []).length && project.progress >= project.unlockAt[0]) {
       project.unlockAt.shift();
       const opening = (project.unlockLines || []).shift();
       if (opening) learnOpeningLine(state, opening);
-      else learnLine(state, project);
     }
   }
 }
@@ -3367,7 +3504,7 @@ function promoDay(state: any) {
 }
 // One playtest round per press, sized and priced by scale. The less is still uncovered, the smaller each
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
-// Each round reaches more players than it recruits: word of mouth among the testers' friends.
+// Follower gains are reckoned per this many recruited players, so a round never adds more followers than players.
 export const PLAYTEST_REACH = 2.5;
 export const PLAYTESTS = [{ players: 250, cost: 0.8 }, { players: 750, cost: 2.5 }, { players: 2500, cost: 7 }, { players: 7500, cost: 20 }];
 export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
@@ -3456,27 +3593,55 @@ const GENERIC_QUOTES: any = {
   bad: ['遇到好几个 bug，先差评再观察。', '期望挺高，玩着一般。', '再等等优化吧。', '半成品就急着上架。', '玩了两小时就腻了。', '宣传和实际差太多。', '闪退了三次，存档还丢了。', '想法不错，可惜做得粗糙。']
 };
 
-function reviewOf(state: any, project: any, metrics: any) {
-  const dimensions = metrics.dimensions;
-  const weights = TYPES[project.type].weights;
-  const weakest = [...DIM_KEYS].sort((left, right) => (100 - dimensions[left]) * weights[left] - (100 - dimensions[right]) * weights[right]).reverse().slice(0, 2);
-  const reasons = weakest.map(key => ({
-    title: `${DIMENSIONS.find(item => item.key === key)?.name}不足`,
-    text: `玩家最在意${audienceFocus(project.type)}，《${project.name}》的${DIMENSIONS.find(item => item.key === key)?.name}只有 ${dimensions[key].toFixed(0)} 分。`
-  }));
-  if (metrics.known > 0) reasons.push({ title: '还有已知缺陷', text: `还有 ${metrics.known} 项已知缺陷，完成所负责内容的人会用实际工时自动修复。` });
-  if (!reasons.length) reasons.push({ title: '各方面都比较扎实', text: '保持这套做法，下一作可以尝试更大的体量。' });
-  const quotes: any[] = [];
-  const pick = (key: string, positive: boolean) => {
-    const pool = DIMENSION_QUOTES[key] || [];
-    if (!pool.length) return;
-    quotes.push({ text: pool[Math.floor(random(state) * pool.length)], positive });
+// Hints, not verdicts: what players say about a dimension that would have paid most to improve.
+const DIMENSION_HINTS: any = {
+  creativity: ['玩着有点眼熟，要是再多点新意就好了。', '套路都见过，缺一个让人记住的点子。', '做得挺规整，就是少了点惊喜。'],
+  depth: ['前几个小时很好玩，后面就没什么可琢磨的了。', '系统有点浅，打通一遍就不想再开了。', '要是选择再多一点就更耐玩了。'],
+  fluidity: ['操作有点粘手，偶尔还会卡一下。', '加载有点慢，手感也差点意思。', '跑起来不太顺，影响心情。'],
+  picture: ['玩法不错，可惜画面有点粗糙。', '美术再精致一点就好了。', '截图不太拿得出手，劝朋友入坑有点难。'],
+  sound: ['音乐听两遍就腻了。', '音效有点单薄，打击感出不来。', '声音要是再用心点，沉浸感会好很多。'],
+  stability: ['偶尔会遇到奇怪的问题，希望多修修。', '碰到几个小 bug，有点出戏。', '再多测一测就更好了。']
+};
+
+// Revenue over the valuation window for a launch with these numbers, the same model the sale uses.
+function launchGains(state: any, project: any, metrics: any, basis: any) {
+  const scale = project.scale;
+  const revenue = (score: number, cover: number, work = basis.work) => {
+    const qe = marketScore(clamp(score, 0, 100), state.day);
+    return simulateTitle(scale, qe, cover * (1 + basis.exposure), basis.stock, basis.demand, 1, work).sold * unitPriceOf(scale, work) * basis.priceShare / 10000;
   };
-  const strongest = [...DIM_KEYS].sort((left, right) => dimensions[right] - dimensions[left])[0];
-  if (dimensions[strongest] >= 55) pick(strongest, true);
-  if (dimensions[weakest[0]] < 55) pick(weakest[0], dimensions[weakest[0]] >= 45);
-  if (metrics.known > 5) quotes.push({ text: '又碰到一个恶性 bug，心态有点崩。', positive: false });
-  return { reasons, quotes };
+  const scoreOf = (dims: any) => clamp(overallOf(project.type, dims) - (project.expectation || 0), 0, 100);
+  const score = scoreOf(metrics.dimensions);
+  const covers = [ECONOMY.platform, ...PROMOTE_TIERS.map((tier: any) => tier.cover)];
+  const now = project.promoCover > 0 ? project.promoCover : ECONOMY.platform;
+  const base = revenue(score, now);
+  const gains: any[] = DIM_KEYS.map(key => ({ dim: key, title: `${DIMENSIONS.find(item => item.key === key)?.name} +5 分`, value: revenue(scoreOf({ ...metrics.dimensions, [key]: Math.min(100, metrics.dimensions[key] + 5) }), now) - base }));
+  const qe = marketScore(score, state.day);
+  const spend = (cover: number) => promotionCost(scale, qe, cover, basis.demand, 1, basis.work) * basis.priceShare;
+  const index = covers.reduce((best: number, cover: number, at: number) => now >= cover - 1e-9 ? at : best, 0);
+  const promos: any[] = [];
+  if (index < covers.length - 1) promos.push({ title: '推广多投一档', value: revenue(score, covers[index + 1]) - base - (spend(covers[index + 1]) - spend(now)) });
+  if (index > 0) promos.push({ title: '推广少投一档', value: revenue(score, covers[index - 1]) - base + (spend(now) - spend(covers[index - 1])) });
+  if (promos.length) gains.push(promos.sort((left, right) => right.value - left.value)[0]);
+  gains.push({ title: '体量大 10%', value: revenue(score, now, basis.work * 1.1) - base - 0.1 * Math.max(0, project.invested - (project.promoted || 0)) });
+  return gains;
+}
+
+// What to change next time, as the money it would have moved: each dimension +5, one promotion tier up
+// or down, and a tenth more scale. The top three go to the review; the short quotes hint at the same.
+function reviewOf(state: any, project: any, metrics: any, gains: any[] = []) {
+  const dimensions = metrics.dimensions;
+  const money = (value: number) => (value >= 0 ? '预计多收约 ' : '预计少收约 ') + moneyText(Math.abs(round(value)));
+  const reasons = [...gains].sort((left, right) => right.value - left.value).slice(0, 3).map(item => ({ title: item.title, text: money(item.value) + '。' }));
+  const quotes: any[] = [];
+  const pick = (pool: string[], positive: boolean) => {
+    if (pool?.length) quotes.push({ text: pool[Math.floor(random(state) * pool.length)], positive });
+  };
+  const worth = gains.filter(item => item.dim).sort((left, right) => right.value - left.value).slice(0, 2).map(item => item.dim);
+  const strongest = [...DIM_KEYS].filter(key => !worth.includes(key)).sort((left, right) => dimensions[right] - dimensions[left])[0];
+  pick(DIMENSION_QUOTES[strongest], true);
+  for (const key of worth) pick(DIMENSION_HINTS[key], false);
+  return { reasons, quotes, hints: worth, best: strongest };
 }
 
 // A released project keeps its catalogue entry live: a patch's fixes and rework move the review score
@@ -3581,13 +3746,14 @@ function rateDay(state: any) {
   studioLog(state, '季度媒体评级', `${RATING_MEDIA}评分 ${score.toFixed(0)}，${line}。`);
 }
 
-export type StudioRecord = 'funds' | 'profit' | 'days';
+export type StudioRecord = 'funds' | 'profit' | 'days' | 'achievements';
 
 export function studioRecordScores(state: any): Record<StudioRecord, number | null> {
   const scores: Record<StudioRecord, number | null> = {
-    funds: Number.isFinite(state.fundsPeak) ? Math.max(state.fundsPeak, state.recordPeaks?.funds ?? -Infinity) : state.recordPeaks?.funds ?? null,
+    funds: Math.max(state.fundsPeak ?? -Infinity, state.cashMax ?? -Infinity, state.recordPeaks?.funds ?? -Infinity),
     profit: state.recordPeaks?.profit ?? null,
-    days: state.company && state.day > 1 ? state.day - 1 : null
+    days: state.company && state.day > 1 ? state.day - 1 : null,
+    achievements: unlockedCount(state) || null
   };
   const months = new Map<number, { closing: number; net: number }>();
   for (const report of state.reports || []) {
@@ -3611,6 +3777,7 @@ export function studioRecordScores(state: any): Record<StudioRecord, number | nu
   for (const total of years.values()) {
     if (total.months === 12) scores.profit = Math.max(scores.profit ?? -Infinity, round(total.net));
   }
+  if (!Number.isFinite(scores.funds)) scores.funds = null;
   return scores;
 }
 
@@ -3692,7 +3859,7 @@ export function launchProject(state: any, projectId: string) {
   })() : null;
   const best = Math.max(0, ...next.catalog.map((book: any) => book.openingReceipt));
   // At launch the players see the real game, so the review reads the true stability, not the estimate.
-  const review = reviewOf(next, project, metrics);
+  const review = reviewOf(next, project, metrics, launchGains(next, project, metrics, { work, stock, demand: lean * share, priceShare: project.parentId ? SIDE_PRICE : 1, exposure }));
   const book = {
     id: project.id, name: project.name, type: project.type, scale: project.scale, nominalWork: work, axes: project.axes, lineLevels: project.lineLevels,
     released: next.day, metrics, invested: round(project.invested), received: receipt,
@@ -3713,8 +3880,8 @@ export function launchProject(state: any, projectId: string) {
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
   const gained = keepModules(next, project);
-  // Whatever this title was going to learn and has not yet, it learns now.
-  while ((project.unlockAt || []).length) { project.unlockAt.shift(); learnLine(next, project); }
+  awakenSpecialties(next, project);
+  project.unlockAt = [];
   project.synced = moduleQuality(next, project);
   noteClash(book, clash, Math.round(full - units));
   next.lastRelease = book.id;
@@ -4014,9 +4181,12 @@ function resignOrContinue(state: any) {
   }
 }
 
-// Overtime accumulates stress labels: the chance rises with how many separate days were worked, but
-// there is no guarantee. Clear labels and it falls back, never all the way to zero for the same run.
+// Overtime accumulates stress labels: almost nothing in a short push, rising with the length of the run
+// and capped. A new label resets the run, so a second one needs another long stretch.
+export const OVERTIME_STRESS = { cap: 0.025, days: 40 };
+export const overtimeStress = (days: number) => OVERTIME_STRESS.cap * Math.pow(Math.min(1, days / OVERTIME_STRESS.days), 2);
 function stressDay(state: any) {
+  const fresh: string[] = [];
   for (const person of state.staff) {
     const overtime = !!state.overtime[person.id];
     if (overtime) {
@@ -4024,14 +4194,16 @@ function stressDay(state: any) {
       const resist = person.tags.some((tag: any) => tag.key === 'iron') ? 0.35 : person.tags.some((tag: any) => tag.key === 'eager') ? 1.5 : person.tags.some((tag: any) => tag.key === 'grumbler') ? 1.6 : 1;
       const project = projectOf(state, person);
       const anchor = project ? boostFactor(state, project, 'anchor') : 1;
-      person.stressChance = clamp(person.overtimeDays / 50 * resist * anchor, 0, 0.5);
+      person.stressChance = clamp(overtimeStress(person.overtimeDays) * resist * anchor, 0, 0.1);
       if (person.stressTags.length < 2 && random(state) < person.stressChance) {
         const label = person.stressTags.includes('tired') ? 'leaving' : 'tired';
         person.stressTags.push(label);
-        announce(state, { kind: 'notice', title: `${person.name} 挂上了「${STRESS_TAGS[label].name}」`, text: STRESS_TAGS[label].text, amount: 0 });
+        person.overtimeDays = 0;
+        person.stressChance = 0;
+        fresh.push(`${person.name}挂上「${STRESS_TAGS[label].name}」`);
       }
     } else {
-      person.stressChance = clamp(person.stressChance * 0.93, 0, 0.6);
+      person.stressChance = clamp(person.stressChance * 0.93, 0, 0.1);
       person.overtimeDays = Math.max(0, person.overtimeDays - 1);
       if (person.stressTags.includes('tired') && random(state) < 0.05) person.stressTags = person.stressTags.filter((key: string) => key !== 'tired');
     }
@@ -4039,10 +4211,12 @@ function stressDay(state: any) {
       const share = person.wage / marketWage(person);
       if (random(state) < Math.min(0.05, (UNDERPAID - share) * 0.09)) {
         person.stressTags.push('leaving');
-        announce(state, { kind: 'notice', title: `${person.name} 挂上了「${STRESS_TAGS.leaving.name}」`, text: '月薪比市场身价低太多。', amount: 0 });
+        fresh.push(`${person.name}挂上「${STRESS_TAGS.leaving.name}」（月薪偏低）`);
       }
     }
   }
+  // One banner a day, however many people picked up a label.
+  if (fresh.length) announce(state, { kind: 'notice', title: fresh.length > 1 ? `${fresh.length} 人挂上了负面标签` : fresh[0], text: fresh.length > 1 ? fresh.join('、') + '。' : '负面标签会拉低产出，团建可以清掉。', amount: 0 });
 }
 
 export function stepDay(state: any) {
@@ -4115,6 +4289,7 @@ export function stepDay(state: any) {
   }
   next.day += 1;
   marketCycleDay(next);
+  unlockDay(next);
   return nextStory(next);
 }
 
@@ -4199,10 +4374,12 @@ function salesDay(state: any) {
       const score = clamp((project ? projectScore(project) : book.metrics.overall - book.expectation) + (random(state) - 0.5) * 6 / Math.sqrt(reviews), 0, 100);
       book.reviewScore = round((book.reviewScore * book.reviewCount + score * reviews) / (book.reviewCount + reviews));
       book.reviewCount += reviews;
-      // Player comments pile up in the archive only, a few at a time.
+      // Player comments pile up in the archive only, a few at a time, pointing at the same places as the review.
       if (Array.isArray(book.quotes) && book.quotes.length < 8 && random(state) < 0.08) {
-        const pool = book.reviewScore >= 55 ? GENERIC_QUOTES.good : GENERIC_QUOTES.bad;
-        book.quotes.push({ text: pool[Math.floor(random(state) * pool.length)], positive: book.reviewScore >= 55 });
+        const hints = book.review?.hints || [];
+        const praise = random(state) < 0.5 || !hints.length;
+        const pool = praise ? DIMENSION_QUOTES[book.review?.best] || GENERIC_QUOTES.good : DIMENSION_HINTS[hints[Math.floor(random(state) * hints.length)]];
+        if (pool?.length) book.quotes.push({ text: pool[Math.floor(random(state) * pool.length)], positive: praise });
       }
     }
     const fans = Math.max(0, units * (book.reviewScore - 50) / 100 * 0.3);
@@ -5425,40 +5602,35 @@ function keepModules(state: any, project: any) {
 }
 
 // ---- Learning the market ----
-// Locked lines are learned one at a time while titles are being made, mostly in the category the market
-// is about right now; now and then one from another category slips in. Each one is a short moment with a
-// person, a reason and what it opens.
-const SIDE_EVERY = [4, 5];
-// Only lines whose batch has come (titles out ≥ unlock − 1) and whose axis is already open can be learned.
-// A level-less line is the founder's own gameplay and is known already; the other level-less gameplay has
-// no batch of its own, so it enters the pool from the first title on and is learned like any later line.
+// Locked lines open one at a time on a fixed clock. Each one is a short moment with a person, a reason
+// and what it opens. Any locked line on an open axis can be opened; earlier batches first.
 function lockedReady(state: any) {
-  const out = releases(state);
   return Object.keys(MODULES).filter(line => {
     if (moduleOpen(state, line)) return false;
     if ((state.openingGates || {})[line] && !(state.openingLearned || {})[line]) return false;
-    const need = MODULES[line].unlock || 0;
-    return need <= out + 1 && axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis));
+    return axisOpen(state, AXES.find(axis => axis.key === MODULES[line].axis));
   });
 }
 
+// The clock opens lines on the market's focus axis only; other axes open through jobs, or once the focus
+// axis has nothing left.
 function nextLesson(state: any) {
   const ready = lockedReady(state);
   if (!ready.length) return null;
-  const lens = lensOf(state);
-  const rank = (field: string) => { const index = LENS_ORDER.indexOf(field) - LENS_ORDER.indexOf(lens || LENS_ORDER[0]); return index < 0 ? index + LENS_ORDER.length : index; };
-  const sorted = (list: string[]) => [...list].sort((left, right) => rank(MODULES[left].field) - rank(MODULES[right].field) || MODULES[left].unlock - MODULES[right].unlock);
-  const main = sorted(ready.filter(line => MODULES[line].field === lens));
-  const side = sorted(ready.filter(line => MODULES[line].field !== lens));
-  const learn = state.learn || (state.learn = { main: 0, gap: SIDE_EVERY[0] });
-  const takeSide = side.length && (!main.length || learn.main >= learn.gap);
-  if (takeSide) {
-    learn.main = 0;
-    learn.gap = SIDE_EVERY[Math.floor(random(state) * SIDE_EVERY.length)];
-    return side[0];
-  }
-  learn.main += 1;
-  return main[0];
+  const focus = state.marketCycle?.focus;
+  const onFocus = ready.filter(line => marketAxisOf(line) === focus);
+  const pool = onFocus.length ? onFocus : ready;
+  const first = Math.min(...pool.map(line => MODULES[line].unlock || 0));
+  const batch = pool.filter(line => (MODULES[line].unlock || 0) === first);
+  return batch[Math.floor(random(state) * batch.length)];
+}
+
+function unlockDay(state: any) {
+  if (!state.company || state.office < 1) return;
+  if (!Number.isFinite(state.unlockNext)) state.unlockNext = state.day + UNLOCK_DAYS;
+  if (state.day < state.unlockNext) return;
+  state.unlockNext = state.day + UNLOCK_DAYS;
+  learnLine(state, liveProjects(state).find((project: any) => !project.released) || null);
 }
 
 // Who on the team brings it up, and how they came by it.

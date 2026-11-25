@@ -119,6 +119,9 @@ export class StudioApp extends Component {
   private rankingBusy = false;
   private overScreenShown = false;
   private scrollBottom = false;
+  // Person to bring into view on the assign page, and where their card landed in this render.
+  private scrollTo = '';
+  private scrollTarget: number | null = null;
   private chartSelection: { id: string; index: number } | null = null;
   private officePage = 0;
   private choosingOfficePage = false;
@@ -1042,6 +1045,12 @@ export class StudioApp extends Component {
       const max = Math.max(0, this.scrollBody.getComponent(UITransform).height - this.scrollHeight);
       this.scrollView.scrollToOffset(new Vec2(0, max), 0);
     }
+    if (this.scrollTo && this.scrollTarget !== null && this.scrollView && this.scrollBody) {
+      const max = Math.max(0, this.scrollBody.getComponent(UITransform).height - this.scrollHeight);
+      this.scrollView.scrollToOffset(new Vec2(0, Math.min(max, Math.max(0, this.scrollTarget - 8))), 0);
+      this.scrollTo = '';
+    }
+    this.scrollTarget = null;
     this.materialize();
     this.scrollKey = key;
     if (this.tip) this.renderTip();
@@ -1692,7 +1701,7 @@ export class StudioApp extends Component {
     if (!last || last.company !== current.company || current.day < last.day) return;
     if (Math.abs(current.cash - last.cash) >= 0.5) this.floatAt(this.anchors.get('finance'), (current.cash > last.cash ? '+' : '') + content.money(current.cash - last.cash), current.cash > last.cash ? colors.green : colors.danger, 0.17);
     if (!project || last.id !== current.id) return;
-    if (current.followers > last.followers) {
+    if (current.followers - last.followers >= 50) {
       this.startRoll('followers', last.followers, current.followers);
       if (this.followersLabel?.isValid) this.rollLabel('followers', this.followersLabel, (n: number) => content.number(n));
       this.floatAt(this.anchors.get('stat-followers'), '+' + content.number(current.followers - last.followers) + ' 人', colors.green);
@@ -1751,6 +1760,7 @@ export class StudioApp extends Component {
     const slotPage = ['slots', 'new-slot-confirm', 'slot', 'slot-delete'].includes(route.menu);
     const model = custom ? null : route.menu === 'player-rankings'
       ? content.playerRankingMenu(route.id, core.studioRecordScores(this.state), this.rankingSnapshot, this.rankingFailed)
+      : route.menu === 'draft-assign' ? content.draftAssignMenu(this.state, this.draft)
       : content.menu(this.state, route, slotPage ? this.slotSummaries() : [], !!this.studioRankings);
     const title = route.menu === 'setup' ? '成立工作室' : route.menu === 'new-project' ? '新作立项' : route.menu === 'history' ? '经营记录' : model.title;
     const y = this.top;
@@ -1857,10 +1867,12 @@ export class StudioApp extends Component {
     const state = this.state;
     this.draft.suggested = this.draft.suggested || content.randomTitle(state);
     if (!this.draft.axes) this.draft = { ...core.recommendPlan(state), ...this.draft, axes: core.recommendPlan(state).axes };
+    // Leaving the form keeps every choice; only a started title clears it.
+    if (!this.draft.sequel) this.state.planDraft = JSON.parse(JSON.stringify(this.draft));
     // Same red prompt the studio form puts over its name field: the title is the one thing on this page
     // the player has to type, and the filled-in suggestion looks like a value they can keep.
     this.text(body, '输入作品的名字', 0, 0, inner, 22, 13, colors.danger, true);
-    const nameInput = this.input(body, this.draft.suggested, this.draft.name, 26, 48, value => { this.draft.name = value; });
+    const nameInput = this.input(body, this.draft.suggested, this.draft.name, 26, 48, value => { this.draft.name = value; if (this.state.planDraft && !this.draft.sequel) this.state.planDraft.name = value; });
     if (nameInput.node.parent) this.anchors.set('plan-name', nameInput.node.parent);
     let cursor = 90;
     if (this.draft.sequel) cursor += this.paragraph(body, '系列续作：继承原作的模块组合与部分关注，玩家期待更高。', cursor, true);
@@ -1912,6 +1924,8 @@ export class StudioApp extends Component {
         new Pen(this.box(node, 'Rim', 0, 0, cell, 84).addComponent(Graphics)).frame(0, 0, cell, 84, on ? colors.green : colors.line, on ? 2 : 1, 10);
         this.moduleBrick(node, (cell - 40) / 2, 4, 40, key, status.need, blocked ? 'missing' : status.brick, blocked ? 0 : status.progress);
         this.text(node, module.name, 4, 46, cell - 8, 18, 11, blocked ? colors.muted : colors.ink, true).horizontalAlign = HorizontalTextAlignment.CENTER;
+        const experts = state.staff.filter((person: any) => (person.specialties || []).some((item: any) => item.line === key)).length;
+        if (experts) this.text(node, '擅长×' + experts, cell - 50, 3, 46, 14, 9, colors.green, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
         this.text(node, blocked || '选 ' + status.need + ' 级 · ' + status.text, 2, 64, cell - 4, 16, 10, blocked ? colors.muted : status.tone).horizontalAlign = HorizontalTextAlignment.CENTER;
         this.clickable(node, () => {
           // A line that needs something in another field cannot go in; say why instead of doing nothing.
@@ -1992,17 +2006,15 @@ export class StudioApp extends Component {
       const previewTop = cursor;
       cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12, colors.green);
       this.anchors.set('plan-preview', this.box(body, 'PlanPreviewAnchor', 0, previewTop, inner, Math.max(20, cursor - previewTop - 6)));
-      // Saved team layouts: how long this plan would take with each, and one press to use it after starting.
-      for (let slot = 0; slot < core.TEMPLATE_SLOTS; slot += 1) {
-        const estimate = core.templateForecast(state, slot, this.draft);
-        if (!estimate) continue;
-        const on = this.draft.template === slot;
-        const label = estimate.days === null ? '缺 ' + estimate.missing.map((key: string) => core.DIMENSIONS.find((item: any) => item.key === key)?.name).join('、') : '约 ' + estimate.days + ' 天';
-        this.button(body, (on ? '立项后套用' : '按') + '模板' + (slot + 1) + '（' + estimate.people + ' 人）' + label, 0, cursor, inner, 38, () => {
-          this.draft.template = on ? undefined : slot;
-          this.render();
-        }, on);
-        cursor += 44;
+      // The same six cells as the project page, for the crew drafted for this title.
+      if (!this.draft.crew) this.draft.crew = core.defaultCrew(state);
+      const forecast = core.planForecast(state, this.draft, this.draft.crew);
+      if (forecast) {
+        this.text(body, '各项预期时间（本作分工）', 0, cursor, inner, 24, 15, colors.ink, true);
+        cursor += 30;
+        cursor = this.drawBlock(body, { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], draft: true }, cursor);
+        this.button(body, '调整本作分工', 0, cursor, inner, 40, () => this.openMenu('draft-assign'), false, false, 'Users');
+        cursor += 48;
       }
     }
     // A grey button with no reason reads as a bug: the missing choice is named right above it.
@@ -2385,18 +2397,18 @@ export class StudioApp extends Component {
           const row = this.box(parent, 'Dim', left, top, cell, height, slow ? '#fff8e6' : idle ? '#f4f1ea' : colors.paper, 8);
           const crewText = item.text || (item.remaining > 0
             ? (item.days === null ? '无人负责' : '预期 ' + item.days + ' 天')
-            : '已完成');
+            : block.draft ? '本作不用做' : '已完成');
           this.text(row, dimension?.name || item.key, 8, 4, cell - 60, 18, 13, colors.ink, true);
           this.text(row, crewText, 8, 26, cell - 16, 18, 11, item.remaining > 0 ? colors.muted : colors.green);
           const note = slow ? '瓶颈' : idle ? '缺人' : '';
           if (note) this.text(row, note, cell - 48, 5, 40, 16, 10, slow ? colors.amber : colors.danger, true).horizontalAlign = HorizontalTextAlignment.RIGHT;
           // Tap a cell to open its detail page (score, who's on it, and a shortcut to assign).
-          this.clickable(row, () => this.openMenu('dimension', block.projectId, false, item.key));
+          this.clickable(row, () => block.draft ? (this.routes[this.routes.length - 1]?.menu === 'draft-assign' ? undefined : this.openMenu('draft-assign')) : this.openMenu('dimension', block.projectId, false, item.key));
         });
         const rows = Math.ceil(block.items.length / columns);
         y += rows * (height + 8) - 8;
         // One ring for all six cells: the tutorial explains the whole scoreboard, not just the first one.
-        this.anchors.set('project-dimensions', this.box(parent, 'DimensionsAnchor', 0, start, width, y - start));
+        if (!block.draft) this.anchors.set('project-dimensions', this.box(parent, 'DimensionsAnchor', 0, start, width, y - start));
         return y + 8;
       }
       case 'person-assign': {
@@ -2411,9 +2423,11 @@ export class StudioApp extends Component {
         const height = header + rows * 50 + shortcut;
         if (this.state.staff.length > LAZY_MIN && this.defer(y, height, () => this.drawBlock(parent, block, y))) return y + height + 12;
         const card = this.box(parent, 'Assign', 0, y, width, height, colors.paper, 10);
+        if (block.personId === this.scrollTo) this.scrollTarget = y;
         // Tapping the name row opens that person's own page; the work boxes below are the toggles.
         const titleRow = this.box(card, 'AssignTitle', 0, 0, width, 26);
-        this.text(card, block.title, 12, 8, width - 128, 20, 13, colors.ink, true);
+        if (block.art) this.portrait(card, block.art, 10, 4, 22);
+        this.text(card, block.title, block.art ? 38 : 12, 8, width - (block.art ? 154 : 128), 20, 13, colors.ink, true);
         if (block.status) this.text(card, block.status, width - 116, 8, 104, 20, 10, colors.amber).horizontalAlign = HorizontalTextAlignment.RIGHT;
         this.clickable(titleRow, () => this.openMenu('person', block.personId));
         this.text(card, block.detail, 12, 28, width - 24, detailHeight, 11, colors.muted);
@@ -2437,7 +2451,9 @@ export class StudioApp extends Component {
           this.text(node, shortName, 2, 2, cell - 4, 22, 12, on && !done ? colors.paper : colors.muted, true).horizontalAlign = HorizontalTextAlignment.CENTER;
           const sub = done ? '已完成' : '能力 ' + (work.ability ?? '—');
           this.text(node, sub, 2, 23, cell - 4, 16, 9, on && !done ? '#e8f3ed' : colors.muted).horizontalAlign = HorizontalTextAlignment.CENTER;
+          if (work.special) this.text(node, '★', cell - 16, 1, 14, 14, 10, colors.gold, true);
           this.clickable(node, () => {
+            if (block.draft) { this.setDraftWorks(block.personId, on ? block.assigned.filter((key: string) => key !== work.key) : [...block.assigned, work.key]); return; }
             // 界面只报“谁、哪个项目、点了哪项”，由 core 按存档取反并保证不为空。
             // 旧版在这里自己拼名单：拼出空表时三块工作会一起灭掉，之后再点也写不进正确的项目。
             const route = this.routes[this.routes.length - 1] || {};
@@ -2464,6 +2480,7 @@ export class StudioApp extends Component {
         const chip = (width - 32) / 2;
         const chipX = (index: number) => 12 + index * (chip + 8);
         this.button(card, '只做擅长', chipX(0), header + rows * 50 + 2, chip, 36, () => {
+          if (block.draft) { const who = this.state.staff.find((item: any) => item.id === block.personId); if (who) this.setDraftWorks(who.id, [core.homeWork(who)]); return; }
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
@@ -2475,6 +2492,7 @@ export class StudioApp extends Component {
           this.apply(next, this.assignNotice(before, next, project.id, target.id));
         }, false);
         this.button(card, '全部都做', chipX(1), header + rows * 50 + 2, chip, 36, () => {
+          if (block.draft) { this.setDraftWorks(block.personId, [...core.WORK_KEYS]); return; }
           const route = this.routes[this.routes.length - 1] || {};
           const project = core.activeProject(this.state, route.id) || core.projectOpen(this.state)[0];
           const target = this.state.staff.find((item: any) => item.id === block.personId);
@@ -3030,10 +3048,11 @@ export class StudioApp extends Component {
     // After a failed run the save/restart controls are at the bottom of the company page; a ready
     // release jumps to the bottom of the project page where the shipping button sits.
     this.scrollBottom = bottom || (menu === 'finance' && !!this.state.over);
+    this.scrollTo = menu === 'assign' && dim ? dim : '';
     if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
-    if (menu === 'new-project') this.draft = { ...core.repeatPlan(this.state) };
+    if (menu === 'new-project') this.draft = this.state.planDraft ? JSON.parse(JSON.stringify(this.state.planDraft)) : { ...core.repeatPlan(this.state) };
     this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
@@ -3156,6 +3175,15 @@ export class StudioApp extends Component {
     this.render();
   }
 
+  // The drafted crew lives with the plan and is kept when the form is left.
+  private setDraftWorks(personId: string, works: string[]) {
+    this.draft.crew = { ...(this.draft.crew || {}) };
+    if (works.length) this.draft.crew[personId] = Array.from(new Set(works));
+    else delete this.draft.crew[personId];
+    if (!this.draft.sequel) this.state.planDraft = JSON.parse(JSON.stringify(this.draft));
+    this.render();
+  }
+
   private decide(choice: string) {
     const event = this.state.event;
     this.apply(core.resolveStudioEvent(this.state, choice));
@@ -3196,8 +3224,9 @@ export class StudioApp extends Component {
         case 'rank-retry': void this.loadPlayerRanking(); break;
         case 'form-submit': {
           let next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
-          const slot = this.draft.template;
-          if (Number.isInteger(slot) && core.assignTemplate(next, slot)) next = core.applyTemplate(next, next.projects[next.projects.length - 1].id, slot);
+          const started = next.projects[next.projects.length - 1].id;
+          for (const [personId, works] of Object.entries(this.draft.crew || {}) as any) if (next.staff.some((person: any) => person.id === personId)) next = core.assign(next, started, personId, works);
+          delete next.planDraft;
           this.routes = [];
           this.resumeAfterMenu = false;
           this.apply(next);
@@ -3212,8 +3241,8 @@ export class StudioApp extends Component {
         }
         case 'dismiss': this.apply(core.dismiss(this.state, data.id)); this.routes = [{ menu: 'team' }]; this.render(); break;
         case 'outing': this.apply(core.teamOuting(this.state, Number(data.days) || 3), '团建已安排，全队停工。'); break;
-        case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
-        case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员开始加班。' : '全员恢复正常工作。'); break;
+        case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled), data.enabled ? '开始加班：' + core.OVERTIME_TEXT + '。' : '恢复正常工作。'); break;
+        case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员加班：' + core.OVERTIME_TEXT + '。' : '全员恢复正常工作。'); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
         case 'exhibition':
           this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。');
@@ -3257,6 +3286,16 @@ export class StudioApp extends Component {
         case 'auto-assign': this.apply(core.autoAssign(this.state, data.id), '空闲的人已分到最拿手的未完成项。'); break;
         case 'template-save': this.apply(core.saveTemplate(this.state, data.id, Number(data.slot)), '已存为模板 ' + (Number(data.slot) + 1) + '。'); break;
         case 'template-apply': this.apply(core.applyTemplate(this.state, data.id, Number(data.slot)), '已套用模板 ' + (Number(data.slot) + 1) + '。'); break;
+        case 'draft-template': {
+          const template = core.assignTemplate(this.state, Number(data.slot));
+          if (!template) throw new Error('这个模板是空的。');
+          this.draft.crew = Object.fromEntries(template.people.map((person: any) => [person.id, [...template.works[person.id]]]));
+          this.state.lastTemplate = Number(data.slot);
+          this.setDraftWorks('', []);
+          this.notify('已导入模板 ' + (Number(data.slot) + 1) + '。');
+          break;
+        }
+        case 'draft-template-save': this.apply(core.saveTemplateWorks(this.state, Number(data.slot), this.draft.crew || {}), '已存为模板 ' + (Number(data.slot) + 1) + '。'); break;
         case 'module-build': {
           const next = core.startModuleProject(this.state, data.line, Number(data.level));
           const project = next.projects[next.projects.length - 1];
