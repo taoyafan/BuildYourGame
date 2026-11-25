@@ -235,7 +235,6 @@ export class StudioApp extends Component {
     this.resumeAfterMenu = false;
     this.elapsed = 0;
     this.save();
-    void this.syncRankings();
     this.render();
   }
 
@@ -1563,7 +1562,7 @@ export class StudioApp extends Component {
       ['综合评分', metrics.overall.toFixed(0), colors.green, metrics.overall, 'stat-overall'],
       ['瓶颈', bottleneck || '—', colors.amber, -1, 'stat-bottleneck'],
       ['待修缺陷', metrics.known + ' 项', colors.blue, -1, 'stat-defects'],
-      ['关注', content.number(project.followers), colors.ink, -1, 'stat-followers']
+      ['关注', content.number(core.projectFollowers(state, project)), colors.ink, -1, 'stat-followers']
     ], () => this.openMenu('project', project.id));
     y += Math.max(height, 164) + 6;
     return y + 6;
@@ -1685,7 +1684,7 @@ export class StudioApp extends Component {
   private showDeltas(cashLabel: Label) {
     const open = core.liveProjects(this.state);
     const project = open.find((item: any) => item.id === this.watching) || open[0];
-    const current = { id: project?.id || '', followers: project ? Math.round(project.followers) : 0, cash: this.state.cash, found: project ? project.found : 0, company: this.state.company, day: this.state.day };
+    const current = { id: project?.id || '', followers: project ? core.projectFollowers(this.state, project) : 0, cash: this.state.cash, found: project ? project.found : 0, company: this.state.company, day: this.state.day };
     const last = this.shown;
     this.shown = current;
     // A different save (restart or import) is not a change the player caused.
@@ -2349,9 +2348,9 @@ export class StudioApp extends Component {
           .filter((item: any) => !block.active || item.active || item.total > 0.01);
         return y + this.workBars(parent, y, items, width, {
           title: block.title || '工作量',
-          caption: '现有 ' + (block.crew ?? this.state.staff.length) + ' 人，每项约需天数',
+          caption: '六项工作单人完成分别所需时间',
           anchor: 'workload',
-          single: false
+          single: true
         }) + 12;
       }
       case 'dimensions': {
@@ -3021,7 +3020,7 @@ export class StudioApp extends Component {
     if (!this.routes.length) { this.resumeAfterMenu = this.playing || this.guidePaused; this.guidePaused = false; this.playing = false; this.elapsed = 0; }
     if (critical || menu === 'event' || menu === 'setup') this.resumeAfterMenu = false;
     if (critical) this.routes = [];
-    if (menu === 'new-project') this.draft = { ...core.recommendPlan(this.state) };
+    if (menu === 'new-project') this.draft = { ...core.repeatPlan(this.state) };
     this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
@@ -3072,9 +3071,8 @@ export class StudioApp extends Component {
     else if (this.routes.length !== had) this.render();
   }
 
-  // Scores only ever improve and the platform keeps each account's best, so every higher score is sent as
-  // soon as it is worth sending: at each month's settlement, when the run ends and when the app is left.
-  // A failed send is simply tried again next time.
+  // Scores only ever improve and the platform keeps each account's best, so the best scores are sent at
+  // each month's settlement and when the run ends. A failed send is simply tried again next time.
   private async syncRankings() {
     const rankings = this.studioRankings;
     if (!rankings || this.rankingBusy || !this.state?.company) return;
@@ -3173,7 +3171,7 @@ export class StudioApp extends Component {
             this.render();
           }
           break;
-        case 'menu': this.openMenu(data.menu, data.id); break;
+        case 'menu': this.openMenu(data.menu, data.id, false, data.dim); break;
         case 'rank-tab': {
           const index = this.routes.length - 1;
           const route = this.routes[index];
@@ -3202,7 +3200,10 @@ export class StudioApp extends Component {
         case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled)); break;
         case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员开始加班。' : '全员恢复正常工作。'); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
-        case 'exhibition': this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。'); break;
+        case 'exhibition':
+          this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。');
+          if (this.routes[this.routes.length - 1]?.menu === 'exhibition-confirm') { this.routes.pop(); this.render(); }
+          break;
         case 'operate': this.apply(core.operateBook(this.state, data.id, data.kind), '更新已开始制作。'); break;
         case 'sale': this.apply(core.setSale(this.state, data.id, !!data.enabled, data.floor), data.enabled ? '已开启促销，系统会按余量决定打折时机。' : '已关闭促销，恢复原价销售。'); break;
         case 'sequel': {
@@ -3238,6 +3239,7 @@ export class StudioApp extends Component {
           break;
         }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
+        case 'auto-assign': this.apply(core.autoAssign(this.state, data.id), '空闲的人已分到最拿手的未完成项。'); break;
         case 'module-build': {
           const next = core.startModuleProject(this.state, data.line, Number(data.level));
           const project = next.projects[next.projects.length - 1];

@@ -144,6 +144,7 @@ export function menu(state: any, route: any, slots: any[] = [], onlineRankings =
     case 'library': return libraryMenu(state, route.id);
     case 'module': return moduleMenu(state, route.id);
     case 'market': return marketMenu(state, route.id);
+    case 'exhibition-confirm': return exhibitionConfirmMenu(state, route.id, route.dim);
     case 'book': return bookMenu(state, route.id);
     case 'rankings':
     case 'industry': return industryMenu(state, route.id);
@@ -338,6 +339,7 @@ function projectMenu(state: any, id?: string) {
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   const demo = project.checkpoints.demo;
   const fix = core.fixForecast(state, project);
+  const idlers = core.idleStaff(state).length;
   // The page opens on the six numbers that decide the date: who is on each one and how many days it needs.
   // Everything that used to sit above them (name, stage, progress, radar) repeated what the tab bar and
   // the six rows already said, so the section title is the top of the page.
@@ -349,6 +351,7 @@ function projectMenu(state: any, id?: string) {
     ...(idle.length ? [{ type: 'note', icon: 'Users', text: idle.join('、') + '还没有人做，作品完不成。' }] : []),
     { type: 'actions', items: [
       { text: '调整分工', detail: '谁做哪几项工作', icon: 'Users', action: 'menu', data: { menu: 'assign', id: project.id }, anchor: 'assign' },
+      { text: '自动分工', detail: idlers ? idlers + ' 人空闲 · 各做最拿手的未完成项' : '现在没有空闲的人', icon: 'UserPlus', action: 'auto-assign', data: { id: project.id }, disabled: !idlers },
       { text: '试玩', detail: demo ? (project.test ? '最近一次新发现 ' + (project.test.found ?? 0) + ' 项缺陷 · 查看反馈或再招一批' : '花一点钱招玩家，找缺陷、看玩家买不买账') : '体验版完成后开放', icon: 'FlaskConical', action: 'menu', data: { menu: 'testing', id: project.id }, disabled: !demo, anchor: 'testing' },
       { text: '市场与推广', detail: demo ? (project.promoted ? '共投入 ' + money(project.promoted) + ' · 报名展会' : '推广 · 报名展会') : '体验版完成后开放', icon: 'Megaphone', action: 'menu', data: { menu: 'market', id: project.id }, disabled: !demo },
       { text: '游戏内容', detail: '每个轴用了哪些模块', icon: 'Wrench', action: 'menu', data: { menu: 'content', id: project.id } }
@@ -507,10 +510,10 @@ function jobDetailMenu(state: any, id: string) {
         ['交付内容', module.name + (tiers > 1 ? ' · ' + offer.level + ' 级' : '')],
         ...Object.entries(offer.requires || {}).map(([key, floor]: any) => [dimensionName(key) + '至少', floor + ' 分']),
         ['报酬', money(offer.pay) + '（交付时一次到账）'],
-        ['工作量', crewDays(state, work)],
+        ['工作量', '单人约 ' + Math.max(1, Math.round(work)) + ' 天'],
         ['有效期', '还剩 ' + jobDaysLeft(state, offer) + ' 天']
       ] },
-      { type: 'workload', values: dims, active, crew: state.staff.length },
+      { type: 'workload', values: dims, active },
       { type: 'buttons', items: [
         { text: '接下这份委托', action: 'take-job', data: { id: offer.id } },
         { text: '返回委托列表', action: 'menu', data: { menu: 'jobs' } }
@@ -791,18 +794,19 @@ function marketMenu(state: any, id?: string) {
   const blocks: any[] = [];
   const offers = core.exhibitionOffers(state);
   const currentNotReady = !!project && project.progress < 55;
-  blocks.push({ type: 'lines', items: [...offers.map((offer: any) => {
+  const expo: any[] = [{ type: 'section', title: '展会' }];
+  expo.push({ type: 'lines', items: [...offers.map((offer: any) => {
     const left = offer.deadline - state.day;
     const cutoff = left > 0 ? '报名截止还有 ' + left + ' 天' : left === 0 ? '今天报名截止' : '报名已截止';
     return [offer.name + ' · 报名 ' + money(offer.fee), cutoff];
   }), ['评选', core.dueText(state, Math.ceil(state.day / 180) * 180)]] });
-  blocks.push({ type: 'buttons', anchor: 'exhibitions', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'exhibition', data: { id: project?.id, tier: offer.tier }, disabled: !offer.available || currentNotReady })) });
-  blocks.push({ type: 'actions', items: [
+  expo.push({ type: 'buttons', anchor: 'exhibitions', columns: 3, items: offers.map((offer: any) => ({ text: offer.entry ? core.TIERS[offer.tier].name + '展已报名' : '报名' + core.TIERS[offer.tier].name + '展', action: 'menu', data: { menu: 'exhibition-confirm', id: project?.id, dim: String(offer.tier) }, disabled: !offer.available || currentNotReady })) });
+  expo.push({ type: 'actions', items: [
     { text: '日历', detail: '展会、评选、媒体评级与对手发售日。', icon: 'CalendarDays', action: 'menu', data: { menu: 'industry' } },
     { text: '行业', detail: '榜单、对手、新闻与评选。', icon: 'Newspaper', action: 'menu', data: { menu: 'industry' } },
     { text: '展会与媒体', detail: '历届参展名次与报道。', icon: 'Award', action: 'menu', data: { menu: 'exhibitions' } }
   ] });
-  if (currentNotReady) blocks.push({ type: 'text', text: '当前项目完成体验版后才能报名展会。', muted: true });
+  if (currentNotReady) expo.push({ type: 'text', text: '当前项目完成体验版后才能报名展会。', muted: true });
   if (project && !project.released) {
     blocks.push({ type: 'section', title: '推广《' + project.name + '》' });
     const status = core.promoStatus(state, project);
@@ -816,7 +820,26 @@ function marketMenu(state: any, id?: string) {
       disabled: step.reached || !ready || state.cash < step.cost,
       anchor: 'promote-' + step.index
     })) });
-  }  return { title: '市场', blocks };
+  }
+  blocks.push(...expo);
+  return { title: '市场', blocks };
+}
+
+// Entering an expo spends money at once, so the button opens this page with the fee before paying.
+function exhibitionConfirmMenu(state: any, id: string, tierKey?: string) {
+  const tier = Number(tierKey) || 0;
+  const offer = core.exhibitionOffers(state)[tier];
+  const project = core.activeProject(state, id) || offer?.project;
+  if (!offer || !project || project.released) return { title: '报名展会', blocks: [{ type: 'text', text: '现在不能报名这个展会。' }] };
+  return { title: '确认报名？', blocks: [
+    { type: 'note', icon: 'Award', text: '《' + project.name + '》参加' + core.dateText(offer.day) + '的' + offer.name + '，报名费立即付清，不退。' },
+    { type: 'lines', items: [['报名费', money(offer.fee), 'red'], ['付款后现金', money(state.cash - offer.fee)]] },
+    { type: 'buttons', items: [
+      { text: '再想想', action: 'launch-cancel' },
+      { text: '确认报名 · 支付 ' + money(offer.fee), action: 'exhibition', data: { id: project.id, tier }, icon: 'Award', disabled: !offer.available }
+    ] },
+    ...(offer.available ? [] : [{ type: 'text', text: offer.reason, muted: true }])
+  ] };
 }
 
 function bookMenu(state: any, id: string) {
@@ -1004,6 +1027,8 @@ function personMenu(state: any, id: string) {
       { type: 'ability-radar', abilities: person.abilities },
       { type: 'lines', items: [
         ['岗位', core.ROLES[person.role].name],
+        ['所在项目', project ? '《' + project.name + '》' + (project.released ? '补丁' : '') : '没有', project ? '' : 'muted'],
+        ...(project ? [['分工', core.personActivity(state, project, person)]] : []),
         ['潜力', core.potentialBand(person) + '（练到接近上限后成长变慢）', potentialTone(core.potentialBand(person))],
         ['月薪', money(person.wage)],
         ['市场身价', '约 ' + money(market) + (market > person.wage ? '，比' + core.pronoun(person) + '的工资高 ' + money(market - person.wage) : ''), core.underpaid(person) ? 'red' : market > person.wage ? 'green' : 'muted'],

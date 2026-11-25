@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.80';
+export const VERSION = '0.4.81';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -787,6 +787,22 @@ export function recommendPlan(state: any) {
 export function firstGameCore(state: any) {
   return !releases(state) && ORIGINS[state.founder] ? ORIGINS[state.founder].firstCore : '';
 }
+// The form opens on the last title's lines and levels; anything no longer open falls back to the recommendation.
+export function repeatPlan(state: any) {
+  const base = recommendPlan(state);
+  const last = state.lastPlan;
+  if (!last?.axes) return base;
+  const axes: any = {};
+  for (const axis of AXES) {
+    if (!axisOpen(state, axis)) continue;
+    const open = planOptions(state, axis.key);
+    axes[axis.key] = (last.axes[axis.key] || []).filter((line: string) => open.includes(line));
+  }
+  const lineLevels: any = {};
+  for (const [line, level] of Object.entries(last.lineLevels || {}) as any) if (levelOpen(state, level)) lineLevels[line] = level;
+  const scale = levelOpen(state, (last.scale || 0) + 1) ? last.scale || 0 : 0;
+  return { ...base, axes: fillPlanAxes(state, axes), scale, lineLevels };
+}
 // Every opened axis takes at least one module, so a sequel copied from an older title still picks a
 // mechanic once that axis has opened. Missing axes are filled from the recommendation, never invented.
 export function fillPlanAxes(state: any, axes: any) {
@@ -1075,8 +1091,15 @@ function prepareModuleUpdates(state: any, project: any) {
 function personalRemaining(state: any, project: any, person: any, workKey: string) {
   const work = WORKS.find(item => item.key === workKey);
   if (!work) return 0;
+  return remainingOf(project, workKey) + updateLeft(state, project, person, workKey);
+}
+
+// Module updates this person could still make on one item: up to their own level, never required.
+function updateLeft(state: any, project: any, person: any, workKey: string) {
+  const work = WORKS.find(item => item.key === workKey);
+  if (!work || work.dimension === 'stability') return 0;
   const key = work.dimension;
-  let left = Math.max(0, workOf(project, key).total - workOf(project, key).done);
+  let left = 0;
   const cap = Math.min(project.updateHands?.[person.id]?.[workKey] ?? 100, able(person, work.ability) + rareBonus(state, project, key));
   for (const [id, goals] of Object.entries(project.moduleUpdates || {}) as any) {
     const goal = goals[key];
@@ -1201,9 +1224,8 @@ function shareDefects(state: any) {
 // short of the end of the bar until someone is put on testing.
 function progressOf(project: any) {
   const base = project.base || {};
-  const updates: any[] = Object.values(project.updateWork || {});
-  const left = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - Math.max(base[key] || 0, workOf(project, key).done)))) + sum(updates.map(row => row.left));
-  const span = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - (base[key] || 0)))) + sum(updates.map(row => row.total));
+  const left = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - Math.max(base[key] || 0, workOf(project, key).done))));
+  const span = sum(DIM_KEYS.map(key => Math.max(0, workOf(project, key).total - (base[key] || 0))));
   return span <= 0.0001 ? 1 : clamp(1 - left / span, 0, 1);
 }
 
@@ -1752,7 +1774,7 @@ export function hireReasons(state: any, id: string): string[] {
   const talent = person.talent ? (state.talents || []).find((item: any) => item.id === person.talent) : null;
   if (talent && talent.status !== 'free') reasons.push(talent.status === 'hired' ? `${person.name}已经加入了本社。` : `${person.name}已经加入了${talent.studioName}。`);
   if (state.staff.length >= seats(state)) reasons.push(`${OFFICES[state.office].name}只有 ${seats(state)} 个工位，当前已满。`);
-  if (state.cash - state.accrued < monthlyCost(state) + person.wage) reasons.push('扣除应付工资后，资金不够支付录用后的近期工资。');
+  if (state.cash < person.wage) reasons.push(`现金不够付${pronoun(person)}一个月的工资。`);
   return reasons;
 }
 
@@ -2084,7 +2106,7 @@ export function personActivity(state: any, project: any, person: any) {
   if (!busy.length) return '空闲（不做工作，工资照付）';
   // Finished items drop out of the split; with everything done `split` is empty and the branch above
   // has already reported the person as idle, so whatever is left here is always real work.
-  const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}制作`;
+  const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}${remainingOf(project, key) > 0.0001 ? '制作' : '模块更新'}`;
   return busy.map(label).join('、');
 }
 
@@ -2092,14 +2114,17 @@ function assignDay(state: any, project: any, person: any) {
   const usable = assignedWorks(project, person);
   // Nothing assigned: no output at all. Without this guard an idle person still picked up defect repair.
   if (!usable.length) return {};
-  const pending = usable.some(key => personalRemaining(state, project, person, key) > 0.0001);
+  // New work first; module updates only fill the time once every assigned item is made.
+  const baseLeft = (key: string) => WORKS.some(item => item.key === key) ? remainingOf(project, key) : 0;
+  const measure = usable.some(key => baseLeft(key) > 0.0001) ? baseLeft : (key: string) => updateLeft(state, project, person, key);
+  const pending = usable.some(key => measure(key) > 0.0001);
   if (!pending && project.defects.some((defect: any) => defect.found && !defect.fixed)) return { repair: 1 };
   const remaining: any = {};
   const open: string[] = [];
   // One threshold both here and in `pending`: the box that counts as finished must be the box that
   // stops taking time, otherwise a sliver of work keeps soaking up a share of the day.
   for (const key of usable) {
-    const left = personalRemaining(state, project, person, key);
+    const left = measure(key);
     if (left > 0.0001) { remaining[key] = left; open.push(key); }
   }
   // Finished items stop taking time. When every assigned item is done and no defect is waiting, the
@@ -2115,7 +2140,7 @@ function assignDay(state: any, project: any, person: any) {
 function remainingOf(project: any, workKey: string) {
   const key = WORKS.find(item => item.key === workKey)?.dimension || workKey;
   const work = workOf(project, key);
-  return Math.max(0, work.total - work.done) + (project.updateWork?.[key]?.left || 0);
+  return Math.max(0, work.total - work.done);
 }
 
 // How much of one work item is still to do. A finished item keeps its place in the assignment list,
@@ -2265,7 +2290,7 @@ export function expectedDimensions(state: any, project: any) {
     }
     if (key === 'stability') testHands = hands;
     if (!hands) { out[key] = dimensionScore(work); continue; }
-    out[key] = round(clamp((work.value + remaining * (weighted / hands) + (project.updateWork?.[key]?.gain || 0)) / work.total, 0, 100));
+    out[key] = round(clamp((work.value + remaining * (weighted / hands)) / work.total, 0, 100));
   }
   // The dashed stability line is where today's team would land by finishing the remaining test work
   // and clearing what it finds: the coverage the projected test score reaches, with no open defects.
@@ -2645,6 +2670,7 @@ export function startProject(state: any, draft: any) {
   // Something new may come up while the title is being made: one moment between 30% and 70%.
   project.unlockAt = [Math.round(30 + random(next) * 40)];
   next.projects.push(project);
+  if (!plan.sequel && !plan.parentId) next.lastPlan = { axes: clone(plan.axes), scale: draft.scale || 0, lineLevels: { ...plan.lineLevels } };
   if (!project.parentId && !project.port) extendMarketCycle(next, project.scale);
   refreshWork(next, project);
   project.progress = projectMetrics(project).progress;
@@ -2693,6 +2719,34 @@ export function toggleAssign(state: any, projectId: string, personId: string, wo
   const current: string[] = assignedWorks(project, person);
   const next = current.includes(workKey) ? current.filter((key: string) => key !== workKey) : [...current, workKey];
   return assign(state, projectId, personId, next);
+}
+
+// People producing nothing today: no live project, or every item they hold is done with nothing to repair.
+export function idleStaff(state: any) {
+  return state.staff.filter((person: any) => {
+    const project = projectOf(state, person);
+    if (!project) return true;
+    if (project.released) return false;
+    return !Object.keys(assignDay(state, project, person)).length;
+  });
+}
+
+// One press pulls every idle person onto this project, each on the unfinished item they are best at.
+export function autoAssign(state: any, projectId: string) {
+  let next = state;
+  const project = state.projects.find((item: any) => item.id === projectId && !item.released);
+  if (!project) throw new Error('项目不存在。');
+  const open = WORKS.filter(work => remainingOf(project, work.key) > 0.0001);
+  if (!open.length) throw new Error('这个项目的工作都做完了。');
+  const moved: string[] = [];
+  for (const person of idleStaff(state)) {
+    const best = [...open].sort((left, right) => able(person, right.ability) - able(person, left.ability))[0];
+    next = assign(next, projectId, person.id, [best.key]);
+    moved.push(`${person.name}（${best.name}）`);
+  }
+  if (!moved.length) throw new Error('现在没有空闲的人。');
+  studioLog(next, '自动分工', `《${project.name}》：${moved.join('、')}。`);
+  return next;
 }
 
 // What each kind of project is and can do, in one place. The kind is read from the markers a project
@@ -2912,9 +2966,6 @@ function recordWork(project: any, person: any, key: string, amount: number, qual
   if (amount <= 0) return;
   const work = workOf(project, key);
   if (work.total <= 0) return;
-  const updating = state && key !== 'stability' ? deliverModuleUpdates(state, project, person, key, amount, quality) : 0;
-  const updateOwners = updating ? [...project.lastOwners[key]] : [];
-  amount -= updating;
   const space = work.total - work.done;
   const used = Math.min(amount, Math.max(0, space));
   if (used > 0) {
@@ -2926,7 +2977,13 @@ function recordWork(project: any, person: any, key: string, amount: number, qual
     work.value += used * quality;
     if (state && key !== 'stability') creditWork(state, project, key, used, quality);
   }
-  if (updating) project.lastOwners[key] = [...updateOwners, ...(used > 0 ? project.lastOwners[key] || [] : [])];
+  // Module updates only take the hours left after the new work of this item is done.
+  let updating = 0;
+  if (state && key !== 'stability' && amount - used > 0.000001) {
+    const baseOwners = used > 0 ? [...(project.lastOwners?.[key] || [])] : [];
+    updating = deliverModuleUpdates(state, project, person, key, amount - used, quality);
+    project.lastOwners[key] = [...baseOwners, ...(updating ? project.lastOwners[key] : [])];
+  }
   project.contributions[person.id] = (project.contributions[person.id] || 0) + used + updating;
   person.work = round(person.work + used + updating);
   if (state) refreshWork(state, project);
@@ -3212,6 +3269,10 @@ export function promoStatus(state: any, project: any) {
   const waiting = log.filter(item => item.due > state.day);
   return { spent: project.promoted || 0, gain: sum(log.filter(item => item.due <= state.day).map(item => item.gain)), wait: waiting.length ? Math.max(...waiting.map(item => item.due)) - state.day : 0 };
 }
+// Everyone who knows an unreleased title: what testing, expos and events earned plus the campaign's reported reach.
+export function projectFollowers(state: any, project: any) {
+  return Math.round((project?.followers || 0) + (project && !project.released ? promoStatus(state, project).gain : 0));
+}
 
 export function promote(state: any, projectId: string, step: number) {
   const index = Number(step);
@@ -3249,9 +3310,9 @@ function promoDay(state: any) {
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
 export const PLAYTESTS = [{ players: 100, cost: 0.8 }, { players: 300, cost: 2.5 }, { players: 1000, cost: 7 }, { players: 3000, cost: 20 }];
 export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
-// New followers per player, low and high: the range the player sees before paying. Every further round on
-// the same title brings in a smaller share of new people.
-export const PLAYTEST_GAIN = [0.4, 2.3];
+// New followers per player, low and high: the range the player sees before paying. Never more than the
+// players themselves. Every further round on the same title brings in a smaller share of new people.
+export const PLAYTEST_GAIN = [0.3, 0.95];
 export const PLAYTEST_DECAY = 0.7;
 export const playtestGain = (players: number, taken = 0) => PLAYTEST_GAIN.map(share => Math.round(players * share * Math.pow(PLAYTEST_DECAY, taken)));
 // Today's demand for the title's tags as a word: the same combined multiplier the sale will use.
@@ -3283,7 +3344,7 @@ export function testDemo(state: any, projectId: string) {
   target.invested = round(target.invested + cost);
   target.tests += 1;
   target.testCount += count;
-  const gain = Math.round(count * clamp(score / 50, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3) * Math.pow(PLAYTEST_DECAY, target.tests - 1));
+  const gain = Math.round(count * clamp(score / 70, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3) * Math.pow(PLAYTEST_DECAY, target.tests - 1));
   target.followers += gain;
   // How many of those who know the title will end up buying it, judged from how these players took it;
   // a small group reads it less precisely.
@@ -3462,7 +3523,7 @@ export type StudioRecord = 'funds' | 'profit' | 'days';
 
 export function studioRecordScores(state: any): Record<StudioRecord, number | null> {
   const scores: Record<StudioRecord, number | null> = {
-    funds: state.recordPeaks?.funds ?? null,
+    funds: Number.isFinite(state.fundsPeak) ? Math.max(state.fundsPeak, state.recordPeaks?.funds ?? -Infinity) : state.recordPeaks?.funds ?? null,
     profit: state.recordPeaks?.profit ?? null,
     days: state.company && state.day > 1 ? state.day - 1 : null
   };
@@ -3901,7 +3962,7 @@ function stressDay(state: any) {
       const resist = person.tags.some((tag: any) => tag.key === 'iron') ? 0.35 : person.tags.some((tag: any) => tag.key === 'eager') ? 1.5 : person.tags.some((tag: any) => tag.key === 'grumbler') ? 1.6 : 1;
       const project = projectOf(state, person);
       const anchor = project ? boostFactor(state, project, 'anchor') : 1;
-      person.stressChance = clamp(person.overtimeDays / 40 * resist * anchor, 0, 0.6);
+      person.stressChance = clamp(person.overtimeDays / 50 * resist * anchor, 0, 0.5);
       if (person.stressTags.length < 2 && random(state) < person.stressChance) {
         const label = person.stressTags.includes('tired') ? 'leaving' : 'tired';
         person.stressTags.push(label);
@@ -3914,7 +3975,7 @@ function stressDay(state: any) {
     }
     if (!person.stressTags.includes('leaving') && underpaid(person)) {
       const share = person.wage / marketWage(person);
-      if (random(state) < Math.min(0.07, (UNDERPAID - share) * 0.12)) {
+      if (random(state) < Math.min(0.05, (UNDERPAID - share) * 0.09)) {
         person.stressTags.push('leaving');
         announce(state, { kind: 'notice', title: `${person.name} 挂上了「${STRESS_TAGS.leaving.name}」`, text: '月薪比市场身价低太多。', amount: 0 });
       }
@@ -3953,6 +4014,7 @@ export function stepDay(state: any) {
   if (!next.event) rollRandomEvent(next);
   checkAchievements(next);
   if (next.day === 1 || next.day % HEAT_EVERY === 0) recordHeat(next);
+  next.cashMax = Math.max(next.cashMax ?? next.cash, next.cash);
   if (next.day % 30 === 0) {
     // Licensed lines pay by their tier every month.
     for (const line of Object.keys(next.licenses || {})) {
@@ -3969,6 +4031,9 @@ export function stepDay(state: any) {
     const report = { month: next.day / 30, ...next.ledger, closing: next.cash, net: round(next.ledger.income - next.ledger.expense) };
     next.report = report;
     next.reports = [...next.reports, report];
+    // The funds board takes the month's highest daily cash, settled once a month.
+    next.fundsPeak = round(Math.max(next.fundsPeak ?? -Infinity, next.cashMax));
+    next.cashMax = next.cash;
     if (next.reports.length > 600) {
       const { funds, profit } = studioRecordScores(next);
       next.recordPeaks = { funds, profit };
