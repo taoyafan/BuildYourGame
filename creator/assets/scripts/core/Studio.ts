@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.86';
+export const VERSION = '0.4.87';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1270,7 +1270,7 @@ function progressOf(project: any) {
 
 export function createStudio(seed = Date.now()) {
   const state: any = {
-    version: 9, rulesRevision: 20, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
+    version: 9, rulesRevision: 21, seed: seed >>> 0, day: 1, company: '', cash: START_CASH, founder: 'code',
     staff: [], projects: [], catalog: [], candidates: {}, modules: {}, licenses: {}, unlocked: {}, rentLog: {},
     // The title the player is looking at right now. New hires start on it, so nobody has to be sent to the
     // assign page just to make a new colleague do something.
@@ -1434,7 +1434,7 @@ export const JOB_SLOW = 35;
 export const JOB_FROM = 65;
 export const JOB_STOP = 80;
 export const JOB_EXPIRY = 60;
-export const JOB_FLOORS = [40, 50, 60, 70];
+const JOB_QUALITY = 45;
 const jobStage = (state: any) => state.office >= 2 ? 1 : 0;
 const marketAxisOf = (line: string) => MODULES[line]?.axis === 'core' ? 'genre' : MODULES[line]?.axis;
 const JOB_CLIENTS = ['一家做教育软件的公司', '隔壁的独立团队', '一家广告公司', '一位做桌游的朋友', '一家外包大厂', '本地的文旅项目'];
@@ -1454,23 +1454,13 @@ export function jobGap(state: any) {
   const every = JOB_EVERY[jobStage(state)];
   return Math.round(every + clamp((peak - JOB_FROM) / (JOB_STOP - JOB_FROM), 0, 1) * (JOB_SLOW - every));
 }
-// A floor on every dimension the module needs, one the team can actually reach: no more than its best hand
-// there minus 5. A dimension nobody is near 40 in gets no floor.
-function jobRequires(state: any, line: string) {
-  const out: any = {};
-  for (const key of Object.keys(MODULES[line].work)) {
-    const work = WORKS.find(item => item.dimension === key);
-    if (!work) continue;
-    const best = Math.max(0, ...state.staff.map((person: any) => able(person, work.ability)));
-    const reachable = JOB_FLOORS.filter(floor => floor <= best - 5);
-    if (reachable.length) out[key] = reachable[Math.floor(random(state) * reachable.length)];
-  }
-  return out;
+function jobRequires(line: string) {
+  return Object.fromEntries(CONTENT_KEYS.filter(key => MODULES[line]?.work[key] > 0).map(key => [key, JOB_QUALITY]));
 }
 // The floors that still apply to a running job: a dimension this project has no work on (its tiers were
 // already built) cannot be judged, so it is not asked for.
 export function jobNeeds(project: any) {
-  const need = project.job?.requires || {};
+  const need = !project.job?.opening && project.job?.requires || {};
   const out: any = {};
   for (const key of Object.keys(need)) if (workOf(project, key).total > 0) out[key] = need[key];
   return out;
@@ -1479,9 +1469,10 @@ export function jobNeeds(project: any) {
 export const involvedDims = (project: any) => CONTENT_KEYS.filter((key: string) => workOf(project, key).total > 0);
 // What a running job still lacks: the dimensions below the client's floor.
 export function jobMissing(_state: any, project: any) {
-  const need = jobNeeds(project);
-  const metrics = projectMetrics(project);
-  return Object.keys(need).filter(key => metrics.dimensions[key] < need[key]).map(key => ({ key, need: need[key], have: Math.floor(metrics.dimensions[key]) }));
+  return Object.entries(jobNeeds(project)).flatMap(([key, need]: [string, number]) => {
+    const score = round(dimensionScore(workOf(project, key)));
+    return score < need ? [{ key, need, have: Math.floor(score) }] : [];
+  });
 }
 // The dimension a line mostly needs, so offers on the board ask for different people.
 const mainDimension = (line: string) => (Object.entries(MODULES[line].work) as any[]).sort((left, right) => right[1] - left[1])[0][0];
@@ -1511,7 +1502,7 @@ function refreshBoard(state: any) {
   const level = levelOf(line);
   const work = sum(Array.from({ length: level }, (_, index) => partId(line, index + 1)).filter(id => !partBuilt(state, id)).map(id => sum(Object.values(partOf(id)?.work || {}) as number[])));
   const stage = jobStage(state);
-  const offer = { id: `offer-${state.day}`, line, level, pay: round(Math.max(JOB_MIN_PAY[stage], work * JOB_RATE[stage])), client: pick(state, JOB_CLIENTS), day: state.day, requires: jobRequires(state, line) };
+  const offer = { id: `offer-${state.day}`, line, level, pay: round(Math.max(JOB_MIN_PAY[stage], work * JOB_RATE[stage])), client: pick(state, JOB_CLIENTS), day: state.day, requires: jobRequires(line) };
   board.offers = [...board.offers, offer];
   announce(state, { kind: 'job', title: '收到新委托', text: `${offer.client}想要${MODULES[line].name} · ${moneyText(offer.pay)}`, route: { menu: 'job', id: offer.id }, amount: 0 });
 }
@@ -2166,7 +2157,7 @@ export function personActivity(state: any, project: any, person: any) {
   if (!busy.length) return '空闲（不做工作，工资照付）';
   // Finished items drop out of the split; with everything done `split` is empty and the branch above
   // has already reported the person as idle, so whatever is left here is always real work.
-  const label = (key: string) => key === 'discover' ? '测试' : `${DIMENSIONS.find(item => item.key === key)?.name}制作`;
+  const label = (key: string) => key === 'discover' ? '测试' : DIMENSIONS.find(item => item.key === key)?.name + (jobReworkFloor(project, key) ? '返工' : '制作');
   return busy.map(label).join('、');
 }
 
@@ -2175,8 +2166,10 @@ function assignDay(state: any, project: any, person: any, split?: Record<string,
   // Nothing assigned: no output at all. Without this guard an idle person still picked up defect repair.
   if (!usable.length) return {};
   const pending = usable.some(key => remainingOf(project, key) > 0.0001);
-  if (!pending) return project.defects.some((defect: any) => defect.found && !defect.fixed) ? { repair: 1 } : {};
-  return (split || allocation(state, project).split)[person.id] || {};
+  if (pending) return (split || allocation(state, project).split)[person.id] || {};
+  const reworks = WORKS.filter(work => usable.includes(work.key) && canReworkJob(state, project, person, work));
+  if (reworks.length) return Object.fromEntries(reworks.map(work => [work.key, 1 / reworks.length]));
+  return project.defects.some((defect: any) => defect.found && !defect.fixed) ? { repair: 1 } : {};
 }
 
 type WorkCapacity = { id: string; jobs: { key: string; dimension: string; speed: number }[] };
@@ -2279,6 +2272,21 @@ function allocation(state: any, project: any) {
   return result;
 }
 
+function jobReworkFloor(project: any, key: string) {
+  const floor = project.job?.opening ? 0 : project.job?.requires?.[key];
+  if (!floor || remainingOf(project, key) > 0.0001) return 0;
+  return round(dimensionScore(workOf(project, key))) < floor ? floor : 0;
+}
+
+function workQuality(state: any, project: any, person: any, work: any, bonus: number) {
+  return Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + bonus);
+}
+
+function canReworkJob(state: any, project: any, person: any, work: any) {
+  const floor = jobReworkFloor(project, work.dimension);
+  return floor > 0 && workQuality(state, project, person, work, specialtyBonus(person, project, work.dimension).ability) >= floor;
+}
+
 function remainingOf(project: any, workKey: string) {
   const key = WORKS.find(item => item.key === workKey)?.dimension || workKey;
   const work = workOf(project, key);
@@ -2308,7 +2316,7 @@ function spreadSpare(state: any, project: any, person: any, budget: number, skip
     const speed = speedOf(state, person, key) * factor * conditionFactor(person, project) * (1 + special.speed);
     if (speed <= 0) continue;
     const amount = Math.min(left * speed, room);
-    const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + special.ability);
+    const quality = workQuality(state, project, person, work, special.ability);
     recordWork(project, person, work.dimension, amount, quality, state);
     if (work.dimension !== 'stability') addDefect(project, person, work.dimension, amount * (100 - quality) / 100 * DEFECT_RATE * defects, state);
     practice(person, work.ability, amount, growth);
@@ -3371,14 +3379,21 @@ function produceProject(state: any, project: any) {
         project.contributions[person.id] = (project.contributions[person.id] || 0) + amount;
         person.work = round(person.work + amount);
       } else {
-        const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + special.ability);
+        const quality = workQuality(state, project, person, work, special.ability);
         const remaining = personalRemaining(state, project, person, key);
-        const used = Math.min(amount, Math.max(0, remaining));
-        if (remaining > 0) {
+        let used = Math.min(amount, remaining);
+        if (remaining > 0.0001) {
           recordWork(project, person, work.dimension, used, quality, state);
           if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * DEFECT_RATE * defects, state);
-          practice(person, work.ability, used, growth);
+        } else {
+          const floor = jobReworkFloor(project, work.dimension);
+          used = floor && quality >= floor ? rework(project, work.dimension, amount, quality, state) : 0;
+          if (used > 0) {
+            project.contributions[person.id] = (project.contributions[person.id] || 0) + used;
+            person.work = round(person.work + used);
+          }
         }
+        if (used > 0) practice(person, work.ability, used, growth);
         const spare = share - used / speed;
         if (spare > 0.0001) {
           const left = spare - spreadSpare(state, project, person, spare, key, factor, growth, defects);
@@ -5602,6 +5617,11 @@ export function restoreStudio(saved: any) {
     for (const project of next.projects) delete project.priority;
     next.focusProject = '';
     next.rulesRevision = 20;
+  }
+  if (next.rulesRevision < 21) {
+    for (const offer of next.board?.offers || []) offer.requires = jobRequires(offer.line);
+    for (const project of next.projects) if (project.job && !project.job.opening) project.job.requires = jobRequires(project.job.module);
+    next.rulesRevision = 21;
   }
   if (!next.projects.some((project: any) => project.id === next.focusProject && !project.released)) next.focusProject = '';
   for (const project of next.projects) if (!project.released) { refreshWork(next, project); project.progress = projectMetrics(project).progress; }

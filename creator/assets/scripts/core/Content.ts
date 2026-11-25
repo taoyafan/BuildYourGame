@@ -312,11 +312,16 @@ function projectMenu(state: any, id?: string) {
     const forecast = core.projectForecast(state, project);
     // A module has no test work: its stability row is not "done/remaining" but the defect score the
     // library card also shows, so the row says what the number means instead of "已完成".
-    const rows = forecast.rows.map((row: any) => row.key === 'stability' ? { ...row, text: '按待修缺陷计 ' + Math.round(metrics.dimensions.stability) + ' 分' } : row);
+    const short = new Map(core.jobMissing(state, project).map(item => [item.key, item]));
+    const rows = forecast.rows.map((row: any) => {
+      if (row.key === 'stability') return { ...row, text: '按待修缺陷计 ' + Math.round(metrics.dimensions.stability) + ' 分' };
+      const missing = short.get(row.key);
+      return missing && !row.remaining ? { ...row, text: '待返工 · ' + missing.have + ' / ' + missing.need + ' 分' } : row;
+    });
     return {
       title: project.job ? '委托' : '模块项目',
       blocks: [
-        { type: 'text', text: project.job ? project.job.client + '。做完就能拿到 ' + money(project.job.pay) + '，这块模块也会留在你手里。' : project.rebuild ? '从头重做这一级，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
+        { type: 'text', text: project.job ? project.job.client + '。验收后到账 ' + money(project.job.pay) + '，模块留给工作室。' : project.rebuild ? '从头重做这一级，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
         { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, progress: project.progress / 100, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
         { type: 'section', title: '各项预期时间' },
         { type: 'dimensions', items: rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
@@ -645,6 +650,7 @@ function assignMenu(state: any, projectId: string) {
   // Read the remaining work once for the whole page instead of per card, so every box agrees with the
   // production numbers it sits next to.
   const pipeline = core.dimensionPipeline(state, project);
+  const short = new Set(core.jobMissing(state, project).map(item => item.key));
   const leftOf = (key: string) => pipeline.rows.find((row: any) => row.key === (key === 'discover' ? 'stability' : key))?.remaining ?? 0;
   state.staff.forEach((person: any, index: number) => {
     // Show what the person actually does in this project (explicit assignment, else their default
@@ -654,7 +660,7 @@ function assignMenu(state: any, projectId: string) {
     const assigned: string[] = core.personWorks(state, project, person);
     const home = core.projectOf(state, person);
     const elsewhere = home && home.id !== projectId ? home : null;
-    const works = core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001, special: specialOn(person, project, work.dimension) }));
+    const works = core.WORKS.map(work => ({ key: work.key, name: work.name, ability: person.abilities[work.ability], on: assigned.includes(work.key), done: leftOf(work.key) <= 0.0001 && !short.has(work.dimension), special: specialOn(person, project, work.dimension) }));
     // With every assigned item finished the person is idle; the card says so instead of pointing at
     // six completed boxes. Nothing here asks the player to "hand back" hours — the day does that.
     const idle = !!assigned.length && works.every((work: any) => work.done);
