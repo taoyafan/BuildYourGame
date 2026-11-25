@@ -6,10 +6,6 @@ const minClient = 9510;
 const cacheMs = 45000;
 const maxScore = 1000000;
 
-export function rankingsUnavailable(error: any) {
-  return error?.errCode === 1005 || error?.errCode === 10003;
-}
-
 function readBuild(options: any): number | null {
   const value = options?.miniToolEnv?.buildVersion;
   if ((typeof value !== 'number' && typeof value !== 'string') || !/^[1-9]\d{6,}$/.test(String(value))) return null;

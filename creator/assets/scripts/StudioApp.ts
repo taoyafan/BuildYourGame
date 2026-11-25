@@ -3083,24 +3083,12 @@ export class StudioApp extends Component {
       const snapshot = await rankings.read(route.id as core.StudioRecord);
       if (!this.isValid || this.routes[this.routes.length - 1] !== route || this.rankingLoadId !== loadId) return;
       this.rankingSnapshot = snapshot;
-    } catch (error) {
+    } catch {
       if (!this.isValid) return;
-      if (platform.rankingsUnavailable(error)) {
-        this.disablePlayerRankings();
-        return;
-      }
       if (this.routes[this.routes.length - 1] !== route || this.rankingLoadId !== loadId) return;
       this.rankingFailed = true;
     }
     this.render();
-  }
-
-  private disablePlayerRankings(notice = true) {
-    this.studioRankings = null;
-    const had = this.routes.length;
-    this.routes = this.routes.filter(route => route.menu !== 'player-rankings');
-    if (notice) this.notify('当前小红书环境暂未开放排行榜。');
-    else if (this.routes.length !== had) this.render();
   }
 
   // Scores only ever improve and the platform keeps each account's best, so the best scores are sent at
@@ -3112,17 +3100,15 @@ export class StudioApp extends Component {
     const records = (Object.keys(scores) as core.StudioRecord[]).filter(record => scores[record] !== null && scores[record]! > (this.rankingSent[record] ?? -Infinity));
     if (!records.length) return;
     this.rankingBusy = true;
-    let unavailable = false;
     await Promise.all(records.map(async record => {
       try {
         await rankings.submit(record, scores[record]!);
         this.rankingSent[record] = scores[record]!;
-      } catch (error) {
-        if (platform.rankingsUnavailable(error)) unavailable = true;
+      } catch {
+        // Scores keep their old "sent" mark so a later settlement retries them.
       }
     }));
     this.rankingBusy = false;
-    if (this.isValid && unavailable) this.disablePlayerRankings(false);
   }
 
   private markReview(id?: string) {
