@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.83';
+export const VERSION = '0.4.84';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -3306,6 +3306,8 @@ function produceProject(state: any, project: any) {
   const factor = priorityFactor(state, project);
   const growth = boostFactor(state, project, 'coach');
   const defects = boostFactor(state, project, 'gate');
+  // The day's split is settled once at the start of the day, before anyone's output changes what is left.
+  const splits = new Map(crew.map((person: any) => [person.id, assignDay(state, project, person)]));
   for (const person of crew) {
     // 「先修复缺陷」: whoever is on a dimension fixes that dimension's found defects before making more of it.
     if (project.fixFirst) {
@@ -3318,7 +3320,7 @@ function produceProject(state: any, project: any) {
         continue;
       }
     }
-    const split = assignDay(state, project, person);
+    const split: any = splits.get(person.id) || {};
     const keys = Object.keys(split);
     if (!keys.length) continue;
     const mood = conditionFactor(person, project);
