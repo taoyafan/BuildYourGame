@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.88';
+export const VERSION = '0.4.89';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -1481,9 +1481,7 @@ function refreshBoard(state: any) {
   if (!state.company || state.office < 1) return;
   const board = state.board || (state.board = { next: state.day, offers: [] });
   board.offers = jobBoard(state);
-  // The starter hut always has a couple of jobs to choose from.
-  const short = jobStage(state) === 0 && board.offers.length < 2;
-  if (state.day < board.next && !short) return;
+  if (state.day < board.next) return;
   const gap = jobGap(state);
   if (gap === null) return;
   board.next = state.day + gap;
