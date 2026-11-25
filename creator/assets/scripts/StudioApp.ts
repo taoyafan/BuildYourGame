@@ -2176,7 +2176,7 @@ export class StudioApp extends Component {
         const columns = Math.min(3, block.items.length);
         const cell = (width - (columns - 1) * 6) / columns;
         if (block.anchor) this.anchors.set(block.anchor, this.box(parent, 'GroupAnchor', 0, y, width, Math.ceil(block.items.length / columns) * 44 - 6));
-        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => { this.routes[this.routes.length - 1] = item.route; this.helpKey = ''; this.render(); }, item.active, !!item.locked, undefined, item.anchor));
+        block.items.forEach((item: any, index: number) => this.button(parent, item.text, (index % columns) * (cell + 6), y + Math.floor(index / columns) * 44, cell, 38, () => this.switchMenuTab(item.route), item.active, !!item.locked, undefined, item.anchor));
         return y + Math.ceil(block.items.length / columns) * 44 + 6;
       }
       case 'card': {
@@ -3056,10 +3056,7 @@ export class StudioApp extends Component {
     this.brickTip = null;
     if (menu === 'book') this.markReview(id);
     if (menu === 'achievements') { this.state = core.markAchievementsSeen(this.state); this.save(); }
-    // 新招的人会直接做玩家正在看的这部作品（见 core.placeNewcomer），所以每次打开带项目 id 的页面就记一下。
-    // 已发售的作品只在补丁期间算「在做的项目」，记它没有意义。
-    const looking = id ? this.state.projects.find((item: any) => item.id === id && !item.released) : null;
-    if (looking && this.state.focusProject !== looking.id) { this.state.focusProject = looking.id; this.saveSoon(); }
+    this.focusMenuProject(menu, id);
     if (menu === 'player-rankings') {
       this.routes.push({ menu, id: 'funds' });
       void this.loadPlayerRanking();
@@ -3067,6 +3064,24 @@ export class StudioApp extends Component {
     }
     this.routes.push({ menu, id, dim });
     this.render();
+  }
+
+  private switchMenuTab(route: any) {
+    this.routes[this.routes.length - 1] = route;
+    if (route.menu === 'project') this.focusMenuProject(route.menu, route.id);
+    this.helpKey = '';
+    this.render();
+  }
+
+  private focusMenuProject(menu: string, id?: string) {
+    const project = id ? this.state.projects.find((item: any) => item.id === id) : null;
+    if (!project) return;
+    if (menu === 'project' && (!project.released || project.patch)) this.watching = project.id;
+    // New hires start on the current unreleased project.
+    if (!project.released && this.state.focusProject !== project.id) {
+      this.state.focusProject = project.id;
+      this.saveSoon();
+    }
   }
 
   private async loadPlayerRanking() {

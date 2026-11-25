@@ -298,13 +298,26 @@ function contentMenu(state: any, id?: string) {
 }
 
 function projectMenu(state: any, id?: string) {
-  const project = core.activeProject(state, id) || core.projectOpen(state)[0];
-  // With no running title the page is a choice, not a form: take a commission or start a title.
+  const live = core.liveProjects(state);
+  const project = (id ? core.activeProject(state, id) : null) || live[0];
   if (!project) return { title: '项目', blocks: [{ type: 'actions', anchor: 'new-project', items: [
     ...jobAction(state),
     { text: '新项目', detail: '选玩法、题材与模块等级，开始下一部作品。', icon: 'Rocket', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-game-0' }
   ] }] };
-  if (project.released) return patchProjectMenu(state, project);
+  if (project.released && !project.patch) return patchProjectMenu(state, project);
+  const tabs = live.length > 1 || project.job ? [{
+    type: 'tabs',
+    items: live.map((item: any) => ({
+      text: item.released ? item.name + ' · 补丁' : item.name,
+      route: { menu: 'project', id: item.id },
+      active: item.id === project.id
+    }))
+  }] : [];
+  const detail = project.released ? patchProjectMenu(state, project) : projectDetails(state, project);
+  return { title: '项目', blocks: [...tabs, ...detail.blocks] };
+}
+
+function projectDetails(state: any, project: any) {
   if (project.kind === 'module') {
     const lines = project.rebuild ? [core.partOf(project.rebuild)?.line].filter(Boolean) : project.only || [];
     const status = project.progress >= 100 ? 'have' : project.progress > 0 ? 'partial' : 'missing';
@@ -319,7 +332,6 @@ function projectMenu(state: any, id?: string) {
       return missing && !row.remaining ? { ...row, text: '待返工 · ' + missing.have + ' / ' + missing.need + ' 分' } : row;
     });
     return {
-      title: project.job ? '委托' : '模块项目',
       blocks: [
         { type: 'text', text: project.job ? project.job.client + '。验收后到账 ' + money(project.job.pay) + '，模块留给工作室。' : project.rebuild ? '从头重做这一级，做完后哪一项比原来好就换上哪一项；之后用它的作品受益，已发售的作品不变。' : '不跟着作品，单独把这个模块做出来；做完自动收进模块库。' },
         { type: 'bricks', items: lines.map((line: string) => brickOf(state, line, { status, level: project.scale + 1, progress: project.progress / 100, detail: '完成度 ' + project.progress.toFixed(0) + '%', actions: [] })) },
@@ -340,7 +352,6 @@ function projectMenu(state: any, id?: string) {
   }
   const metrics = core.visibleMetrics(project);
   const forecast = core.projectForecast(state, project);
-  const live = core.liveProjects(state);
   const idle = (forecast.idle || []).map((key: string) => core.DIMENSIONS.find(dimension => dimension.key === key)?.name);
   const demo = project.checkpoints.demo;
   const fix = core.fixForecast(state, project);
@@ -349,7 +360,6 @@ function projectMenu(state: any, id?: string) {
   // Everything that used to sit above them (name, stage, progress, radar) repeated what the tab bar and
   // the six rows already said, so the section title is the top of the page.
   const blocks: any[] = [
-    ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
     { type: 'section', title: '各项预期时间' },
     { type: 'dimensions', items: forecast.rows, bottlenecks: forecast.bottlenecks || [], projectId: project.id },
     { type: 'lines', items: [['待修缺陷', metrics.known ? metrics.known + ' 项：' + defectsByDimension(project) : '0 项']] },
@@ -378,7 +388,7 @@ function projectMenu(state: any, id?: string) {
       { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }
     ] }
   ];
-  return { title: '项目', blocks };
+  return { blocks };
 }
 
 // Giving up is its own confirmation page; the button only says what kind of project it would drop.
@@ -426,15 +436,12 @@ function launchConfirmMenu(state: any, id?: string) {
 // A running patch is a small project of its own: its scope, crew, progress and launch date.
 function patchProjectMenu(state: any, project: any) {
   const book = state.catalog.find((item: any) => item.id === project.id);
-  const live = core.liveProjects(state);
   if (!project.patch) return { title: '《' + project.name + '》', blocks: [{ type: 'text', text: '这部作品已发售，没有进行中的补丁。' }, { type: 'actions', items: [{ text: '作品档案', detail: '销量、口碑与补丁记录。', icon: 'ChartNoAxesCombined', action: 'menu', data: { menu: 'book', id: project.id } }, { text: '再开一个项目', detail: '', icon: 'FolderKanban', action: 'menu', data: { menu: 'new-project' }, anchor: 'new-project' }, ...jobAction(state)] }] };
   const forecast = core.patchForecast(state, project);
   const crew = state.staff.filter((person: any) => core.personWorks(state, project, person).length);
   const rework = project.patch.rework ? core.DIMENSIONS.find(item => item.key === project.patch.rework)?.name : '';
   return {
-    title: '补丁',
     blocks: [
-      ...(live.length > 1 ? [{ type: 'tabs', items: live.map((item: any) => ({ text: item.released ? item.name + ' · 补丁' : item.name, route: { menu: 'project', id: item.id }, active: item.id === project.id })) }] : []),
       { type: 'lines', items: [
         ['《' + project.name + '》补丁', core.dateText(project.patch.started) + '开始'],
         ['修复', forecast.fixed + ' / ' + forecast.targets + ' 项已报告缺陷'],
@@ -533,7 +540,7 @@ function patchMenu(state: any, routeId: string) {
   const [id, mode] = String(routeId || '').split('|');
   const project = state.projects.find((item: any) => item.id === id && item.released);
   if (!project) return { title: '开补丁', blocks: [{ type: 'text', text: '作品不存在。' }] };
-  if (project.patch) return patchProjectMenu(state, project);
+  if (project.patch) return projectMenu(state, project.id);
   const metrics = core.projectMetrics(project);
   const preview = core.syncPreview(state, project);
   const sync = preview.any && mode !== 'bare';
