@@ -235,6 +235,7 @@ export class StudioApp extends Component {
     this.resumeAfterMenu = false;
     this.elapsed = 0;
     this.save();
+    void this.syncRankings();
     this.render();
   }
 
@@ -1691,7 +1692,7 @@ export class StudioApp extends Component {
     if (!last || last.company !== current.company || current.day < last.day) return;
     if (Math.abs(current.cash - last.cash) >= 0.5) this.floatAt(this.anchors.get('finance'), (current.cash > last.cash ? '+' : '') + content.money(current.cash - last.cash), current.cash > last.cash ? colors.green : colors.danger, 0.17);
     if (!project || last.id !== current.id) return;
-    if (current.followers - last.followers >= 50) {
+    if (current.followers > last.followers) {
       this.startRoll('followers', last.followers, current.followers);
       if (this.followersLabel?.isValid) this.rollLabel('followers', this.followersLabel, (n: number) => content.number(n));
       this.floatAt(this.anchors.get('stat-followers'), '+' + content.number(current.followers - last.followers) + ' 人', colors.green);
@@ -1991,6 +1992,18 @@ export class StudioApp extends Component {
       const previewTop = cursor;
       cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12, colors.green);
       this.anchors.set('plan-preview', this.box(body, 'PlanPreviewAnchor', 0, previewTop, inner, Math.max(20, cursor - previewTop - 6)));
+      // Saved team layouts: how long this plan would take with each, and one press to use it after starting.
+      for (let slot = 0; slot < core.TEMPLATE_SLOTS; slot += 1) {
+        const estimate = core.templateForecast(state, slot, this.draft);
+        if (!estimate) continue;
+        const on = this.draft.template === slot;
+        const label = estimate.days === null ? '缺 ' + estimate.missing.map((key: string) => core.DIMENSIONS.find((item: any) => item.key === key)?.name).join('、') : '约 ' + estimate.days + ' 天';
+        this.button(body, (on ? '立项后套用' : '按') + '模板' + (slot + 1) + '（' + estimate.people + ' 人）' + label, 0, cursor, inner, 38, () => {
+          this.draft.template = on ? undefined : slot;
+          this.render();
+        }, on);
+        cursor += 44;
+      }
     }
     // A grey button with no reason reads as a bug: the missing choice is named right above it.
     const issue = core.planIssue(state, this.draft);
@@ -3072,7 +3085,7 @@ export class StudioApp extends Component {
   }
 
   // Scores only ever improve and the platform keeps each account's best, so the best scores are sent at
-  // each month's settlement and when the run ends. A failed send is simply tried again next time.
+  // each month's settlement, when the run ends and when the app is left. A failed send is tried again next time.
   private async syncRankings() {
     const rankings = this.studioRankings;
     if (!rankings || this.rankingBusy || !this.state?.company) return;
@@ -3182,7 +3195,9 @@ export class StudioApp extends Component {
         }
         case 'rank-retry': void this.loadPlayerRanking(); break;
         case 'form-submit': {
-          const next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
+          let next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
+          const slot = this.draft.template;
+          if (Number.isInteger(slot) && core.assignTemplate(next, slot)) next = core.applyTemplate(next, next.projects[next.projects.length - 1].id, slot);
           this.routes = [];
           this.resumeAfterMenu = false;
           this.apply(next);
@@ -3240,6 +3255,8 @@ export class StudioApp extends Component {
         }
         case 'assign': this.apply(core.assign(this.state, data.id, data.person, data.works)); break;
         case 'auto-assign': this.apply(core.autoAssign(this.state, data.id), '空闲的人已分到最拿手的未完成项。'); break;
+        case 'template-save': this.apply(core.saveTemplate(this.state, data.id, Number(data.slot)), '已存为模板 ' + (Number(data.slot) + 1) + '。'); break;
+        case 'template-apply': this.apply(core.applyTemplate(this.state, data.id, Number(data.slot)), '已套用模板 ' + (Number(data.slot) + 1) + '。'); break;
         case 'module-build': {
           const next = core.startModuleProject(this.state, data.line, Number(data.level));
           const project = next.projects[next.projects.length - 1];
@@ -3262,7 +3279,8 @@ export class StudioApp extends Component {
         case 'fix-first': this.apply(core.setFixFirst(this.state, data.id, !!data.on)); break;
         case 'promote': {
           const next = core.promote(this.state, data.id, Number(data.step));
-          this.apply(next, '推广已追加，几天后反馈效果。');
+          const gain = (next.projects.find((item: any) => item.id === data.id)?.promoLog || []).slice(-1)[0]?.gain || 0;
+          this.apply(next, '推广已追加，关注 +' + content.number(gain) + ' 人。');
           break;
         }
         // Releasing is irreversible. The project-page button only opens a confirmation screen; the

@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.81';
+export const VERSION = '0.4.82';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -2749,6 +2749,60 @@ export function autoAssign(state: any, projectId: string) {
   return next;
 }
 
+// Saved assignments: who does which works, kept per person so one press restores a whole team layout.
+export const TEMPLATE_SLOTS = 3;
+export function assignTemplate(state: any, slot: number) {
+  const template = (state.assignTemplates || [])[slot];
+  if (!template?.works) return null;
+  const people = state.staff.filter((person: any) => Array.isArray(template.works[person.id]));
+  return people.length ? { ...template, people } : null;
+}
+
+export function saveTemplate(state: any, projectId: string, slot: number) {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= TEMPLATE_SLOTS) throw new Error('模板位置无效。');
+  const next = studioAction(state);
+  const project = next.projects.find((item: any) => item.id === projectId && !item.released);
+  if (!project) throw new Error('项目不存在。');
+  const works: any = {};
+  for (const person of next.staff) if (belongsTo(next, project, person)) works[person.id] = assignedWorks(project, person);
+  if (!Object.keys(works).length) throw new Error('这个项目还没有人。');
+  const templates = [...(next.assignTemplates || [])];
+  templates[slot] = { works, day: next.day };
+  next.assignTemplates = templates;
+  studioLog(next, '保存分工模板', `模板 ${slot + 1}：${Object.keys(works).length} 人。`);
+  return next;
+}
+
+export function applyTemplate(state: any, projectId: string, slot: number) {
+  const template = assignTemplate(state, slot);
+  if (!template) throw new Error('这个模板是空的。');
+  let next = state;
+  for (const person of template.people) next = assign(next, projectId, person.id, template.works[person.id]);
+  return next;
+}
+
+// Days a template would need for a plan: each person splits their day across their works by what is left.
+export function templateForecast(state: any, slot: number, plan: any) {
+  const template = assignTemplate(state, slot);
+  if (!template) return null;
+  const work = planWork(state, plan);
+  const left: any = {};
+  for (const key of CONTENT_KEYS) left[key] = work.fresh[key] || 0;
+  left.stability = work.test || 0;
+  const rate: any = {};
+  for (const person of template.people) {
+    const keys = template.works[person.id].filter((key: string) => left[WORKS.find(item => item.key === key)?.dimension] > 0.0001);
+    const total = sum(keys.map((key: string) => left[WORKS.find(item => item.key === key).dimension]));
+    for (const key of keys) {
+      const dim = WORKS.find(item => item.key === key).dimension;
+      rate[dim] = (rate[dim] || 0) + speedOf(state, person, key) * left[dim] / total;
+    }
+  }
+  const missing = DIM_KEYS.filter(key => left[key] > 0.0001 && !(rate[key] > 0.0001));
+  const days = missing.length ? null : Math.max(0, ...DIM_KEYS.filter(key => left[key] > 0.0001).map(key => Math.ceil(left[key] / rate[key])));
+  return { days, missing, people: template.people.length };
+}
+
 // What each kind of project is and can do, in one place. The kind is read from the markers a project
 // already carries (module / job / patch / parentId), so saves need no migration.
 const ABANDON_GAME = '已花的钱不退，本作内容作废；用到的模块进度仍留在模块库。';
@@ -3239,8 +3293,9 @@ export function expectedScore(state: any, project: any) {
 }
 
 // Promotion is bought up to a tier until launch: each purchase raises the share of the market that knows
-// the title to that tier's cover, and what it added is only reported a few days later.
-export const PROMO_DELAY = 3;
+// the title to that tier's cover. The result shows at once; the next purchase waits out a short gap.
+export const PROMO_GAP = 7;
+const PROMO_SPREAD = 0.1;
 function promoBasis(state: any, project: any) {
   const scale = project.scale;
   const work = projectNominalWork(project);
@@ -3260,14 +3315,15 @@ export function promoteSteps(state: any, project: any) {
   const top = tiers.reduce((best: number, tier: any, index: number) => have >= tier.cover - 1e-9 ? index : best, 0);
   return tiers.map((tier: any, index: number) => {
     const reached = have >= tier.cover - 1e-9;
-    return { index, name: tier.name, cover: tier.cover, reached, current: index === top, cost: reached ? 0 : Math.max(0.1, Math.round((price(tier.cover) - price(have)) * 10) / 10) };
+    const gain = reached ? 0 : (tier.cover - have) * basis.market;
+    return { index, name: tier.name, cover: tier.cover, reached, current: index === top, cost: reached ? 0 : Math.max(0.1, Math.round((price(tier.cover) - price(have)) * 10) / 10), estimate: [Math.round(gain * (1 - PROMO_SPREAD)), Math.round(gain * (1 + PROMO_SPREAD))] };
   });
 }
-// What the player may know: money in, attention reported so far, and days until the last report arrives.
+// What the player may know: money in, attention gained so far, and days until the next purchase is allowed.
 export function promoStatus(state: any, project: any) {
   const log: any[] = project.promoLog || (project.promoFollowers > 0 ? [{ due: 0, gain: project.promoFollowers }] : []);
-  const waiting = log.filter(item => item.due > state.day);
-  return { spent: project.promoted || 0, gain: sum(log.filter(item => item.due <= state.day).map(item => item.gain)), wait: waiting.length ? Math.max(...waiting.map(item => item.due)) - state.day : 0 };
+  const last = log.length ? Math.max(...log.map(item => item.day ?? item.due - 3)) : -Infinity;
+  return { spent: project.promoted || 0, gain: sum(log.filter(item => item.due <= state.day).map(item => item.gain)), wait: Math.max(0, last + PROMO_GAP - state.day) };
 }
 // Everyone who knows an unreleased title: what testing, expos and events earned plus the campaign's reported reach.
 export function projectFollowers(state: any, project: any) {
@@ -3283,6 +3339,8 @@ export function promote(state: any, projectId: string, step: number) {
   if (project.progress < TRIAL * 100) throw new Error('体验版完成后才能推广。');
   const tier = promoteSteps(next, project)[index];
   if (tier.reached) throw new Error('已经达到这一档。');
+  const wait = promoStatus(next, project).wait;
+  if (wait > 0) throw new Error(`还要 ${wait} 天才能再追加推广。`);
   const cost = tier.cost;
   spend(next, cost, '推广预算');
   const basis = promoBasis(next, project);
@@ -3292,9 +3350,10 @@ export function promote(state: any, projectId: string, step: number) {
   project.promoFollowers = Math.round((tier.cover - ECONOMY.platform) * basis.market);
   // Paid tiers are numbered from 0 here, so a lone smallest purchase still reads as tier 0.
   project.promoPlan = [...(project.promoPlan || []), index - 1];
-  project.promoLog = [...(project.promoLog || []), { due: next.day + PROMO_DELAY, spent: cost, gain: Math.round((tier.cover - before) * basis.market) }];
+  const gain = Math.round((tier.cover - before) * basis.market * (1 - PROMO_SPREAD + random(next) * PROMO_SPREAD * 2));
+  project.promoLog = [...(project.promoLog || []), { day: next.day, due: next.day, spent: cost, gain, reported: true }];
   project.invested = round(project.invested + cost);
-  studioLog(next, '推广投入', `《${project.name}》推广追加到「${tier.name}」，花 ${moneyText(cost)}，共投入 ${moneyText(project.promoted)}；效果几天后反馈。`);
+  studioLog(next, '推广投入', `《${project.name}》推广追加到「${tier.name}」，花 ${moneyText(cost)}，关注增加约 ${gain} 人；共投入 ${moneyText(project.promoted)}。`);
   return next;
 }
 function promoDay(state: any) {
@@ -3308,13 +3367,15 @@ function promoDay(state: any) {
 }
 // One playtest round per press, sized and priced by scale. The less is still uncovered, the smaller each
 // round's chance to meet a hidden defect, so extra rounds find less; testers stay the main source of coverage.
-export const PLAYTESTS = [{ players: 100, cost: 0.8 }, { players: 300, cost: 2.5 }, { players: 1000, cost: 7 }, { players: 3000, cost: 20 }];
+// Each round reaches more players than it recruits: word of mouth among the testers' friends.
+export const PLAYTEST_REACH = 2.5;
+export const PLAYTESTS = [{ players: 250, cost: 0.8 }, { players: 750, cost: 2.5 }, { players: 2500, cost: 7 }, { players: 7500, cost: 20 }];
 export const playtestOf = (project: any) => PLAYTESTS[project?.scale || 0] || PLAYTESTS[0];
-// New followers per player, low and high: the range the player sees before paying. Never more than the
-// players themselves. Every further round on the same title brings in a smaller share of new people.
-export const PLAYTEST_GAIN = [0.3, 0.95];
+// New followers per recruited player, low and high: the range the player sees before paying. Never more
+// than the players reached. Every further round on the same title brings in a smaller share of new people.
+export const PLAYTEST_GAIN = [0.4, 2.3];
 export const PLAYTEST_DECAY = 0.7;
-export const playtestGain = (players: number, taken = 0) => PLAYTEST_GAIN.map(share => Math.round(players * share * Math.pow(PLAYTEST_DECAY, taken)));
+export const playtestGain = (players: number, taken = 0) => PLAYTEST_GAIN.map(share => Math.round(players / PLAYTEST_REACH * share * Math.pow(PLAYTEST_DECAY, taken)));
 // Today's demand for the title's tags as a word: the same combined multiplier the sale will use.
 export function demandHeat(state: any, project: any) {
   return tagHeat(tagFactor(state, planTags(project), project.scale)).label;
@@ -3344,12 +3405,13 @@ export function testDemo(state: any, projectId: string) {
   target.invested = round(target.invested + cost);
   target.tests += 1;
   target.testCount += count;
-  const gain = Math.round(count * clamp(score / 70, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3) * Math.pow(PLAYTEST_DECAY, target.tests - 1));
+  const recruited = count / PLAYTEST_REACH;
+  const gain = Math.round(recruited * clamp(score / 50, PLAYTEST_GAIN[0] / 0.85, PLAYTEST_GAIN[1] / 1.15) * (0.85 + random(next) * 0.3) * Math.pow(PLAYTEST_DECAY, target.tests - 1));
   target.followers += gain;
   // How many of those who know the title will end up buying it, judged from how these players took it;
   // a small group reads it less precisely.
   const conv = conversionRate(marketScore(score, next.day));
-  const buy = Math.round(clamp(conv / (conv + ECONOMY.forget) * (1 + (random(next) - 0.5) * 0.5 * Math.sqrt(30 / count)), 0.01, 0.99) * 100);
+  const buy = Math.round(clamp(conv / (conv + ECONOMY.forget) * (1 + (random(next) - 0.5) * 0.5 * Math.sqrt(30 / recruited)), 0.01, 0.99) * 100);
   const wants = Math.round(gain * buy / 100);
   const tags = planTags(target);
   const demand = demandHeat(next, target);
