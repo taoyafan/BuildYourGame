@@ -116,7 +116,8 @@ export class StudioApp extends Component {
   private rankingLoadId = 0;
   private rankingFailed = false;
   private rankingSent: Partial<Record<core.StudioRecord, number>> = {};
-  private rankingBusy = false;
+  private rankingPending: Partial<Record<core.StudioRecord, number>> = {};
+  private rankingTask: Promise<void> | null = null;
   private overScreenShown = false;
   private scrollBottom = false;
   // Person to bring into view on the assign page, and where their card landed in this render.
@@ -1867,7 +1868,7 @@ export class StudioApp extends Component {
     const state = this.state;
     this.draft.suggested = this.draft.suggested || content.randomTitle(state);
     if (!this.draft.axes) this.draft = { ...core.recommendPlan(state), ...this.draft, axes: core.recommendPlan(state).axes };
-    // Leaving the form keeps every choice; only a started title clears it.
+    if (!this.draft.crew) this.draft.crew = core.defaultCrew(state);
     if (!this.draft.sequel) this.state.planDraft = JSON.parse(JSON.stringify(this.draft));
     // Same red prompt the studio form puts over its name field: the title is the one thing on this page
     // the player has to type, and the filled-in suggestion looks like a value they can keep.
@@ -2007,7 +2008,6 @@ export class StudioApp extends Component {
       cursor += this.paragraph(body, content.planPreview(state, this.draft), cursor, false, 0, inner, 12, colors.green);
       this.anchors.set('plan-preview', this.box(body, 'PlanPreviewAnchor', 0, previewTop, inner, Math.max(20, cursor - previewTop - 6)));
       // The same six cells as the project page, for the crew drafted for this title.
-      if (!this.draft.crew) this.draft.crew = core.defaultCrew(state);
       const forecast = core.planForecast(state, this.draft, this.draft.crew);
       if (forecast) {
         this.text(body, '各项预期时间（本作分工）', 0, cursor, inner, 24, 15, colors.ink, true);
@@ -3095,20 +3095,37 @@ export class StudioApp extends Component {
   // each month's settlement, when the run ends and when the app is left. A failed send is tried again next time.
   private async syncRankings() {
     const rankings = this.studioRankings;
-    if (!rankings || this.rankingBusy || !this.state?.company) return;
+    if (!rankings || !this.state?.company) return;
     const scores = core.studioRecordScores(this.state);
-    const records = (Object.keys(scores) as core.StudioRecord[]).filter(record => scores[record] !== null && scores[record]! > (this.rankingSent[record] ?? -Infinity));
-    if (!records.length) return;
-    this.rankingBusy = true;
-    await Promise.all(records.map(async record => {
-      try {
-        await rankings.submit(record, scores[record]!);
-        this.rankingSent[record] = scores[record]!;
-      } catch {
-        // Scores keep their old "sent" mark so a later settlement retries them.
+    for (const record of Object.keys(scores) as core.StudioRecord[]) {
+      const score = scores[record];
+      if (score !== null && score > Math.max(this.rankingSent[record] ?? -Infinity, this.rankingPending[record] ?? -Infinity)) {
+        this.rankingPending[record] = score;
       }
-    }));
-    this.rankingBusy = false;
+    }
+    if (!this.rankingTask && Object.keys(this.rankingPending).length) {
+      this.rankingTask = Promise.resolve().then(async () => {
+        try {
+          while (Object.keys(this.rankingPending).length) {
+            const batch = this.rankingPending;
+            this.rankingPending = {};
+            await Promise.all((Object.keys(batch) as core.StudioRecord[]).map(async record => {
+              const score = batch[record]!;
+              if (score <= (this.rankingSent[record] ?? -Infinity)) return;
+              try {
+                await rankings.submit(record, score);
+                this.rankingSent[record] = score;
+              } catch {
+                // A later settlement, exit or load can retry this score.
+              }
+            }));
+          }
+        } finally {
+          this.rankingTask = null;
+        }
+      });
+    }
+    await this.rankingTask;
   }
 
   private markReview(id?: string) {
@@ -3128,6 +3145,7 @@ export class StudioApp extends Component {
       this.render();
       return;
     }
+    if (this.routes.some(route => route.menu === 'new-project') && !this.draft.sequel) this.save();
     this.routes = [];
     this.playing = this.resumeAfterMenu && !this.state.over;
     this.resumeAfterMenu = false;
@@ -3144,7 +3162,9 @@ export class StudioApp extends Component {
   }
 
   private apply(next: any, message?: string) {
+    const ended = next.over && !this.state.over;
     this.state = this.drain(next);
+    if (ended) void this.syncRankings();
     this.saveSoon();
     if (next.event) { this.playing = false; this.resumeAfterMenu = false; this.routes = [{ menu: 'event' }]; }
     if (next.over) { this.playing = false; this.resumeAfterMenu = false; }
@@ -3209,10 +3229,7 @@ export class StudioApp extends Component {
         }
         case 'rank-retry': void this.loadPlayerRanking(); break;
         case 'form-submit': {
-          let next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
-          const started = next.projects[next.projects.length - 1].id;
-          for (const [personId, works] of Object.entries(this.draft.crew || {}) as any) if (next.staff.some((person: any) => person.id === personId)) next = core.assign(next, started, personId, works);
-          delete next.planDraft;
+          const next = core.startProject(this.state, { ...this.draft, name: this.draft.name.trim() || this.draft.suggested });
           this.routes = [];
           this.resumeAfterMenu = false;
           this.apply(next);
@@ -3227,8 +3244,8 @@ export class StudioApp extends Component {
         }
         case 'dismiss': this.apply(core.dismiss(this.state, data.id)); this.routes = [{ menu: 'team' }]; this.render(); break;
         case 'outing': this.apply(core.teamOuting(this.state, Number(data.days) || 3), '团建已安排，全队停工。'); break;
-        case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled), data.enabled ? '开始加班：' + core.OVERTIME_TEXT + '。' : '恢复正常工作。'); break;
-        case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员加班：' + core.OVERTIME_TEXT + '。' : '全员恢复正常工作。'); break;
+        case 'overtime': this.apply(core.setOvertime(this.state, data.id, !!data.enabled), data.enabled ? '开始加班：' + core.OVERTIME_TEXT + '。' : '结束加班，产出与缺陷恢复常规水平。'); break;
+        case 'overtime-all': this.apply(core.setAllOvertime(this.state, !!data.enabled), data.enabled ? '全员加班：' + core.OVERTIME_TEXT + '。' : '结束全员加班，产出与缺陷恢复常规水平。'); break;
         case 'sound': this.apply(core.setSound(this.state, !!data.value)); break;
         case 'exhibition':
           this.apply(core.enterExhibition(this.state, data.id, Number(data.tier) || 0), '展会已报名，继续完善会影响名次。');

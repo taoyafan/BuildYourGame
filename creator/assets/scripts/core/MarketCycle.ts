@@ -17,9 +17,10 @@ function sample(seed: number, key: number, turn: number, channel: number) {
 // Each trough can move within its own window. Neighbours stay ordered, but their spacing and the
 // peak's timing and duration vary. Each cycle ends where the next one starts.
 export function marketWave(seed: number, key: number, time: number) {
-  const period = 82 + sample(seed, key, 0, 1) * 38;
+  // At the starter office's rate, the base is 180 days and adjacent valleys can differ by ±30 days.
+  const period = 100;
   const age = time + sample(seed, key, 0, 2) * period;
-  const valley = (turn: number) => (turn + sample(seed, key, turn, 3) * 0.48) * period;
+  const valley = (turn: number) => (turn + sample(seed, key, turn, 3) / 6) * period;
   const low = (turn: number) => -0.68 - sample(seed, key, turn, 4) * 0.32;
   const slot = Math.floor(age / period);
   const turn = age < valley(slot) ? slot - 1 : slot;

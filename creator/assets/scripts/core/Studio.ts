@@ -9,7 +9,7 @@ export { ECONOMY };
 
 // Build version: bumped on every code change so the running preview can be matched against source.
 // Check the in-game top bar, the repo-root VERSION file, or a git tag to confirm which build is live.
-export const VERSION = '0.4.85';
+export const VERSION = '0.4.86';
 
 // Six quality dimensions. Creativity and stability carry extra mechanics: stability is scored from the
 // defects still open, and testing only decides how many of them are found in time to be fixed.
@@ -256,14 +256,26 @@ function awakenSpecialties(state: any, project: any) {
     const mine = person.specialties || (person.specialties = []);
     const fit = lines.filter(line => specialtyLines(person.role).includes(line));
     if (!fit.length) continue;
-    const line = fit[Math.floor(random(state) * fit.length)];
-    const held = mine.find((item: any) => item.line === line);
-    if (held && held.grade < 3 && random(state) < SPECIALTY_RAISE) held.grade += 1;
-    else if (!held && mine.length < specialtyMax(person) && random(state) < SPECIALTY_AWAKEN) mine.push({ line, grade: 1, kind: random(state) < 0.5 ? 'ability' : 'speed' });
-    else continue;
-    const tag = specialtyTag(person, mine.find((item: any) => item.line === line));
-    personNote(state, person, `${held ? '专长升档' : '觉醒专长'}「${tag.name}」`);
-    announce(state, { kind: 'record', title: `${person.name}：「${tag.name}」${tag.kind.split(' · ')[1]}`, text: tag.text, amount: 0 });
+    const changes: { item: any; action: string }[] = [];
+    for (const item of mine) {
+      if (!fit.includes(item.line) || item.grade >= 3 || random(state) >= SPECIALTY_RAISE) continue;
+      item.grade += 1;
+      changes.push({ item, action: '专长升档' });
+    }
+    if (mine.length < specialtyMax(person)) {
+      const learned = fit.filter(line => !mine.some((item: any) => item.line === line) && random(state) < SPECIALTY_AWAKEN);
+      while (learned.length && mine.length < specialtyMax(person)) {
+        const [line] = learned.splice(Math.floor(random(state) * learned.length), 1);
+        const item = { line, grade: 1, kind: random(state) < 0.5 ? 'ability' : 'speed' };
+        mine.push(item);
+        changes.push({ item, action: '觉醒专长' });
+      }
+    }
+    for (const { item, action } of changes) {
+      const tag = specialtyTag(person, item);
+      personNote(state, person, `${action}「${tag.name}」`);
+      announce(state, { kind: 'record', title: `${person.name}：「${tag.name}」${tag.kind.split(' · ')[1]}`, text: tag.text, amount: 0 });
+    }
   }
 }
 
@@ -521,18 +533,22 @@ function followOffice(state: any, cycle: any) {
   cycle.clock = { day: state.day, time: marketTime(cycle, state.day), from: marketRate(cycle, state.day), to: officeRate(state.office) };
   cycle.office = state.office;
 }
-// The focus moves on round the five axes on a fixed clock, with no announcement: the player reads it
-// from the market. The clock itself never restarts when the focus changes.
+function enterLateMarket(state: any) {
+  const cycle = state.marketCycle;
+  if (cycle.late || !cycle.round || state.staff.length < LATE_STAFF) return false;
+  startHandover(state);
+  cycle.late = true;
+  cycle.focus = null;
+  return true;
+}
+
+// Every axis leads for a full turn before the studio can enter the late market.
 function advanceFocus(state: any) {
   const cycle = state.marketCycle;
-  startHandover(state);
   const round = FOCUS_AXES.every(axis => cycle.done.includes(axis));
   if (round) cycle.round = true;
-  if (cycle.round && state.staff.length >= LATE_STAFF) {
-    cycle.late = true;
-    cycle.focus = null;
-    return;
-  }
+  if (enterLateMarket(state)) return;
+  startHandover(state);
   const next = FOCUS_AXES[(FOCUS_AXES.indexOf(cycle.focus) + 1) % FOCUS_AXES.length];
   cycle.focus = next;
   cycle.done = round ? [next] : [...cycle.done, next];
@@ -541,7 +557,7 @@ function advanceFocus(state: any) {
 function marketCycleDay(state: any) {
   const cycle = ensureMarketCycle(state);
   followOffice(state, cycle);
-  if (!cycle.late && cycle.focus) {
+  if (!enterLateMarket(state) && !cycle.late && cycle.focus) {
     if (!Number.isFinite(cycle.focusDay)) cycle.focusDay = state.day;
     if (state.day - cycle.focusDay >= FOCUS_DAYS) advanceFocus(state);
   }
@@ -595,7 +611,7 @@ export function tagDemand(state: any, tag: string) {
   const seed = cycle.waveSeed;
   let demand: number;
   if (axis === 'engine') {
-    const wave = marketWave(seed, idHash(tag), time / 1.6);
+    const wave = marketWave(seed, idHash(tag), time);
     demand = tag === '3D' ? 1.06 + wave * 0.04 : 1 + wave * 0.03;
   } else {
     const tags = axisTags(axis);
@@ -1296,9 +1312,14 @@ function studioAction(state: any) {
   return clone(state);
 }
 
+function setCash(state: any, value: number) {
+  state.cashMax = Math.max(state.cashMax ?? -Infinity, state.cash, value);
+  state.cash = value;
+}
+
 function spend(state: any, amount: number, label: string) {
   if (amount > state.cash) throw new Error('当前资金不足。');
-  state.cash = round(state.cash - amount);
+  setCash(state, round(state.cash - amount));
   state.ledger.expense = round(state.ledger.expense + amount);
   studioLog(state, label, `支付 ${moneyText(amount)}。`);
 }
@@ -1576,7 +1597,7 @@ function finishJob(state: any, project: any) {
   const gained = keepModules(state, project);
   const pay = project.job.pay;
   if (!moduleOpen(state, project.job.module) && !project.job.opening) state.unlocked = { ...(state.unlocked || {}), [project.job.module]: state.day };
-  state.cash = round(state.cash + pay);
+  setCash(state, round(state.cash + pay));
   state.ledger.income = round(state.ledger.income + pay);
   state.projects = state.projects.filter((item: any) => item.id !== project.id);
   const name = MODULES[project.job.module].name;
@@ -1686,6 +1707,7 @@ function claimDesk(taken: Set<number>) {
 function addStaff(state: any, person: any) {
   person.desk = claimDesk(new Set(state.staff.map((colleague: any) => colleague.desk)));
   state.staff.push(person);
+  enterLateMarket(state);
 }
 
 function restoreDesks(state: any) {
@@ -1888,7 +1910,7 @@ function severanceOf(state: any, person: any) {
 function letGo(next: any, person: any, title: string) {
   const id = person.id;
   const severance = severanceOf(next, person);
-  next.cash = round(next.cash - severance);
+  setCash(next, round(next.cash - severance));
   next.ledger.expense = round(next.ledger.expense + severance);
   next.staff = next.staff.filter((item: any) => item.id !== id);
   // People who stay see it: the layoff lowers hiring appeal and leaves a mark on morale, more so when
@@ -2102,15 +2124,11 @@ function belongsTo(state: any, project: any, person: any) {
   if (project.released) return false;
   const live = state.projects.filter((item: any) => !item.released);
   if (!live.length) return false;
-  return live[0].id === project.id;
+  return live[0].id === project.id && !project.explicitCrew;
 }
 
-// One person's output for one day. Explicit assignments win; with none, the person works their trade
-// (their first home work). Time is split in proportion to what is left, so several works finish
-// roughly together. Nobody assigned and no trade left means no progress.
-// The assignment shown by the UI is the same one used for production. With no explicit choice a
-// person does their home work; an explicit list replaces that default instead of adding to it — and
-// an explicit empty list means the player told this person to do nothing at all.
+// Assignment lists drive both the forecast and production. A person in a default crew works their
+// home job until assigned a list. An empty list keeps their project membership with no assigned work.
 // Assignment lists live in saves, so tolerate values written by older builds. In particular, Cocos
 // used to transpile `[...new Set(list)]` into `[].concat(new Set(list))`, which stored a Set object
 // instead of strings; after JSON serialisation it became `{}`. Ignore anything that is not a work key
@@ -2152,113 +2170,111 @@ export function personActivity(state: any, project: any, person: any) {
   return busy.map(label).join('、');
 }
 
-function assignDay(state: any, project: any, person: any) {
+function assignDay(state: any, project: any, person: any, split?: Record<string, Record<string, number>>) {
   const usable = assignedWorks(project, person);
   // Nothing assigned: no output at all. Without this guard an idle person still picked up defect repair.
   if (!usable.length) return {};
   const pending = usable.some(key => remainingOf(project, key) > 0.0001);
   if (!pending) return project.defects.some((defect: any) => defect.found && !defect.fixed) ? { repair: 1 } : {};
-  return { ...(allocation(state, project).split[person.id] || {}) };
+  return (split || allocation(state, project).split)[person.id] || {};
 }
 
-// Max flow from people to dimensions: can the team finish every remaining dimension within `days`?
-function flowWithin(people: any[], left: any, days: number) {
-  const dims = Object.keys(left);
-  const flow: any = {};
-  const cap: any = {};
-  for (const person of people) cap[person.id] = person.speed * days;
-  const need: any = { ...left };
-  // Augmenting paths through the residual graph; the graph has at most a few dozen edges.
-  for (let guard = 0; guard < 500; guard++) {
-    const prev: any = {};
-    const queue: any[] = [];
-    for (const person of people) if (cap[person.id] > 1e-9) { queue.push({ type: 'p', id: person.id }); prev['p' + person.id] = null; }
-    let end: any = null;
-    while (queue.length && !end) {
-      const node = queue.shift();
-      if (node.type === 'p') {
-        const person = people.find(item => item.id === node.id);
-        for (const key of person.keys) {
-          const dim = WORKS.find(work => work.key === key).dimension;
-          if (('d' + dim) in prev) continue;
-          prev['d' + dim] = node;
-          if (need[dim] > 1e-9) { end = { type: 'd', id: dim }; break; }
-          queue.push({ type: 'd', id: dim });
-        }
-      } else {
-        for (const person of people) {
-          const key = person.keys.find((item: string) => WORKS.find(work => work.key === item).dimension === node.id);
-          if (!key || ('p' + person.id) in prev || !(flow[person.id]?.[key] > 1e-9)) continue;
-          prev['p' + person.id] = node;
-          queue.push({ type: 'p', id: person.id });
-        }
+type WorkCapacity = { id: string; jobs: { key: string; dimension: string; speed: number }[] };
+
+// Maximize the fraction of every dimension finished per day. Each person's shares must fit in one day;
+// on each dimension the shares, weighted by their actual speeds, must cover that fraction of its work.
+function balancedShares(people: WorkCapacity[], left: Record<string, number>) {
+  const dimensions = Object.keys(left);
+  const jobs = people.flatMap((person, index) => person.jobs.map(job => ({ ...job, index })));
+  const target = jobs.length;
+  const constraints = people.length + dimensions.length;
+  const rhs = target + 1 + constraints;
+  const rows = Array.from({ length: constraints + 1 }, () => new Float64Array(rhs + 1));
+  const basis = Array.from({ length: constraints }, (_, index) => target + 1 + index);
+  const objective = rows[constraints];
+  const epsilon = 1e-10;
+  basis.forEach((column, row) => { rows[row][column] = 1; });
+  people.forEach((_person, row) => { rows[row][rhs] = 1; });
+  dimensions.forEach((_dimension, index) => { rows[people.length + index][target] = 1; });
+  jobs.forEach((job, column) => {
+    rows[job.index][column] = 1;
+    rows[people.length + dimensions.indexOf(job.dimension)][column] = -job.speed / left[job.dimension];
+  });
+  objective[target] = -1;
+
+  // A simplex pivot starts from the all-idle schedule. Stable index ordering breaks ties at zero work.
+  for (let column = objective.findIndex((value, index) => index < rhs && value < -epsilon);
+    column !== -1;
+    column = objective.findIndex((value, index) => index < rhs && value < -epsilon)) {
+    let pivot = -1;
+    let shortest = Infinity;
+    for (let row = 0; row < constraints; row++) {
+      const coefficient = rows[row][column];
+      if (coefficient <= epsilon) continue;
+      const ratio = Math.max(0, rows[row][rhs]) / coefficient;
+      if (ratio < shortest - epsilon || (pivot >= 0 && Math.abs(ratio - shortest) <= epsilon && basis[row] < basis[pivot])) {
+        shortest = ratio;
+        pivot = row;
       }
     }
-    if (!end) break;
-    const path: any[] = [];
-    for (let node = end; node; node = prev[node.type + node.id]) path.unshift(node);
-    let push = Math.min(cap[path[0].id], need[end.id]);
-    for (let index = 1; index < path.length - 1; index += 2) {
-      const dim = path[index].id;
-      const back = path[index + 1];
-      const key = people.find(item => item.id === back.id).keys.find((item: string) => WORKS.find(work => work.key === item).dimension === dim);
-      push = Math.min(push, flow[back.id][key]);
+    if (pivot === -1) break;
+    const source = rows[pivot];
+    const scale = source[column];
+    for (let index = 0; index <= rhs; index++) source[index] /= scale;
+    for (const [row, values] of rows.entries()) {
+      const factor = values[column];
+      if (row === pivot || Math.abs(factor) <= epsilon) continue;
+      for (let index = 0; index <= rhs; index++) values[index] -= factor * source[index];
     }
-    if (push <= 1e-9) break;
-    cap[path[0].id] -= push;
-    need[end.id] -= push;
-    for (let index = 0; index < path.length - 1; index += 2) {
-      const person = people.find(item => item.id === path[index].id);
-      const key = person.keys.find((item: string) => WORKS.find(work => work.key === item).dimension === path[index + 1].id);
-      flow[person.id] = flow[person.id] || {};
-      flow[person.id][key] = (flow[person.id][key] || 0) + push;
-      if (index + 2 < path.length) {
-        const giver = people.find(item => item.id === path[index + 2].id);
-        const giverKey = giver.keys.find((item: string) => WORKS.find(work => work.key === item).dimension === path[index + 1].id);
-        flow[giver.id][giverKey] -= push;
-      }
-    }
+    basis[pivot] = column;
   }
-  return { ok: dims.every(dim => need[dim] <= Math.max(1e-6, left[dim] * 1e-6)), flow, cap };
+
+  const shares = jobs.map(() => 0);
+  basis.forEach((column, row) => { if (column < target) shares[column] = Math.max(0, rows[row][rhs]); });
+  const split: Record<string, Record<string, number>> = Object.fromEntries(people.map(person => [person.id, {}]));
+  jobs.forEach((job, index) => { split[people[job.index].id][job.key] = shares[index]; });
+  return split;
 }
 
-// The most balanced split: the shortest time in which the people on this project, each only on the works
-// they were given, can finish every remaining dimension. Each person's day is divided so all dimensions
-// land on that day; a person with time to spare spreads it over their own works.
 const allocationCache = new WeakMap<any, any>();
 function allocation(state: any, project: any) {
-  const crew = state.staff.filter((person: any) => belongsTo(state, project, person));
   const factor = priorityFactor(state, project);
-  const people = crew.map((person: any) => ({ id: person.id, speed: speedOf(state, person, 'creativity') * factor * conditionFactor(person, project), keys: assignedWorks(project, person).filter((key: string) => remainingOf(project, key) > 0.0001) }))
-    .filter((person: any) => person.keys.length && person.speed > 0);
-  const left: any = {};
-  for (const person of people) for (const key of person.keys) left[WORKS.find(work => work.key === key).dimension] = remainingOf(project, key);
+  const people: WorkCapacity[] = [];
+  const left: Record<string, number> = {};
+  for (const person of state.staff) {
+    if (!belongsTo(state, project, person)) continue;
+    const base = speedOf(state, person, 'creativity') * factor * conditionFactor(person, project);
+    if (base <= 0) continue;
+    const jobs: WorkCapacity['jobs'] = [];
+    for (const key of assignedWorks(project, person)) {
+      const amount = remainingOf(project, key);
+      if (amount <= 0.0001) continue;
+      const dimension = WORKS.find(work => work.key === key).dimension;
+      left[dimension] = amount;
+      jobs.push({ key, dimension, speed: base * (1 + specialtyBonus(person, project, dimension).speed) });
+    }
+    if (jobs.length) people.push({ id: person.id, jobs });
+  }
   const signature = state.day + '|' + JSON.stringify(people) + '|' + JSON.stringify(left);
   const cached = allocationCache.get(project);
   if (cached?.signature === signature) return cached.result;
-  let result: any = { days: 0, split: {}, critical: [] };
-  if (people.length) {
-    let low = 0;
-    let high = sum(Object.values(left) as number[]) / Math.min(...people.map((person: any) => person.speed)) + 1;
-    for (let step = 0; step < 40 && high - low > 1e-4 * Math.max(1, high); step++) {
-      const mid = (low + high) / 2;
-      if (flowWithin(people, left, mid).ok) high = mid; else low = mid;
+
+  const split = balancedShares(people, left);
+  const saturated = new Set<string>();
+  for (const person of people) {
+    const shares = split[person.id];
+    const used = sum(Object.values(shares));
+    if (used >= 1 - 1e-6) saturated.add(person.id);
+    // Extra capacity can finish a worker's own tasks sooner without moving the last completion later.
+    for (const { key } of person.jobs) {
+      const share = used > 1e-9 ? shares[key] / used : 1 / person.jobs.length;
+      if (share > 1e-9) shares[key] = share;
+      else delete shares[key];
     }
-    const { flow, cap } = flowWithin(people, left, high);
-    const split: any = {};
-    for (const person of people) {
-      const shares: any = {};
-      for (const key of person.keys) shares[key] = (flow[person.id]?.[key] || 0) / (person.speed * high);
-      const used = sum(Object.values(shares) as number[]);
-      const spare = Math.max(0, 1 - used);
-      for (const key of person.keys) shares[key] += used > 1e-9 ? spare * shares[key] / used : spare / person.keys.length;
-      split[person.id] = shares;
-    }
-    // A dimension is critical when everyone on it is already at full stretch.
-    const saturated = new Set(people.filter((person: any) => cap[person.id] <= person.speed * high * 1e-3).map((person: any) => person.id));
-    const critical = Object.keys(left).filter(dim => people.filter((person: any) => person.keys.some((key: string) => WORKS.find(work => work.key === key).dimension === dim)).every((person: any) => saturated.has(person.id)));
-    result = { days: high, split, critical };
   }
+  const critical = Object.keys(left).filter(dimension =>
+    people.filter(person => person.jobs.some(job => job.dimension === dimension)).every(person => saturated.has(person.id)));
+  const result = { split, critical };
   allocationCache.set(project, { signature, result });
   return result;
 }
@@ -2288,12 +2304,15 @@ function spreadSpare(state: any, project: any, person: any, budget: number, skip
     if (!work) continue;
     const room = personalRemaining(state, project, person, key);
     if (room <= 0.0001) continue;
-    const amount = Math.min(left, room);
-    const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + specialtyBonus(person, project, work.dimension).ability);
+    const special = specialtyBonus(person, project, work.dimension);
+    const speed = speedOf(state, person, key) * factor * conditionFactor(person, project) * (1 + special.speed);
+    if (speed <= 0) continue;
+    const amount = Math.min(left * speed, room);
+    const quality = Math.min(100, able(person, work.ability) + rareBonus(state, project, work.dimension) + special.ability);
     recordWork(project, person, work.dimension, amount, quality, state);
     if (work.dimension !== 'stability') addDefect(project, person, work.dimension, amount * (100 - quality) / 100 * DEFECT_RATE * defects, state);
     practice(person, work.ability, amount, growth);
-    left -= amount;
+    left -= amount / speed;
   }
   return budget - left;
 }
@@ -2398,6 +2417,7 @@ export function expectedDimensions(state: any, project: any) {
     return out;
   }
   let testHands = 0;
+  const shares = allocation(state, project).split;
   for (const key of DIM_KEYS) {
     const job = WORKS.find(item => item.dimension === key);
     const work = workOf(project, key);
@@ -2407,7 +2427,7 @@ export function expectedDimensions(state: any, project: any) {
     let hands = 0;
     for (const person of state.staff) {
       if (!belongsTo(state, project, person)) continue;
-      const split = assignDay(state, project, person);
+      const split = assignDay(state, project, person, shares);
       const on = split[job.key] || 0;
       if (!on) continue;
       const special = specialtyBonus(person, project, key);
@@ -2466,9 +2486,10 @@ export function dimensionPipeline(state: any, project: any) {
   let repair = 0;
   // The projection uses the same priority factor the day applies, so the date it shows is the date it keeps.
   const factor = priorityFactor(state, project);
+  const { split: shares, critical } = allocation(state, project);
   for (const person of state.staff) {
     if (!belongsTo(state, project, person)) continue;
-    const split = assignDay(state, project, person);
+    const split = assignDay(state, project, person, shares);
     const mood = conditionFactor(person, project);
     for (const [key, share] of Object.entries(split)) {
       const dim = key === 'repair' ? '' : WORKS.find(work => work.key === key).dimension;
@@ -2482,7 +2503,7 @@ export function dimensionPipeline(state: any, project: any) {
     const remaining = remainingOf(project, key);
     const daily = rate[key];
     // A finished dimension is done whether or not anyone is still on it; only unfinished ones can block.
-    const days = remaining <= 0.0001 ? 0 : daily > 0.0001 ? Math.ceil(remaining / daily) : null;
+    const days = remaining <= 0.0001 ? 0 : daily > 0.0001 ? Math.ceil(remaining / daily - 1e-8) : null;
     return { key, remaining: round(remaining), rate: round(daily), days };
   });
   // Testing is a real work item with its own person-days, so it competes for the slowest date too.
@@ -2495,7 +2516,6 @@ export function dimensionPipeline(state: any, project: any) {
   const scheduled = pending.filter((row: any) => row.days !== null);
   // A bottleneck is a dimension whose people are all at full stretch in the balanced split: only more
   // hands there bring the date forward. When nearly everything is critical, nothing stands out.
-  const critical = allocation(state, project).critical || [];
   const slowestDays = scheduled.length ? Math.max(...scheduled.map((row: any) => row.days)) : 0;
   const bottlenecks = scheduled.length > 1 && slowestDays > 0 ? scheduled.filter((row: any) => critical.includes(row.key)).map((row: any) => row.key) : [];
   if (bottlenecks.length > 3 || bottlenecks.length === scheduled.length) bottlenecks.length = 0;
@@ -2813,11 +2833,29 @@ export function startProject(state: any, draft: any) {
   // Something new may come up while the title is being made: one moment between 30% and 70%.
   project.unlockAt = [Math.round(30 + random(next) * 40)];
   next.projects.push(project);
+  if (plan.crew && typeof plan.crew === 'object') setPlannedCrew(next, project, plan.crew);
+  delete next.planDraft;
   if (!plan.sequel && !plan.parentId) next.lastPlan = { axes: clone(plan.axes), scale: draft.scale || 0, lineLevels: { ...plan.lineLevels } };
   refreshWork(next, project);
   project.progress = projectMetrics(project).progress;
   studioLog(next, '新作立项', `《${name}》面向${TYPES[project.type].audience}，${SCALES[plan.scale].name}作品。`);
   return next;
+}
+
+function placeAssignment(state: any, project: any, personId: string, works: string[]) {
+  for (const other of state.projects) {
+    if (other !== project && other.assignments) delete other.assignments[personId];
+  }
+  (project.assignments ||= {})[personId] = works;
+}
+
+function setPlannedCrew(state: any, project: any, crew: any) {
+  project.explicitCrew = true;
+  for (const person of state.staff) {
+    if (!Array.isArray(crew[person.id])) continue;
+    const works = Array.from(new Set<string>(crew[person.id].filter((key: string) => WORK_KEYS.includes(key))));
+    if (works.length) placeAssignment(state, project, person.id, works);
+  }
 }
 
 // People belong to one project at a time; inside it they may take on several works.
@@ -2831,12 +2869,7 @@ export function assign(state: any, projectId: string, personId: string, works: s
   // Array.from, not [...new Set(...)]: Cocos' build transpiler turns the latter into
   // `[].concat(new Set(...))`, which saves an opaque Set object and breaks every later assignment.
   const list = Array.from(new Set((works || []).filter((key: string) => WORK_KEYS.includes(key))));
-  for (const other of next.projects) {
-    if (!other.assignments) other.assignments = {};
-    if (other.id !== projectId) delete other.assignments[personId];
-  }
-  if (!project.assignments) project.assignments = {};
-  project.assignments[personId] = list;
+  placeAssignment(next, project, personId, list);
   for (const item of next.projects) if (!item.released) { refreshWork(next, item); item.progress = projectMetrics(item).progress; }
   studioLog(next, '调整分工', `${person.name} 参与《${project.name}》：${list.length ? list.map(key => WORKS.find(work => work.key === key)?.name).join('、') : '空闲（不做任何工作）'}。`);
   return next;
@@ -2943,9 +2976,10 @@ export function defaultCrew(state: any) {
 export function planForecast(state: any, plan: any, crew: any) {
   if (planIssue(state, plan)) return null;
   const project = blankProject(state, 'draft-plan', { ...plan, name: plan.name || '新作', lineLevels: fixLevels(plan), scale: planScale(plan) }, state.day);
-  project.assignments = {};
-  for (const person of state.staff) project.assignments[person.id] = Array.isArray(crew?.[person.id]) ? crew[person.id] : [];
-  return projectForecast(state, project);
+  const projects = state.projects.map((other: any) => ({ ...other, assignments: { ...other.assignments } }));
+  const forecastState = { ...state, projects: [...projects, project] };
+  setPlannedCrew(forecastState, project, crew || {});
+  return projectForecast(forecastState, project);
 }
 
 // What each kind of project is and can do, in one place. The kind is read from the markers a project
@@ -3307,7 +3341,8 @@ function produceProject(state: any, project: any) {
   const growth = boostFactor(state, project, 'coach');
   const defects = boostFactor(state, project, 'gate');
   // The day's split is settled once at the start of the day, before anyone's output changes what is left.
-  const splits = new Map(crew.map((person: any) => [person.id, assignDay(state, project, person)]));
+  const shares = allocation(state, project).split;
+  const splits = new Map(crew.map((person: any) => [person.id, assignDay(state, project, person, shares)]));
   for (const person of crew) {
     // 「先修复缺陷」: whoever is on a dimension fixes that dimension's found defects before making more of it.
     if (project.fixFirst) {
@@ -3328,7 +3363,8 @@ function produceProject(state: any, project: any) {
       const share = split[key];
       const work = WORKS.find(item => item.key === key);
       const special = work ? specialtyBonus(person, project, work.dimension) : { ability: 0, speed: 0 };
-      const amount = speedOf(state, person, key) * share * factor * mood * (1 + special.speed);
+      const speed = speedOf(state, person, key) * factor * mood * (1 + special.speed);
+      const amount = speed * share;
       if (amount <= 0) continue;
       if (key === 'repair') {
         repair(state, project, amount, person);
@@ -3343,17 +3379,17 @@ function produceProject(state: any, project: any) {
           if (work.dimension !== 'stability') addDefect(project, person, work.dimension, used * (100 - quality) / 100 * DEFECT_RATE * defects, state);
           practice(person, work.ability, used, growth);
         }
-        const spare = amount - used;
-        if (spare > 0) {
-          // Finished items give their hours back to whatever this person still has open today.
-          const given = spreadSpare(state, project, person, spare, key, factor, growth, defects);
-          const left = spare - given;
+        const spare = share - used / speed;
+        if (spare > 0.0001) {
+          const left = spare - spreadSpare(state, project, person, spare, key, factor, growth, defects);
           if (left > 0.0001) {
-            if (project.defects.some((defect: any) => defect.found && !defect.fixed)) repair(state, project, left, person);
-            // Completed items stop taking time. Module improvements use the explicit effort ledger.
+            const budget = left * speedOf(state, person, 'repair') * factor * mood;
+            const fixed = budget - repair(state, project, budget, person);
+            if (fixed > 0) {
+              project.contributions[person.id] = (project.contributions[person.id] || 0) + fixed;
+              person.work = round(person.work + fixed);
+            }
           }
-          project.contributions[person.id] = (project.contributions[person.id] || 0) + spare;
-          person.work = round(person.work + spare);
         }
       }
     }
@@ -3624,7 +3660,7 @@ function launchGains(state: any, project: any, metrics: any, basis: any) {
   const promos: any[] = [];
   if (index < covers.length - 1) promos.push({ title: '推广多投一档', value: revenue(score, covers[index + 1]) - base - (spend(covers[index + 1]) - spend(now)) });
   if (index > 0) promos.push({ title: '推广少投一档', value: revenue(score, covers[index - 1]) - base + (spend(now) - spend(covers[index - 1])) });
-  if (promos.length) gains.push(promos.sort((left, right) => right.value - left.value)[0]);
+  gains.push(...promos);
   gains.push({ title: '体量大 10%', value: revenue(score, now, basis.work * 1.1) - base - 0.1 * Math.max(0, project.invested - (project.promoted || 0)) });
   return gains;
 }
@@ -3634,13 +3670,16 @@ function launchGains(state: any, project: any, metrics: any, basis: any) {
 function reviewOf(state: any, project: any, metrics: any, gains: any[] = []) {
   const dimensions = metrics.dimensions;
   const money = (value: number) => (value >= 0 ? '预计多收约 ' : '预计少收约 ') + moneyText(Math.abs(round(value)));
-  const reasons = [...gains].sort((left, right) => right.value - left.value).slice(0, 3).map(item => ({ title: item.title, text: money(item.value) + '。' }));
+  const bestDimensions = gains.filter(item => item.dim).sort((left, right) => right.value - left.value).slice(0, 2);
+  const reasons = [...bestDimensions, ...gains.filter(item => !item.dim)]
+    .sort((left, right) => right.value - left.value).slice(0, 3)
+    .map(item => ({ title: item.title, text: money(item.value) + '。' }));
   const quotes: any[] = [];
   const pick = (pool: string[], positive: boolean) => {
     if (pool?.length) quotes.push({ text: pool[Math.floor(random(state) * pool.length)], positive });
   };
-  const worth = gains.filter(item => item.dim).sort((left, right) => right.value - left.value).slice(0, 2).map(item => item.dim);
-  const strongest = [...DIM_KEYS].filter(key => !worth.includes(key)).sort((left, right) => dimensions[right] - dimensions[left])[0];
+  const worth = bestDimensions.map(item => item.dim);
+  const strongest = [...DIM_KEYS].sort((left, right) => dimensions[right] - dimensions[left])[0];
   pick(DIMENSION_QUOTES[strongest], true);
   for (const key of worth) pick(DIMENSION_HINTS[key], false);
   return { reasons, quotes, hints: worth, best: strongest };
@@ -3752,7 +3791,7 @@ export type StudioRecord = 'funds' | 'profit' | 'days' | 'achievements';
 
 export function studioRecordScores(state: any): Record<StudioRecord, number | null> {
   const scores: Record<StudioRecord, number | null> = {
-    funds: Math.max(state.fundsPeak ?? -Infinity, state.cashMax ?? -Infinity, state.recordPeaks?.funds ?? -Infinity),
+    funds: Math.max(state.fundsPeak ?? -Infinity, state.cashMax ?? -Infinity, state.recordPeaks?.funds ?? -Infinity, state.company ? state.cash : -Infinity),
     profit: state.recordPeaks?.profit ?? null,
     days: state.company && state.day > 1 ? state.day - 1 : null,
     achievements: unlockedCount(state) || null
@@ -3878,7 +3917,7 @@ export function launchProject(state: any, projectId: string) {
     tags, lean, leanDetail, royalty: 0, rent: [...(project.rent || [])],
     marketFields: Array.from(new Set(tags.map((tag: string) => TAG_FIELD[tag]).filter(Boolean)))
   };
-  next.cash = round(next.cash + receipt);
+  setCash(next, round(next.cash + receipt));
   next.ledger.income = round(next.ledger.income + receipt);
   next.catalog.unshift(book);
   const gained = keepModules(next, project);
@@ -4116,7 +4155,7 @@ function resolveEvent(state: any, choice: string) {
     const amount = round(Math.max(0, -next.cash) + BRIDGE);
     next.bridgeUsed = true;
     next.flags = { ...(next.flags || {}), bridge: next.day, bridgeAmount: amount };
-    next.cash = round(next.cash + amount);
+    setCash(next, round(next.cash + amount));
     next.ledger.income = round(next.ledger.income + amount);
     return next;
   }
@@ -4205,14 +4244,16 @@ function stressDay(state: any) {
         fresh.push(`${person.name}挂上「${STRESS_TAGS[label].name}」`);
       }
     } else {
-      person.stressChance = clamp(person.stressChance * 0.93, 0, 0.1);
-      person.overtimeDays = Math.max(0, person.overtimeDays - 1);
+      person.stressChance = 0;
+      person.overtimeDays = 0;
       if (person.stressTags.includes('tired') && random(state) < 0.05) person.stressTags = person.stressTags.filter((key: string) => key !== 'tired');
     }
     if (!person.stressTags.includes('leaving') && underpaid(person)) {
       const share = person.wage / marketWage(person);
       if (random(state) < Math.min(0.05, (UNDERPAID - share) * 0.09)) {
         person.stressTags.push('leaving');
+        person.overtimeDays = 0;
+        person.stressChance = 0;
         fresh.push(`${person.name}挂上「${STRESS_TAGS.leaving.name}」（月薪偏低）`);
       }
     }
@@ -4259,18 +4300,18 @@ export function stepDay(state: any) {
       const level = lineInfo(next, line).level;
       if (!level) { delete next.licenses[line]; continue; }
       const income = round(LICENSE_INCOME * level);
-      next.cash = round(next.cash + income);
+      setCash(next, round(next.cash + income));
       next.ledger.income = round(next.ledger.income + income);
     }
     const payroll = round(next.accrued);
-    next.cash = round(next.cash - payroll);
+    setCash(next, round(next.cash - payroll));
     next.ledger.payroll = payroll;
     next.ledger.expense = round(next.ledger.expense + payroll);
     const report = { month: next.day / 30, ...next.ledger, closing: next.cash, net: round(next.ledger.income - next.ledger.expense) };
     next.report = report;
     next.reports = [...next.reports, report];
     // The funds board takes the month's highest daily cash, settled once a month.
-    next.fundsPeak = round(Math.max(next.fundsPeak ?? -Infinity, next.cashMax));
+    next.fundsPeak = Math.max(next.fundsPeak ?? -Infinity, next.cashMax);
     next.cashMax = next.cash;
     if (next.reports.length > 600) {
       const { funds, profit } = studioRecordScores(next);
@@ -4395,7 +4436,7 @@ function salesDay(state: any) {
     if (!Array.isArray(book.saleFlags)) book.saleFlags = [];
     book.saleFlags[week] = book.saleFlags[week] || (discounted ? 1 : 0);
     if (discounted) book.saleWeeks = (book.saleWeeks || 0) + 1;
-    state.cash = fine(state.cash + income);
+    setCash(state, fine(state.cash + income));
     state.ledger.income = fine(state.ledger.income + income);
     checkMarks(state, book);
   }
@@ -5158,7 +5199,7 @@ function makeJunior(state: any, role: string, skill: number) {
 
 function applyEffects(state: any, effects: any, ctx: any) {
   if (effects.cash) {
-    state.cash = round(state.cash + effects.cash);
+    setCash(state, round(state.cash + effects.cash));
     if (effects.cash > 0) state.ledger.income = round(state.ledger.income + effects.cash);
     else state.ledger.expense = round(state.ledger.expense - effects.cash);
   }
@@ -5234,7 +5275,7 @@ function scheduledCash(state: any) {
   if (!due.length) return;
   state.schedule = state.schedule.filter((item: any) => item.day > state.day);
   for (const item of due) {
-    state.cash = round(state.cash + item.amount);
+    setCash(state, round(state.cash + item.amount));
     if (item.amount > 0) state.ledger.income = round(state.ledger.income + item.amount);
     else state.ledger.expense = round(state.ledger.expense - item.amount);
     studioLog(state, item.title, `${item.amount > 0 ? '到账' : '支付'} ${moneyText(Math.abs(item.amount))}。`);
@@ -5459,6 +5500,7 @@ export function restoreStudio(saved: any) {
   if (next.event?.id === 'deadline') next.event = null;
   if (next.rulesRevision < 10) next.rulesRevision = 10;
   ensureMarketCycle(next);
+  enterLateMarket(next);
   if (next.rulesRevision < 13) next.rulesRevision = 13;
   if (next.rulesRevision < 14) {
     // 0.4.18: platforms are gone, the old gameplay variants are mechanics on their base genre, and every
